@@ -1,6 +1,10 @@
 use clap::Parser;
+use multihash::Hasher;
+use multihash::Sha2_512;
+use multihash::{Code, Multihash, MultihashDigest};
 use std::fs;
 use std::path::Path;
+use std::str;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -57,19 +61,20 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[derive(Debug)]
-pub struct File {
+pub struct Entry {
+    // paths: Vec<std::path::Path>,
     paths: Vec<String>,
     filetype: String, // TODO: enum or elsething -- need a full list of file magic or at least major ones
     unlocked: SizeHash,
     locked: Option<SizeHash>,
-    tags: Vec<String>, // TODO: proper tagging, or... ?
-    notes: String,     // free-form text
+    tags: Vec<String>,     // TODO: proper tagging, or... ?
+    notes: Option<String>, // free-form text
 }
 
 #[derive(Debug)]
 pub struct SizeHash {
     size: u64,
-    hash: String, // TODO: use some hash type for multihash
+    hash: Multihash, // TODO: use some hash type for multihash
     keys: Option<Vec<KeyID>>,
 }
 
@@ -116,14 +121,52 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let size = metadata.len();
         println!("{:?}: {:?} bytes", entry.path(), size);
 
-        // if size > max {
-        //     max = size;
-        //     biggest = entry.path().to_path_buf();
-        // }
-        // if size < min {
-        //     min = size;
-        //     smallest = entry.path().to_path_buf();
-        // }
+        let mut hasher = Sha2_512::default();
+        hasher.update(&fs::read(entry.path())?);
+        let f = hasher.finalize();
+        println!("f: {:#04x?}", f);
+
+        // TODO: streaming reads here, as some files could be GB in size...
+        let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
+        println!("multihash: {:#04x?}", mh);
+
+        // mh_serialize
+        let digits: Vec<String> = mh.digest().iter().map(|x| to_hex_digit(*x)).collect();
+        let mh_digest = digits.join("");
+        println!("multihash digest: {:?}", mh_digest);
+
+        // let code_digits: Vec<String> = mh.code().iter().map(|x| to_hex_digit(*x)).collect();
+        let mh_ser = format!(
+            "{}{}{}",
+            to_hex_digit(mh.code().try_into().unwrap()),
+            to_hex_digit(mh.size()),
+            mh_digest
+        );
+        println!("serialized multihash: {}", mh_ser);
+
+        // big.to_string();
+        // to_hex_digit(c: u8) -> String
+
+        // TODO: hashmap here based on multihash
+        // let e2 = my_hashmap.get(mh) // then we get the ENTRY or DEFAULT.
+        // e2.paths.push(entry.path());
+        let e2 = Entry {
+            // paths: vec![entry.path()],
+            paths: vec![entry.path().display().to_string()],
+
+            filetype: "PDF".to_string(), // TODO: Get file magic
+            unlocked: SizeHash {
+                size: size,
+                // hash: mh.to_bytes(),
+                hash: mh,
+                keys: None,
+            },
+            locked: None,
+            tags: vec![],
+            notes: None,
+        };
+
+        println!("========================================================================");
     }
 
     Ok(())
@@ -167,6 +210,26 @@ fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error
         metadata_key_id: "fart".to_string(),
         backend: Backend::Local,
     })
+}
+
+// Why the fuck do i have to write this in 2022?
+// Rust team fix your shit please.
+fn to_hex_digit(c: u8) -> String {
+    // TODO: static
+    let table = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+    ];
+    let mut x = c.clone();
+    let mut digits: [char; 2] = ['0', '0'];
+    let mut y: u8 = 0;
+    if x >= 16 {
+        y = x / 16;
+        x %= 16;
+    }
+    digits[0] = table[y as usize];
+    digits[1] = table[x as usize];
+
+    format!("{}{}", digits[0], digits[1]).to_string()
 }
 
 // fn sync() -> Result<(), Box<dyn std::error::Error>> {
