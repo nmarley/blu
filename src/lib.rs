@@ -123,17 +123,17 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
 
         let mut hasher = Sha2_512::default();
         hasher.update(&fs::read(entry.path())?);
-        let f = hasher.finalize();
-        println!("f: {:#04x?}", f);
+        let _f = hasher.finalize();
+        // println!("f: {:#04x?}", f);
 
         // TODO: streaming reads here, as some files could be GB in size...
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
-        println!("multihash: {:#04x?}", mh);
+        println!("multihash: {:?}", mh);
 
         // mh_serialize
         let digits: Vec<String> = mh.digest().iter().map(|x| to_hex_digit(*x)).collect();
         let mh_digest = digits.join("");
-        println!("multihash digest: {:?}", mh_digest);
+        // println!("multihash digest: {:?}", mh_digest);
 
         // let code_digits: Vec<String> = mh.code().iter().map(|x| to_hex_digit(*x)).collect();
         let mh_ser = format!(
