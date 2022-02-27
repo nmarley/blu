@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::path::Path;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -47,6 +48,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // let conn = db.connection();
     let dir = ".";
+    let cfg = read_config(dir);
+    println!("cfg = {:?}", cfg);
+
     index(dir)
     // sync()
 }
@@ -78,6 +82,30 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+// pub struct Backend { }
+// TODO: implement backends -- probably a trait
+#[derive(Debug)]
+pub enum Backend {
+    Local,
+    S3,
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub metadata_key_id: String,
+    pub backend: Backend,
+}
+
+fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
+    let cfg_dir = base_dir.as_ref().join(".blu");
+    println!("cfg_dir = {:?}", cfg_dir);
+
+    Ok(Config {
+        metadata_key_id: "fart".to_string(),
+        backend: Backend::Local,
+    })
 }
 
 // fn sync() -> Result<(), Box<dyn std::error::Error>> {
