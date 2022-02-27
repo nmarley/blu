@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -98,16 +99,22 @@ pub struct KeyID {
 //
 // TODO: need to accept an SQLite3 connection for metadata writes
 fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut count = 0usize;
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
-        // TODO: allow symlinks?
-        // if !entry.file_type().is_file() {
-        //     continue;
-        // }
-        // count += 1;
+        // for initial debugging
+        if count == 5 {
+            break;
+        }
 
-        // let metadata = fs::metadata(entry.path())?;
-        // let size = metadata.len();
-        // // println!("{:?}: {:?} bytes", entry.path(), size);
+        // TODO: allow symlinks?
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        count += 1;
+
+        let metadata = fs::metadata(entry.path())?;
+        let size = metadata.len();
+        println!("{:?}: {:?} bytes", entry.path(), size);
 
         // if size > max {
         //     max = size;
