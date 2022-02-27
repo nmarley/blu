@@ -55,8 +55,43 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // sync()
 }
 
+#[derive(Debug)]
+pub struct File {
+    paths: Vec<String>,
+    filetype: String, // TODO: enum or elsething -- need a full list of file magic or at least major ones
+    unlocked: SizeHash,
+    locked: Option<SizeHash>,
+    tags: Vec<String>, // TODO: proper tagging, or... ?
+    notes: String,     // free-form text
+}
 
-// pub struct X {}
+#[derive(Debug)]
+pub struct SizeHash {
+    size: u64,
+    hash: String, // TODO: use some hash type for multihash
+    keys: Option<Vec<KeyID>>,
+}
+
+#[derive(Debug)]
+pub enum KeyType {
+    Ed25519,
+    Age,
+}
+
+// ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP0Z61hOKGh3YXwySlaelOr7VYrMbb8pkPzq9AXXaGIM nmarley@zeal
+//
+// rando age key
+// # public key: age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz
+// AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94
+#[derive(Debug)]
+pub struct KeyID {
+    r#type: KeyType,
+    public_key: String, // TODO: Vec<u8>
+}
+
+// pub trait Locked {
+//     fn keys() -> Vec<KeyID>,
+// }
 
 // walk the dir and hash all regular files
 // ignore block/char specials
