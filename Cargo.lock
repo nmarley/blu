@@ -126,6 +126,7 @@ dependencies = [
  "age",
  "clap",
  "rusqlite",
+ "walkdir",
 ]
 
 [[package]]
