@@ -19,3 +19,7 @@ blu init /  # should not be allowed
 blu init .  ./data  # should not be allowed
 # <== please use only 1 directory for a blu installation (you can have multiple, but they will need to be managed separately)
 ```
+
+## Web UI
+
+If a web-ui is added, probably would like to use Actix-Web. A new version was just released recently (as of 2022-02-27).
