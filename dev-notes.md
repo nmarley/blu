@@ -8,6 +8,8 @@ Clap: <https://docs.rs/clap/latest/clap/>
 
 De-facto most use SQLite library in Rust: <https://rust-lang-nursery.github.io/rust-cookbook/database/sqlite.html>
 
+Multihash for hashing <https://github.com/multiformats/rust-multihash>
+
 ## Design
 
 ```sh
