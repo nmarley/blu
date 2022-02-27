@@ -47,13 +47,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // decrypt somehow?
 
     // let conn = db.connection();
-    let dir = ".";
+    let dir = "."; // TODO: use Getcwd() instead?
     let cfg = read_config(dir);
     println!("cfg = {:?}", cfg);
 
     index(dir)
     // sync()
 }
+
+
+// pub struct X {}
 
 // walk the dir and hash all regular files
 // ignore block/char specials
@@ -85,6 +88,7 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 // pub struct Backend { }
+// TODO: serde fields ...
 // TODO: implement backends -- probably a trait
 #[derive(Debug)]
 pub enum Backend {
@@ -92,6 +96,7 @@ pub enum Backend {
     S3,
 }
 
+// TODO: serde fields ...
 #[derive(Debug)]
 pub struct Config {
     pub metadata_key_id: String,
@@ -100,7 +105,21 @@ pub struct Config {
 
 fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
     let cfg_dir = base_dir.as_ref().join(".blu");
-    println!("cfg_dir = {:?}", cfg_dir);
+    // println!("cfg_dir = {:?}", cfg_dir);
+
+    // serde into a Config
+    let config_file = cfg_dir.join("config.json");
+    println!("config_file = {:?}", config_file);
+
+    // read_file + serde or '?' at the end for errors ... good
+    // https://stackoverflow.com/a/32384768
+    //
+    // Note that many times you want to do something with the file, like read
+    // it. In those cases, it makes more sense to just try to open it and deal
+    // with the Result. This eliminates a race condition between "check to see
+    // if file exists" and "open file if it exists". If all you really care
+    // about is if it exists...
+    // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
 
     Ok(Config {
         metadata_key_id: "fart".to_string(),
