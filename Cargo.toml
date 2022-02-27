@@ -10,3 +10,4 @@ clap = { version = "3.1.2", features = ["derive"] }
 age = "0.7"
 rusqlite = "0.26.3"
 walkdir = "2"
+multihash = "0.16"
