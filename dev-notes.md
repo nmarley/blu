@@ -10,6 +10,8 @@ De-facto most use SQLite library in Rust: <https://rust-lang-nursery.github.io/r
 
 Multihash for hashing <https://github.com/multiformats/rust-multihash>
 
+Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
+
 ## Design
 
 ```sh
