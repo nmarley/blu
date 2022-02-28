@@ -11,3 +11,6 @@ age = "0.7"
 rusqlite = "0.26.3"
 walkdir = "2"
 multihash = "0.16"
+
+[dev-dependencies]
+hex = "0.4.3"
