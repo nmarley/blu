@@ -66,7 +66,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 // TODO: rename this struct ...
 // FileMeta? Archive?
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
@@ -80,14 +80,14 @@ pub struct Entry {
     notes: Option<String>, // free-form text
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SizeHash {
     size: u64,
     hash: Vec<u8>,
     keys: Option<Vec<KeyID>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum KeyType {
     Ed25519,
     Age,
@@ -98,7 +98,7 @@ pub enum KeyType {
 // rando age key
 // # public key: age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz
 // AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct KeyID {
     r#type: KeyType,
     public_key: String, // TODO: Vec<u8>
@@ -118,6 +118,10 @@ fn index(base_dir: &str) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::
     // TODO: only build a new hashmap if we don't get metadata from the DB already
     let mut map_files = HashMap::new();
 
+    // TODO: chdir into base before walking?
+    //
+    // otherwise we get paths like "./test/file.txt" if we set the base dir to
+    // "./test"
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
         if count == 5 {
@@ -158,6 +162,37 @@ fn index(base_dir: &str) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::
     }
 
     Ok(map_files)
+}
+
+#[cfg(test)]
+mod test {
+    const BASE_DIR: &str = "./test";
+
+    #[test]
+    fn index() {
+        let map_files = super::index(BASE_DIR).unwrap();
+        let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
+        let entry = map_files.get(&art1_hash).unwrap();
+
+        assert_eq!(
+            super::Entry {
+                paths: vec![
+                    "./test/art1_dup_en.txt".to_string(),
+                    "./test/article1_en.txt".to_string()
+                ],
+                filetype: "PDF".to_string(),
+                unlocked: super::SizeHash {
+                    size: 171,
+                    hash: art1_hash,
+                    keys: None,
+                },
+                locked: None,
+                tags: vec![],
+                notes: None,
+            },
+            *entry
+        );
+    }
 }
 
 // pub struct Backend { }
