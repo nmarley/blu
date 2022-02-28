@@ -187,26 +187,6 @@ fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error
     })
 }
 
-// // Why the fuck do i have to write this in 2022?
-// // Rust team fix your shit please.
-// fn to_hex_digit(c: u8) -> String {
-//     // TODO: static
-//     let table = [
-//         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
-//     ];
-//     let mut x = c.clone();
-//     let mut digits: [char; 2] = ['0', '0'];
-//     let mut y: u8 = 0;
-//     if x >= 16 {
-//         y = x / 16;
-//         x %= 16;
-//     }
-//     digits[0] = table[y as usize];
-//     digits[1] = table[x as usize];
-
-//     format!("{}{}", digits[0], digits[1]).to_string()
-// }
-
 // fn sync() -> Result<(), Box<dyn std::error::Error>> {
 //     Err("something didn't work".into())
 //     // Ok(())
