@@ -1,7 +1,5 @@
 use clap::Parser;
-use multihash::Hasher;
-use multihash::Sha2_512;
-use multihash::{Code, Multihash, MultihashDigest};
+use multihash::{Code, MultihashDigest};
 use std::fs;
 use std::path::Path;
 use std::str;
@@ -74,7 +72,6 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct SizeHash {
     size: u64,
-    // hash: Multihash, // TODO: use some hash type for multihash
     hash: Vec<u8>,
     keys: Option<Vec<KeyID>>,
 }
@@ -122,31 +119,8 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let size = metadata.len();
         println!("{:?}: {:?} bytes", entry.path(), size);
 
-        // let mut hasher = Sha2_512::default();
-        // hasher.update(&fs::read(entry.path())?);
-        // let _f = hasher.finalize();
-        // println!("f: {:#04x?}", f);
-
         // TODO: streaming reads here, as some files could be GB in size...
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
-        // println!("multihash: {:?}", mh);
-
-        // // mh_serialize
-        // let digits: Vec<String> = mh.digest().iter().map(|x| to_hex_digit(*x)).collect();
-        // let mh_digest = digits.join("");
-        // // println!("multihash digest: {:?}", mh_digest);
-
-        // // let code_digits: Vec<String> = mh.code().iter().map(|x| to_hex_digit(*x)).collect();
-        // let mh_ser = format!(
-        //     "{}{}{}",
-        //     to_hex_digit(mh.code().try_into().unwrap()),
-        //     to_hex_digit(mh.size()),
-        //     mh_digest
-        // );
-        // println!("serialized multihash: {}", mh_ser);
-
-        // big.to_string();
-        // to_hex_digit(c: u8) -> String
 
         // TODO: hashmap here based on multihash
         // let e2 = my_hashmap.get(mh) // then we get the ENTRY or DEFAULT.
@@ -157,7 +131,7 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
 
             filetype: "PDF".to_string(), // TODO: Get file magic
             unlocked: SizeHash {
-                size: size,
+                size,
                 hash: mh.to_bytes(),
                 keys: None,
             },
@@ -213,25 +187,25 @@ fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error
     })
 }
 
-// Why the fuck do i have to write this in 2022?
-// Rust team fix your shit please.
-fn to_hex_digit(c: u8) -> String {
-    // TODO: static
-    let table = [
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
-    ];
-    let mut x = c.clone();
-    let mut digits: [char; 2] = ['0', '0'];
-    let mut y: u8 = 0;
-    if x >= 16 {
-        y = x / 16;
-        x %= 16;
-    }
-    digits[0] = table[y as usize];
-    digits[1] = table[x as usize];
+// // Why the fuck do i have to write this in 2022?
+// // Rust team fix your shit please.
+// fn to_hex_digit(c: u8) -> String {
+//     // TODO: static
+//     let table = [
+//         '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+//     ];
+//     let mut x = c.clone();
+//     let mut digits: [char; 2] = ['0', '0'];
+//     let mut y: u8 = 0;
+//     if x >= 16 {
+//         y = x / 16;
+//         x %= 16;
+//     }
+//     digits[0] = table[y as usize];
+//     digits[1] = table[x as usize];
 
-    format!("{}{}", digits[0], digits[1]).to_string()
-}
+//     format!("{}{}", digits[0], digits[1]).to_string()
+// }
 
 // fn sync() -> Result<(), Box<dyn std::error::Error>> {
 //     Err("something didn't work".into())
