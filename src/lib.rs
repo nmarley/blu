@@ -1,5 +1,6 @@
 use clap::Parser;
 use multihash::{Code, MultihashDigest};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::str;
@@ -103,6 +104,9 @@ pub struct KeyID {
 // TODO: need to accept an SQLite3 connection for metadata writes
 fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut count = 0usize;
+
+    let mut files = HashMap::new();
+
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
         if count == 5 {
@@ -123,12 +127,8 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
 
         // TODO: hashmap here based on multihash
-        // let e2 = my_hashmap.get(mh) // then we get the ENTRY or DEFAULT.
-        // e2.paths.push(entry.path());
-        let e2 = Entry {
-            // paths: vec![entry.path()],
-            paths: vec![entry.path().display().to_string()],
-
+        let e2 = files.entry(mh.to_bytes()).or_insert(Entry {
+            paths: vec![],
             filetype: "PDF".to_string(), // TODO: Get file magic
             unlocked: SizeHash {
                 size,
@@ -138,7 +138,12 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
             locked: None,
             tags: vec![],
             notes: None,
-        };
+        });
+        // TODO: fix this, serialize correctly
+        e2.paths.push(entry.path().display().to_string());
+
+        // let e2 = my_hashmap.get(mh) // then we get the ENTRY or DEFAULT.
+        // e2.paths.push(entry.path());
         println!("e2 = {:?}", e2);
 
         println!("========================================================================");
