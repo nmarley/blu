@@ -1,3 +1,5 @@
+#![allow(dead_code)] // remove this later
+
 use clap::Parser;
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
