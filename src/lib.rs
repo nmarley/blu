@@ -57,8 +57,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = read_config(dir);
     println!("cfg = {:?}", cfg);
 
-    index(dir)
+    let map_files = index(dir)?;
+    println!("map_files = {:?}", map_files);
+
     // sync()
+    Ok(())
 }
 
 // TODO: rename this struct ...
@@ -108,11 +111,12 @@ pub struct KeyID {
 // walk the dir and hash all regular files
 // ignore block/char specials
 //
-// TODO: need to accept an SQLite3 connection for metadata writes
-fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+// TODO: accept an SQLite3 connection for metadata writes?
+fn index(base_dir: &str) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
     let mut count = 0usize;
 
-    let mut files = HashMap::new();
+    // TODO: only build a new hashmap if we don't get metadata from the DB already
+    let mut map_files = HashMap::new();
 
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
@@ -134,7 +138,7 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
 
         // TODO: hashmap here based on multihash
-        let e2 = files.entry(mh.to_bytes()).or_insert(Entry {
+        let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
             paths: vec![],
             filetype: "PDF".to_string(), // TODO: Get file magic
             unlocked: SizeHash {
@@ -153,7 +157,7 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("========================================================================");
     }
 
-    Ok(())
+    Ok(map_files)
 }
 
 // pub struct Backend { }
