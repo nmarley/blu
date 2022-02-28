@@ -3,6 +3,7 @@
 use clap::Parser;
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::str;
@@ -112,17 +113,21 @@ pub struct KeyID {
 // ignore block/char specials
 //
 // TODO: accept an SQLite3 connection for metadata writes?
-fn index(base_dir: &str) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
+fn index<P: AsRef<Path>>(
+    base_dir: P,
+) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
     let mut count = 0usize;
 
     // TODO: only build a new hashmap if we don't get metadata from the DB already
     let mut map_files = HashMap::new();
 
-    // TODO: chdir into base before walking?
+    // chdir into base before walking
     //
     // otherwise we get paths like "./test/file.txt" if we set the base dir to
     // "./test"
-    for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
+    env::set_current_dir(&base_dir).unwrap();
+
+    for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
         if count == 5 {
             break;
@@ -171,14 +176,15 @@ mod test {
     #[test]
     fn index() {
         let map_files = super::index(BASE_DIR).unwrap();
+        // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry = map_files.get(&art1_hash).unwrap();
 
         assert_eq!(
             super::Entry {
                 paths: vec![
-                    "./test/art1_dup_en.txt".to_string(),
-                    "./test/article1_en.txt".to_string()
+                    "./art1_dup_en.txt".to_string(),
+                    "./article1_en.txt".to_string()
                 ],
                 filetype: "PDF".to_string(),
                 unlocked: super::SizeHash {
