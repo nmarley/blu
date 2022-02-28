@@ -74,7 +74,8 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct SizeHash {
     size: u64,
-    hash: Multihash, // TODO: use some hash type for multihash
+    // hash: Multihash, // TODO: use some hash type for multihash
+    hash: Vec<u8>,
     keys: Option<Vec<KeyID>>,
 }
 
@@ -121,28 +122,28 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let size = metadata.len();
         println!("{:?}: {:?} bytes", entry.path(), size);
 
-        let mut hasher = Sha2_512::default();
-        hasher.update(&fs::read(entry.path())?);
-        let _f = hasher.finalize();
+        // let mut hasher = Sha2_512::default();
+        // hasher.update(&fs::read(entry.path())?);
+        // let _f = hasher.finalize();
         // println!("f: {:#04x?}", f);
 
         // TODO: streaming reads here, as some files could be GB in size...
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
-        println!("multihash: {:?}", mh);
+        // println!("multihash: {:?}", mh);
 
-        // mh_serialize
-        let digits: Vec<String> = mh.digest().iter().map(|x| to_hex_digit(*x)).collect();
-        let mh_digest = digits.join("");
-        // println!("multihash digest: {:?}", mh_digest);
+        // // mh_serialize
+        // let digits: Vec<String> = mh.digest().iter().map(|x| to_hex_digit(*x)).collect();
+        // let mh_digest = digits.join("");
+        // // println!("multihash digest: {:?}", mh_digest);
 
-        // let code_digits: Vec<String> = mh.code().iter().map(|x| to_hex_digit(*x)).collect();
-        let mh_ser = format!(
-            "{}{}{}",
-            to_hex_digit(mh.code().try_into().unwrap()),
-            to_hex_digit(mh.size()),
-            mh_digest
-        );
-        println!("serialized multihash: {}", mh_ser);
+        // // let code_digits: Vec<String> = mh.code().iter().map(|x| to_hex_digit(*x)).collect();
+        // let mh_ser = format!(
+        //     "{}{}{}",
+        //     to_hex_digit(mh.code().try_into().unwrap()),
+        //     to_hex_digit(mh.size()),
+        //     mh_digest
+        // );
+        // println!("serialized multihash: {}", mh_ser);
 
         // big.to_string();
         // to_hex_digit(c: u8) -> String
@@ -157,14 +158,14 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
             filetype: "PDF".to_string(), // TODO: Get file magic
             unlocked: SizeHash {
                 size: size,
-                // hash: mh.to_bytes(),
-                hash: mh,
+                hash: mh.to_bytes(),
                 keys: None,
             },
             locked: None,
             tags: vec![],
             notes: None,
         };
+        println!("e2 = {:?}", e2);
 
         println!("========================================================================");
     }
