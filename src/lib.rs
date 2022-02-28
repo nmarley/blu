@@ -58,8 +58,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = read_config(dir);
     println!("cfg = {:?}", cfg);
 
-    let map_files = index(dir)?;
-    println!("map_files = {:?}", map_files);
+    let _map_files = index(dir)?;
+    // println!("map_files = {:?}", map_files);
 
     // sync()
     Ok(())
@@ -146,7 +146,7 @@ fn index<P: AsRef<Path>>(
         // TODO: streaming reads here? as some files could be GB in size...
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
 
-        // TODO: hashmap here based on multihash
+        // e2 is a reference to the entry in the hashmap ...
         let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
             paths: vec![],
             filetype: "PDF".to_string(), // TODO: Get file magic
@@ -159,10 +159,11 @@ fn index<P: AsRef<Path>>(
             tags: vec![],
             notes: None,
         });
+        // ... so when it gets modified here, it is updated in the hashmap
         // TODO: fix this, serialize correctly
         e2.paths.push(entry.path().display().to_string());
-        println!("e2 = {:?}", e2);
 
+        println!("e2 = {:?}", e2);
         println!("========================================================================");
     }
 
