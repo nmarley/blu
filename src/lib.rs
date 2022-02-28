@@ -59,13 +59,18 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // sync()
 }
 
+// TODO: rename this struct ...
+// FileMeta? Archive?
 #[derive(Debug)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
     filetype: String, // TODO: enum or elsething -- need a full list of file magic or at least major ones
+
+    // TODO: probably re-think this organization ...
     unlocked: SizeHash,
     locked: Option<SizeHash>,
+
     tags: Vec<String>,     // TODO: proper tagging, or... ?
     notes: Option<String>, // free-form text
 }
@@ -123,7 +128,7 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         let size = metadata.len();
         println!("{:?}: {:?} bytes", entry.path(), size);
 
-        // TODO: streaming reads here, as some files could be GB in size...
+        // TODO: streaming reads here? as some files could be GB in size...
         let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
 
         // TODO: hashmap here based on multihash
@@ -141,9 +146,6 @@ fn index(base_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
         });
         // TODO: fix this, serialize correctly
         e2.paths.push(entry.path().display().to_string());
-
-        // let e2 = my_hashmap.get(mh) // then we get the ENTRY or DEFAULT.
-        // e2.paths.push(entry.path());
         println!("e2 = {:?}", e2);
 
         println!("========================================================================");
@@ -162,13 +164,20 @@ pub enum Backend {
 }
 
 // TODO: serde fields ...
+// TODO: multiple backends?
 #[derive(Debug)]
 pub struct Config {
-    pub metadata_key_id: String,
+    pub metadata_key_id: KeyID,
     pub backend: Backend,
 }
 
 fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
+    // TODO: MOVE TO TEST
+    let rando_age_key_id: KeyID = KeyID {
+        r#type: KeyType::Age,
+        public_key: "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz".to_string(),
+    };
+
     let cfg_dir = base_dir.as_ref().join(".blu");
     // println!("cfg_dir = {:?}", cfg_dir);
 
@@ -187,7 +196,7 @@ fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
 
     Ok(Config {
-        metadata_key_id: "fart".to_string(),
+        metadata_key_id: rando_age_key_id,
         backend: Backend::Local,
     })
 }
