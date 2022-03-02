@@ -1,55 +1,25 @@
 #![allow(dead_code)] // remove this later
 
-use clap::Parser;
-use filemagic::Magic;
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::str;
 use walkdir::WalkDir;
 
-#[derive(Parser, Debug)]
-#[clap(version = "0.1")]
-struct Args {
-    /// Number of crawlers to run in parallel
-    #[clap(short = 't', long, default_value_t = 96)]
-    pub num_crawlers: u32,
+pub mod clap;
+pub mod magic;
 
-    /// Number of DNS server threads
-    #[clap(short, long, default_value = "4")]
-    pub dns_threads: u32,
-
-    /// UDP port to listen on
-    #[clap(short, long, default_value = "53")]
-    pub port: u16,
-
-    /// Number of seconds to sleep before printing stats
-    #[clap(short, long, default_value = "1")]
-    pub stats_sleep_seconds: u16,
-
-    /// Wipe list of banned nodes
-    #[clap(long)]
-    pub wipeban: bool,
-
-    /// Tor proxy IP/Port
-    #[clap(short = 'o', long = "onion", value_name = "ip:port")]
-    pub tor: Option<String>,
-
-    /// Flag filter (combine network filters with bitwise &)
-    #[clap(short = 'w', long)]
-    pub filter: Option<u32>,
-}
+use magic::Wizard;
 
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args: Args = Args::parse();
-
-    if args.num_crawlers < 1 || args.num_crawlers > 999 {
-        args.num_crawlers = 96; // how to get default here?
-    }
-    println!("args: {:?}", args);
+    // TODO: handle cmd-line args w/clap
+    // let mut args: Args = Args::parse();
+    // if args.num_crawlers < 1 || args.num_crawlers > 999 {
+    //     args.num_crawlers = 96; // how to get default here?
+    // }
+    // println!("args: {:?}", args);
 
     // let key = read-key-from-.blu/metadata.json;
     // decrypt somehow?
@@ -66,21 +36,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn get_filetype(data: &[u8]) -> Result<String, filemagic::FileMagicError> {
-    // TODO: lazy_static for this
-    let m = Magic::open(Default::default())?;
-    let magic_dbs = vec!["/usr/local/Cellar/libmagic/5.41/share/misc/magic.mgc"];
-    m.load(&magic_dbs)?;
-    m.buffer(data)
-}
-
 // TODO: rename this struct ...
 // FileMeta? Archive?
 #[derive(Debug, PartialEq)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
-    filetype: String, // TODO: enum or elsething -- need a full list of file magic or at least major ones
+    filetype: String,
 
     // TODO: probably re-think this organization ...
     unlocked: SizeHash,
@@ -118,8 +80,6 @@ pub struct KeyID {
 //     fn keys() -> Vec<KeyID>,
 // }
 
-const MAGIC_BUF_MAX_SIZE: usize = 1024;
-
 // walk the dir and hash all regular files
 // ignore block/char specials
 //
@@ -137,6 +97,8 @@ fn index<P: AsRef<Path>>(
     // otherwise we get paths like "./test/file.txt" if we set the base dir to
     // "./test"
     env::set_current_dir(&base_dir).unwrap();
+
+    let wiz = Wizard::new();
 
     for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
@@ -156,22 +118,12 @@ fn index<P: AsRef<Path>>(
 
         // TODO: streaming reads here? as some files could be GB in size...
         let filedata = fs::read(entry.path()).unwrap();
-
-        let magic_vec_capacity = if (size as usize) < MAGIC_BUF_MAX_SIZE {
-            size as usize
-        } else {
-            MAGIC_BUF_MAX_SIZE
-        };
-        // dbg!(&magic_vec_capacity);
-        let mut magic_buf = vec![0; magic_vec_capacity];
-        let _ = &magic_buf[0..magic_vec_capacity].copy_from_slice(&filedata[0..magic_vec_capacity]);
-        let filetype = get_filetype(&magic_buf).unwrap_or("other".into());
+        let filetype = wiz.get_filetype(&filedata, size).unwrap_or("other".into());
         // dbg!(&filetype);
         let mh = Code::Sha2_512.digest(&filedata);
 
         // e2 is a reference to the entry in the hashmap ...
         let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
-            // filetype: "PDF".to_string(), // TODO: Get file magic
             filetype,
             paths: vec![],
             unlocked: SizeHash {
