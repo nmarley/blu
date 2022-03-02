@@ -76,10 +76,6 @@ pub struct KeyID {
     public_key: String, // TODO: Vec<u8>
 }
 
-// pub trait Locked {
-//     fn keys() -> Vec<KeyID>,
-// }
-
 // walk the dir and hash all regular files
 // ignore block/char specials
 //
