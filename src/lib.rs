@@ -165,7 +165,7 @@ fn index<P: AsRef<Path>>(
         // dbg!(&magic_vec_capacity);
         let mut magic_buf = vec![0; magic_vec_capacity];
         let _ = &magic_buf[0..magic_vec_capacity].copy_from_slice(&filedata[0..magic_vec_capacity]);
-        let filetype = get_filetype(&magic_buf)?;
+        let filetype = get_filetype(&magic_buf).unwrap_or("other".into());
         // dbg!(&filetype);
         let mh = Code::Sha2_512.digest(&filedata);
 
