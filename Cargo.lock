@@ -172,6 +172,7 @@ version = "0.1.0"
 dependencies = [
  "age",
  "clap",
+ "filemagic",
  "hex",
  "multihash",
  "rusqlite",
@@ -365,6 +366,16 @@ name = "fallible-streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
+
+[[package]]
+name = "filemagic"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0ab576ac8d15cf0e281ae7d4b27cccce08486264c843aa19d624f741a7717ed"
+dependencies = [
+ "bitflags",
+ "libc",
+]
 
 [[package]]
 name = "find-crate"

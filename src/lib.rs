@@ -1,6 +1,7 @@
 #![allow(dead_code)] // remove this later
 
 use clap::Parser;
+use filemagic::Magic;
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
 use std::env;
@@ -65,6 +66,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub fn get_filetype(data: &[u8]) -> Result<String, filemagic::FileMagicError> {
+    // TODO: lazy_static for this
+    let m = Magic::open(Default::default())?;
+    let magic_dbs = vec!["/usr/local/Cellar/libmagic/5.41/share/misc/magic.mgc"];
+    m.load(&magic_dbs)?;
+    m.buffer(data)
+}
+
 // TODO: rename this struct ...
 // FileMeta? Archive?
 #[derive(Debug, PartialEq)]
@@ -109,6 +118,8 @@ pub struct KeyID {
 //     fn keys() -> Vec<KeyID>,
 // }
 
+const MAGIC_BUF_MAX_SIZE: usize = 1024;
+
 // walk the dir and hash all regular files
 // ignore block/char specials
 //
@@ -144,12 +155,25 @@ fn index<P: AsRef<Path>>(
         println!("{:?}: {:?} bytes", entry.path(), size);
 
         // TODO: streaming reads here? as some files could be GB in size...
-        let mh = Code::Sha2_512.digest(&fs::read(entry.path()).unwrap());
+        let filedata = fs::read(entry.path()).unwrap();
+
+        let magic_vec_capacity = if (size as usize) < MAGIC_BUF_MAX_SIZE {
+            size as usize
+        } else {
+            MAGIC_BUF_MAX_SIZE
+        };
+        // dbg!(&magic_vec_capacity);
+        let mut magic_buf = vec![0; magic_vec_capacity];
+        let _ = &magic_buf[0..magic_vec_capacity].copy_from_slice(&filedata[0..magic_vec_capacity]);
+        let filetype = get_filetype(&magic_buf)?;
+        // dbg!(&filetype);
+        let mh = Code::Sha2_512.digest(&filedata);
 
         // e2 is a reference to the entry in the hashmap ...
         let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
+            // filetype: "PDF".to_string(), // TODO: Get file magic
+            filetype,
             paths: vec![],
-            filetype: "PDF".to_string(), // TODO: Get file magic
             unlocked: SizeHash {
                 size,
                 hash: mh.to_bytes(),
@@ -187,7 +211,7 @@ mod test {
                     "./art1_dup_en.txt".to_string(),
                     "./article1_en.txt".to_string()
                 ],
-                filetype: "PDF".to_string(),
+                filetype: "ASCII text".to_string(),
                 unlocked: super::SizeHash {
                     size: 171,
                     hash: art1_hash,
