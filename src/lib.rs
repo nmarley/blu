@@ -5,9 +5,12 @@ use std::collections::HashMap;
 use std::{env, fmt, fs, path::Path};
 use walkdir::WalkDir;
 
+pub mod age;
 pub mod clap;
 pub mod magic;
 
+#[allow(unused_imports)]
+use crate::age::BlackBox;
 use magic::Wizard;
 
 // also: consider an internal webserver which serves up the UI for blu
@@ -83,6 +86,7 @@ impl fmt::Debug for Encrypted {
 
 #[derive(Debug, PartialEq)]
 // rsa, dsa, ecdsa and ed25519
+// for now locked to just Age keys, for simplicity
 pub enum KeyType {
     // RSA,
     // DSA,
@@ -191,6 +195,21 @@ mod test {
             },
             *entry
         );
+    }
+
+    const TEST_AGE_SECRET_KEY: &str =
+        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+    #[test]
+    fn encrypt_decrypt() {
+        let bbox = super::BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
+
+        let encrypted = bbox.encrypt(&data).unwrap();
+        // dbg!(&encrypted);
+
+        let decrypted = bbox.decrypt(&encrypted).unwrap();
+        // dbg!(&decrypted);
+        assert_eq!(decrypted, &data[..]);
     }
 }
 
