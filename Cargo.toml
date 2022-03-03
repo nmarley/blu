@@ -6,12 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = { version = "3.1.2", features = ["derive"] }
 age = "0.7"
+#age = { version = "0.7", features = ["async" , "ssh"] }
+clap = { version = "3.1.2", features = ["derive"] }
+filemagic = "0.12.3"
+hex = "0.4.3"
+multihash = "0.16"
 rusqlite = "0.26.3"
 walkdir = "2"
-multihash = "0.16"
-filemagic = "0.12.3"
-
-[dev-dependencies]
-hex = "0.4.3"
