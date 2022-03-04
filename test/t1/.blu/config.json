@@ -1,0 +1,9 @@
+{
+  "backend": "Local",
+  "blu_version": "0.0.1",
+  "data_keys": [],
+  "metadata_key_id": {
+      "type": "Age",
+      "public_key": "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
+  }
+}
