@@ -140,7 +140,9 @@ fn index<P: AsRef<Path>>(
 
         // TODO: streaming reads here? as some files could be GB in size...
         let filedata = fs::read(entry.path()).unwrap();
-        let filetype = wiz.get_filetype(&filedata, size).unwrap_or("other".into());
+        let filetype = wiz
+            .get_filetype(&filedata, size)
+            .unwrap_or_else(|_| "other".into());
         // dbg!(&filetype);
         let mh = Code::Sha2_512.digest(&filedata);
 

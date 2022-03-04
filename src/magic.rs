@@ -32,3 +32,9 @@ impl Wizard {
         self.magic.buffer(data)
     }
 }
+
+impl Default for Wizard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
