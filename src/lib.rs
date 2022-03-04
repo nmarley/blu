@@ -17,20 +17,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // if args.num_crawlers < 1 || args.num_crawlers > 999 {
     //     args.num_crawlers = 96; // how to get default here?
     // }
-    // println!("args: {:?}", args);
+    // dbg!(&args);
 
     // let key = read-key-from-.blu/metadata.json;
     // decrypt somehow?
 
     // let conn = db.connection();
-    let dir = "."; // TODO: use Getcwd() instead?
+    let dir = "."; // TODO: use Args
     let cfg = config::read_config(dir);
-    println!("cfg = {:?}", cfg);
+    dbg!(&cfg);
 
+    // TODO: _iff_ we wanted to chdir before indexing, **HERE** is where to do
+    // it
     let _map_files = index(dir)?;
-    // println!("map_files = {:?}", map_files);
+    // TODO: ... and HERE is where to change back
 
-    // sync()
+    // dbg!(&map_files);
+
     Ok(())
 }
 
@@ -103,7 +106,6 @@ fn index<P: AsRef<Path>>(
 
     let wiz = Wizard::new();
 
-    // for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
     for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
         if count == 5 {
@@ -142,7 +144,7 @@ fn index<P: AsRef<Path>>(
         // TODO: fix this, serialize correctly
         e2.paths.push(entry.path().display().to_string());
 
-        // println!("e2 = {:?}", e2);
+        // dbg!(&e2);
         // println!("========================================================================");
     }
 
