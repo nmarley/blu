@@ -1,4 +1,5 @@
 use multihash::{Code, MultihashDigest};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{env, fmt, fs, path::Path};
 use walkdir::WalkDir;
@@ -80,7 +81,7 @@ impl fmt::Debug for Encrypted {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 // rsa, dsa, ecdsa and ed25519
 // for now locked to just Age keys, for simplicity
 pub enum KeyType {
@@ -96,7 +97,7 @@ pub enum KeyType {
 // rando age key
 // # public key: age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz
 // AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct KeyID {
     r#type: KeyType,
     public_key: String, // TODO: Vec<u8>
@@ -223,10 +224,7 @@ mod test {
                 .to_string(),
         };
 
-        // assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
-        let fart = super::read_config(TEST_CONFIG_DIR_T0);
-        dbg!(&fart);
-
+        assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
         let cfg = super::read_config(TEST_CONFIG_DIR_T1).unwrap();
         dbg!(&cfg);
 
@@ -242,10 +240,9 @@ mod test {
     }
 }
 
-// pub struct Backend { }
 // TODO: serde fields ...
 // TODO: implement backends -- probably a trait
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Backend {
     Local,
     S3,
@@ -253,7 +250,8 @@ pub enum Backend {
 
 // TODO: serde fields ...
 // TODO: multiple backends?
-#[derive(Debug, PartialEq)]
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub backend: Backend,
     pub blu_version: String,
@@ -261,39 +259,22 @@ pub struct Config {
     pub metadata_key_id: KeyID,
 }
 
-fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
-    // TODO: MOVE TO TEST
-    let rando_age_key_id: KeyID = KeyID {
-        r#type: KeyType::Age,
-        public_key: "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz".to_string(),
-    };
+fn read_config<P: AsRef<Path> + std::fmt::Debug>(
+    base_dir: P,
+) -> Result<Config, Box<dyn std::error::Error>> {
+    // dbg!(&base_dir);
 
     let cfg_dir = base_dir.as_ref().join(".blu");
-    // println!("cfg_dir = {:?}", cfg_dir);
+    // dbg!(&cfg_dir);
 
     // serde into a Config
-    let config_file = cfg_dir.join("config.json");
-    println!("config_file = {:?}", config_file);
+    let config_filename = cfg_dir.join("config.json");
+    // dbg!(&config_filename);
 
-    // read_file + serde or '?' at the end for errors ... good
-    // https://stackoverflow.com/a/32384768
-    //
-    // Note that many times you want to do something with the file, like read
-    // it. In those cases, it makes more sense to just try to open it and deal
-    // with the Result. This eliminates a race condition between "check to see
-    // if file exists" and "open file if it exists". If all you really care
-    // about is if it exists...
+    // Avoid toctou race condition
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
-
-    Ok(Config {
-        backend: Backend::Local,
-        blu_version: "0.0.1".to_string(),
-        data_keys: vec![],
-        metadata_key_id: rando_age_key_id,
-    })
+    let cfg_data = fs::read_to_string(config_filename)?;
+    // dbg!(&cfg_data);
+    let cfg: Config = serde_json::from_str(&cfg_data)?;
+    Ok(cfg)
 }
-
-// fn sync() -> Result<(), Box<dyn std::error::Error>> {
-//     Err("something didn't work".into())
-//     // Ok(())
-// }
