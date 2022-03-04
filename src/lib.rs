@@ -2,9 +2,7 @@
 
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::path::Path;
+use std::{env, fmt, fs, path::Path};
 use walkdir::WalkDir;
 
 pub mod clap;
@@ -38,30 +36,58 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 // TODO: rename this struct ...
 // FileMeta? Archive?
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
     filetype: String,
 
-    // TODO: probably re-think this organization ...
-    unlocked: SizeHash,
-    locked: Option<SizeHash>,
+    hash: Vec<u8>,
+    size: u64,
+    enc: Option<Encrypted>,
 
     tags: Vec<String>,     // TODO: proper tagging, or... ?
     notes: Option<String>, // free-form text
 }
 
-#[derive(Debug, PartialEq)]
-pub struct SizeHash {
-    size: u64,
+impl fmt::Debug for Entry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Entry")
+            .field("paths", &self.paths)
+            .field("filetype", &self.filetype)
+            .field("hash", &hex::encode(&self.hash))
+            .field("size", &self.size)
+            .field("enc", &self.enc)
+            .field("tags", &self.tags)
+            .field("notes", &self.notes)
+            .finish()
+    }
+}
+
+#[derive(PartialEq)]
+pub struct Encrypted {
     hash: Vec<u8>,
-    keys: Option<Vec<KeyID>>,
+    size: u64,
+    keys: Vec<KeyID>,
+}
+
+impl fmt::Debug for Encrypted {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Encrypted")
+            .field("hash", &hex::encode(&self.hash))
+            .field("size", &self.size)
+            .field("keys", &self.keys)
+            .finish()
+    }
 }
 
 #[derive(Debug, PartialEq)]
+// rsa, dsa, ecdsa and ed25519
 pub enum KeyType {
-    Ed25519,
+    // RSA,
+    // DSA,
+    // ECDSA,
+    // Ed25519,
     Age,
 }
 
@@ -122,12 +148,9 @@ fn index<P: AsRef<Path>>(
         let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
             filetype,
             paths: vec![],
-            unlocked: SizeHash {
-                size,
-                hash: mh.to_bytes(),
-                keys: None,
-            },
-            locked: None,
+            size,
+            hash: mh.to_bytes(),
+            enc: None,
             tags: vec![],
             notes: None,
         });
@@ -160,12 +183,9 @@ mod test {
                     "./article1_en.txt".to_string()
                 ],
                 filetype: "ASCII text".to_string(),
-                unlocked: super::SizeHash {
-                    size: 171,
-                    hash: art1_hash,
-                    keys: None,
-                },
-                locked: None,
+                size: 171,
+                hash: art1_hash,
+                enc: None,
                 tags: vec![],
                 notes: None,
             },
