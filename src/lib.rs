@@ -1,11 +1,11 @@
 use multihash::{Code, MultihashDigest};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::{fmt, fs, path::Path};
 use walkdir::WalkDir;
 
 pub mod age;
 pub mod clap;
+pub mod config;
 pub mod magic;
 
 use magic::Wizard;
@@ -24,7 +24,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // let conn = db.connection();
     let dir = "."; // TODO: use Getcwd() instead?
-    let cfg = read_config(dir);
+    let cfg = config::read_config(dir);
     println!("cfg = {:?}", cfg);
 
     let _map_files = index(dir)?;
@@ -68,7 +68,7 @@ impl fmt::Debug for Entry {
 pub struct Encrypted {
     hash: Vec<u8>,
     size: u64,
-    keys: Vec<KeyID>,
+    keys: Vec<config::KeyID>,
 }
 
 impl fmt::Debug for Encrypted {
@@ -79,28 +79,6 @@ impl fmt::Debug for Encrypted {
             .field("keys", &self.keys)
             .finish()
     }
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-// rsa, dsa, ecdsa and ed25519
-// for now locked to just Age keys, for simplicity
-pub enum KeyType {
-    // RSA,
-    // DSA,
-    // ECDSA,
-    // Ed25519,
-    Age,
-}
-
-// ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP0Z61hOKGh3YXwySlaelOr7VYrMbb8pkPzq9AXXaGIM nmarley@zeal
-//
-// rando age key
-// # public key: age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz
-// AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct KeyID {
-    r#type: KeyType,
-    public_key: String, // TODO: Vec<u8>
 }
 
 // walk the dir and hash all regular files
@@ -202,11 +180,9 @@ mod test {
         );
     }
 
-    const TEST_AGE_SECRET_KEY: &str =
-        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
     #[test]
     fn encrypt_decrypt() {
-        let bbox = crate::age::BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let bbox = crate::age::BlackBox::new(&vec![crate::config::test::TEST_AGE_SECRET_KEY]);
         let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
 
         let encrypted = bbox.encrypt(&data).unwrap();
@@ -216,71 +192,4 @@ mod test {
         // dbg!(&decrypted);
         assert_eq!(decrypted, &data[..]);
     }
-
-    const TEST_CONFIG_DIR_T0: &str = "test/t0/";
-    const TEST_CONFIG_DIR_T1: &str = "test/t1/";
-    // const TEST_CONFIG_DIR_T2: &str = "test/t2/";
-
-    use super::{Backend, Config, KeyID, KeyType};
-    #[test]
-    fn read_config() {
-        let rando_age_key_id: KeyID = KeyID {
-            r#type: KeyType::Age,
-            public_key: "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
-                .to_string(),
-        };
-
-        assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
-        let cfg = super::read_config(TEST_CONFIG_DIR_T1).unwrap();
-        dbg!(&cfg);
-
-        assert_eq!(
-            cfg,
-            Config {
-                backend: Backend::Local,
-                blu_version: "0.0.1".to_string(),
-                data_keys: vec![TEST_AGE_SECRET_KEY.to_string()],
-                metadata_key_id: rando_age_key_id,
-            }
-        );
-    }
-}
-
-// TODO: serde fields ...
-// TODO: implement backends -- probably a trait
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub enum Backend {
-    Local,
-    S3,
-}
-
-// TODO: serde fields ...
-// TODO: multiple backends?
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Config {
-    pub backend: Backend,
-    pub blu_version: String,
-    pub data_keys: Vec<String>,
-    pub metadata_key_id: KeyID,
-}
-
-fn read_config<P: AsRef<Path> + std::fmt::Debug>(
-    base_dir: P,
-) -> Result<Config, Box<dyn std::error::Error>> {
-    // dbg!(&base_dir);
-
-    let cfg_dir = base_dir.as_ref().join(".blu");
-    // dbg!(&cfg_dir);
-
-    // serde into a Config
-    let config_filename = cfg_dir.join("config.json");
-    // dbg!(&config_filename);
-
-    // Avoid toctou race condition
-    // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
-    let cfg_data = fs::read_to_string(config_filename)?;
-    // dbg!(&cfg_data);
-    let cfg: Config = serde_json::from_str(&cfg_data)?;
-    Ok(cfg)
 }
