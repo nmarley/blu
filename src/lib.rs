@@ -1,7 +1,7 @@
 use multihash::{Code, MultihashDigest};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::{env, fmt, fs, path::Path};
+use std::{fmt, fs, path::Path};
 use walkdir::WalkDir;
 
 pub mod age;
@@ -119,11 +119,14 @@ fn index<P: AsRef<Path>>(
     //
     // otherwise we get paths like "./test/file.txt" if we set the base dir to
     // "./test"
-    env::set_current_dir(&base_dir).unwrap();
+
+    // let current_dir = env::current_dir()?;
+    // env::set_current_dir(&base_dir)?;
 
     let wiz = Wizard::new();
 
-    for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
+    // for entry in WalkDir::new(".").into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
         // for initial debugging
         if count == 5 {
             break;
@@ -161,9 +164,12 @@ fn index<P: AsRef<Path>>(
         // TODO: fix this, serialize correctly
         e2.paths.push(entry.path().display().to_string());
 
-        println!("e2 = {:?}", e2);
-        println!("========================================================================");
+        // println!("e2 = {:?}", e2);
+        // println!("========================================================================");
     }
+
+    // now go back to previous state
+    // env::set_current_dir(current_dir)?;
 
     Ok(map_files)
 }
@@ -182,8 +188,8 @@ mod test {
         assert_eq!(
             super::Entry {
                 paths: vec![
-                    "./art1_dup_en.txt".to_string(),
-                    "./article1_en.txt".to_string()
+                    "./test/art1_dup_en.txt".to_string(),
+                    "./test/article1_en.txt".to_string()
                 ],
                 filetype: "ASCII text".to_string(),
                 size: 171,
