@@ -209,12 +209,43 @@ mod test {
         // dbg!(&decrypted);
         assert_eq!(decrypted, &data[..]);
     }
+
+    const TEST_CONFIG_DIR_T0: &str = "test/t0/";
+    const TEST_CONFIG_DIR_T1: &str = "test/t1/";
+    // const TEST_CONFIG_DIR_T2: &str = "test/t2/";
+
+    use super::{Backend, Config, KeyID, KeyType};
+    #[test]
+    fn read_config() {
+        let rando_age_key_id: KeyID = KeyID {
+            r#type: KeyType::Age,
+            public_key: "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
+                .to_string(),
+        };
+
+        // assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
+        let fart = super::read_config(TEST_CONFIG_DIR_T0);
+        dbg!(&fart);
+
+        let cfg = super::read_config(TEST_CONFIG_DIR_T1).unwrap();
+        dbg!(&cfg);
+
+        assert_eq!(
+            cfg,
+            Config {
+                backend: Backend::Local,
+                blu_version: "0.0.1".to_string(),
+                data_keys: vec![TEST_AGE_SECRET_KEY.to_string()],
+                metadata_key_id: rando_age_key_id,
+            }
+        );
+    }
 }
 
 // pub struct Backend { }
 // TODO: serde fields ...
 // TODO: implement backends -- probably a trait
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Backend {
     Local,
     S3,
@@ -222,7 +253,7 @@ pub enum Backend {
 
 // TODO: serde fields ...
 // TODO: multiple backends?
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Config {
     pub backend: Backend,
     pub blu_version: String,
