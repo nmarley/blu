@@ -1,6 +1,6 @@
 # TODO
 
-Probably should use <https://crates.io/crates/age> and not shell out to rage tool.
+Uses <https://crates.io/crates/age> for encryption.
 
 See also: [https://rust-cli.github.io/book/index.html](Command line apps in Rust).
 
