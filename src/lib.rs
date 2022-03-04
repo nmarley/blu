@@ -209,6 +209,7 @@ pub enum Backend {
 pub struct Config {
     pub metadata_key_id: KeyID,
     pub backend: Backend,
+    pub blu_version: String,
 }
 
 fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
@@ -238,6 +239,7 @@ fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error
     Ok(Config {
         metadata_key_id: rando_age_key_id,
         backend: Backend::Local,
+        blu_version: "0.0.1".to_string(),
     })
 }
 
