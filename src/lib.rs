@@ -1,5 +1,3 @@
-#![allow(dead_code)] // remove this later
-
 use multihash::{Code, MultihashDigest};
 use std::collections::HashMap;
 use std::{env, fmt, fs, path::Path};
@@ -9,8 +7,6 @@ pub mod age;
 pub mod clap;
 pub mod magic;
 
-#[allow(unused_imports)]
-use crate::age::BlackBox;
 use magic::Wizard;
 
 // also: consider an internal webserver which serves up the UI for blu
@@ -201,7 +197,7 @@ mod test {
         "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
     #[test]
     fn encrypt_decrypt() {
-        let bbox = super::BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let bbox = crate::age::BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
 
         let encrypted = bbox.encrypt(&data).unwrap();
