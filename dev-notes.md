@@ -14,6 +14,10 @@ Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
 
 ## Design
 
+Add 24-word seed phrase gen / recovery for AGE keys. This will be part of the recovery kit.
+
+Add passphrase encryption for the on-disk private key storage, which must be unlocked before Blu can decrypt antyhing.
+
 ```sh
 blu init /  # should not be allowed
 # <== root filesystem backups are not supported due to the size and amount of OS backups, please extra space is needed for encryption and de-duplication. Please use a custom directory for specific files
