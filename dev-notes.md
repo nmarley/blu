@@ -14,9 +14,15 @@ Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
 
 ## Design
 
+### Key Init / Restore
+
 Add 24-word seed phrase gen / recovery for AGE keys. This will be part of the recovery kit.
 
 Add passphrase encryption for the on-disk private key storage, which must be unlocked before Blu can decrypt antyhing.
+
+### Search
+
+There should be a search function which searches filenames, tags, notes and returns most (or even all) relevant matches (tweakable of course).
 
 ```sh
 blu init /  # should not be allowed
