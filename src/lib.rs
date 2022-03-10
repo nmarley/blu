@@ -156,11 +156,13 @@ fn index<P: AsRef<Path>>(
 
 #[cfg(test)]
 mod test {
-    const BASE_DIR: &str = "./test";
+    const TEST_DIR_T0: &str = "test/t0/";
+    // const TEST_DIR_T1: &str = "test/t1/";
+    // const TEST_DIR_T2: &str = "test/t2/";
 
     #[test]
     fn index() {
-        let map_files = super::index(BASE_DIR).unwrap();
+        let map_files = super::index(TEST_DIR_T0).unwrap();
         // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry = map_files.get(&art1_hash).unwrap();
@@ -168,8 +170,8 @@ mod test {
         assert_eq!(
             super::Entry {
                 paths: vec![
-                    "./test/art1_dup_en.txt".to_string(),
-                    "./test/article1_en.txt".to_string()
+                    "test/t0/art1_dup_en.txt".to_string(),
+                    "test/t0/article1_en.txt".to_string()
                 ],
                 filetype: "ASCII text".to_string(),
                 size: 171,
