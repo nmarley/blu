@@ -56,7 +56,7 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     Ok(cfg)
 }
 
-use crate::{deser_map, Entry};
+use crate::metadata::{deser_map, Entry};
 use std::collections::HashMap;
 impl Config {
     pub fn load_hashmap(
@@ -79,7 +79,7 @@ pub(crate) mod test {
     const TEST_CONFIG_DIR_T1: &str = "test/t1/";
     const TEST_CONFIG_DIR_T2: &str = "test/t2/";
 
-    const TEST_PASSPHRASE_ENIGMA: &str = crate::age::test::TEST_PASSPHRASE_ENIGMA;
+    // const TEST_PASSPHRASE_ENIGMA: &str = crate::age::test::TEST_PASSPHRASE_ENIGMA;
     const TEST_AGE_SECRET_KEY: &str = crate::age::test::TEST_AGE_SECRET_KEY;
 
     use super::{Backend, Config, KeyID, KeyType};
