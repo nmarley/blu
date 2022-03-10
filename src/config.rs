@@ -1,3 +1,4 @@
+use crate::age::BlackBox;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -30,6 +31,9 @@ pub struct Config {
     pub blu_version: String,
     pub data_keys: Vec<String>,
     pub metadata_key_id: KeyID,
+    // TODO: should this be a pointer to a map elsewhere on-disk (e.g. a
+    // filename)?
+    pub enc_map: String,
 }
 
 pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
@@ -52,14 +56,31 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     Ok(cfg)
 }
 
+use crate::{deser_map, Entry};
+use std::collections::HashMap;
+impl Config {
+    pub fn load_hashmap(
+        &self,
+        bbox: &BlackBox,
+    ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
+        // 1. decrypt data in-memory
+        // hex decode encrypted map
+        let map_enc = hex::decode(&self.enc_map).unwrap();
+        // decrypt map, result is still serialized
+        let map_ser = bbox.decrypt(&map_enc).unwrap();
+        // deserialize hashmap
+        deser_map(&map_ser)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test {
-    pub(crate) const TEST_AGE_SECRET_KEY: &str =
-        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
-
     const TEST_CONFIG_DIR_T0: &str = "test/t0/";
     const TEST_CONFIG_DIR_T1: &str = "test/t1/";
-    // const TEST_CONFIG_DIR_T2: &str = "test/t2/";
+    const TEST_CONFIG_DIR_T2: &str = "test/t2/";
+
+    const TEST_PASSPHRASE_ENIGMA: &str = crate::age::test::TEST_PASSPHRASE_ENIGMA;
+    const TEST_AGE_SECRET_KEY: &str = crate::age::test::TEST_AGE_SECRET_KEY;
 
     use super::{Backend, Config, KeyID, KeyType};
     #[test]
@@ -81,7 +102,20 @@ pub(crate) mod test {
                 blu_version: "0.0.1".to_string(),
                 data_keys: vec![TEST_AGE_SECRET_KEY.to_string()],
                 metadata_key_id: rando_age_key_id,
+                enc_map: "".to_string(),
             }
         );
+    }
+
+    use super::BlackBox;
+    #[test]
+    fn dec_t2_files() {
+        let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
+        let map_files = cfg.load_hashmap(&bbox).unwrap();
+
+        for entry in map_files.values() {
+            dbg!(&entry);
+        }
     }
 }
