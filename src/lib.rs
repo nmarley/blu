@@ -1,6 +1,13 @@
+use flate2::bufread::{GzDecoder, GzEncoder};
+use flate2::Compression;
 use multihash::{Code, MultihashDigest};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::{fmt, fs, path::Path};
+use std::{
+    env, fmt, fs,
+    io::{self, Read},
+    path::Path,
+};
 use walkdir::WalkDir;
 
 pub mod age;
@@ -8,6 +15,11 @@ pub mod clap;
 pub mod config;
 pub mod magic;
 
+const TEST_AGE_SECRET_KEY: &str =
+    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
+use crate::age::BlackBox;
+use crate::age::{passphrase_decrypt, passphrase_encrypt};
 use magic::Wizard;
 
 // also: consider an internal webserver which serves up the UI for blu
@@ -22,24 +34,40 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // let key = read-key-from-.blu/metadata.json;
     // decrypt somehow?
 
-    // let conn = db.connection();
-    let dir = "."; // TODO: use Args
+    // let dir = "."; // TODO: use Args
+
+    let args: Vec<String> = env::args().collect();
+    let dir = &args[1];
+
     let cfg = config::read_config(dir);
     dbg!(&cfg);
 
     // TODO: _iff_ we wanted to chdir before indexing, **HERE** is where to do
     // it
-    let _map_files = index(dir)?;
+    let map_files = index(dir)?;
+    // dbg!(&map_files);
     // TODO: ... and HERE is where to change back
 
-    // dbg!(&map_files);
+    let serialized_map = ser_map(&map_files)?;
+    dbg!(&serialized_map);
+    // println!("{}", &hex::encode(&serialized_map));
+
+    let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+    let enc_map = bbox.encrypt(&serialized_map).unwrap();
+    // dbg!(&enc_map);
+    println!("{}", &hex::encode(&enc_map));
+
+    let val = passphrase_encrypt(TEST_AGE_SECRET_KEY.as_bytes(), TEST_PASSPHRASE_ENIGMA)?;
+    println!("{}", &hex::encode(&val));
+
+    // 6167652d656e6372797074696f6e2e6f72672f76310a2d3e20736372797074206543736d645a3252736d744d5561395277396e734c672031330a4f363238776844354763767944327059477a39446356784b306834494145557756762b2b326b70425850300a2d2d2d203362634d2b706c6a634235785053555a64693358723872724a7170464e4433332f495a49314d784a344e6f0a28cc16819f7e4021689a8148e81ea92f6287a88d4a265d17bf1dd354f484529e4cdc56318acc73e3701c8f7d79d5bd40eda4e7d908ab06d553103d3a2423e82de426935b80e4607ee9a170e2ccc46732edc02db11ea443cbcafd1a29fe3ae5dd6f4f8ea68c6a397cedb2
 
     Ok(())
 }
 
 // TODO: rename this struct ...
 // FileMeta? Archive?
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
@@ -67,7 +95,7 @@ impl fmt::Debug for Entry {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize)]
 pub struct Encrypted {
     hash: Vec<u8>,
     size: u64,
@@ -106,7 +134,15 @@ fn index<P: AsRef<Path>>(
 
     let wiz = Wizard::new();
 
-    for entry in WalkDir::new(base_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
+        let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
+        dbg!(&bludir);
+        // skip special .blu dir
+        // TODO: fix this shite, normalize path prefixes
+        if entry.path().starts_with(bludir) {
+            continue;
+        }
+
         // for initial debugging
         if count == 5 {
             break;
@@ -143,15 +179,44 @@ fn index<P: AsRef<Path>>(
         // ... so when it gets modified here, it is updated in the hashmap
         // TODO: fix this, serialize correctly
         e2.paths.push(entry.path().display().to_string());
+    }
 
-        // dbg!(&e2);
-        // println!("========================================================================");
+    // only print entries once
+    for e2 in map_files.values() {
+        dbg!(&e2);
+        println!("========================================================================");
     }
 
     // now go back to previous state
     // env::set_current_dir(current_dir)?;
 
     Ok(map_files)
+}
+
+pub fn ser_map(map_files: &HashMap<Vec<u8>, Entry>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let encoded: Vec<u8> = bincode::serialize(map_files)?;
+    // let encoded: Vec<u8> = serde_cbor::to_vec(map_files)?;
+    Ok(encoded)
+}
+
+pub fn deser_map(data: &[u8]) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
+    let decoded: HashMap<Vec<u8>, Entry> = bincode::deserialize(data)?;
+    // let decoded: HashMap<Vec<u8>, Entry> = serde_cbor::from_slice(data)?;
+    Ok(decoded)
+}
+
+pub fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut gz = GzEncoder::new(data, Compression::fast());
+    let mut buf = Vec::new();
+    gz.read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+pub fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut gz = GzDecoder::new(data);
+    let mut buf = Vec::new();
+    gz.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -184,16 +249,46 @@ mod test {
         );
     }
 
+    use super::*;
+
+    fn test_entry(content: &str) -> super::Entry {
+        let b = content.as_bytes();
+        let mh = Code::Sha2_512.digest(b);
+        super::Entry {
+            paths: vec!["testfile.txt".to_string()],
+            filetype: "ASCII text".to_string(),
+            size: b.len() as u64,
+            hash: mh.to_bytes(),
+            enc: None,
+            tags: vec![],
+            notes: None,
+        }
+    }
+
     #[test]
-    fn encrypt_decrypt() {
-        let bbox = crate::age::BlackBox::new(&vec![crate::config::test::TEST_AGE_SECRET_KEY]);
-        let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
+    fn ser_de_map() {
+        let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
+        let mut map = HashMap::new();
+        for e in entries.into_iter() {
+            let ehash = e.hash.clone();
+            let _ = map.entry(ehash).or_insert(e);
+        }
 
-        let encrypted = bbox.encrypt(&data).unwrap();
-        // dbg!(&encrypted);
+        let serialized_map = ser_map(&map).unwrap();
+        println!(
+            "{} (len {} bytes)",
+            &hex::encode(&serialized_map),
+            serialized_map.len()
+        );
 
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-        // dbg!(&decrypted);
-        assert_eq!(decrypted, &data[..]);
+        let compressed_ser_map = compress(&serialized_map).unwrap();
+        println!(
+            "compressed: {} (len {} bytes)",
+            &hex::encode(&compressed_ser_map),
+            compressed_ser_map.len()
+        );
+
+        let map2 = deser_map(&serialized_map).unwrap();
+        assert_eq!(map, map2);
     }
 }
