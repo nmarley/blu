@@ -1,3 +1,4 @@
+use age::secrecy::Secret;
 use std::io::{Read, Write};
 use std::str::FromStr;
 
@@ -6,6 +7,9 @@ pub struct BlackBox {
     identities: Vec<age::x25519::Identity>,
 }
 
+// TODO:
+// - passphrase enc/dec (for on-disk key dec/enc only)
+// - seed gen / recovery (24-word seed -> key only)
 impl BlackBox {
     pub fn new(priv_keys: &[&str]) -> BlackBox {
         let identities: Vec<age::x25519::Identity> = priv_keys
@@ -55,5 +59,56 @@ impl BlackBox {
         let _ = reader.read_to_end(&mut decrypted);
 
         Ok(decrypted)
+    }
+}
+
+pub fn passphrase_decrypt(
+    data: &[u8],
+    passphrase: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let decryptor = match age::Decryptor::new(data)? {
+        age::Decryptor::Passphrase(d) => d,
+        _ => unreachable!(),
+    };
+    let mut decrypted = vec![];
+    let mut reader = decryptor.decrypt(&Secret::new(passphrase.to_owned()), None)?;
+    let _ = reader.read_to_end(&mut decrypted);
+
+    Ok(decrypted)
+}
+
+pub fn passphrase_encrypt(
+    data: &[u8],
+    passphrase: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let encryptor = age::Encryptor::with_user_passphrase(Secret::new(passphrase.to_owned()));
+
+    let mut encrypted = vec![];
+    let mut writer = encryptor.wrap_output(&mut encrypted)?;
+    writer.write_all(data)?;
+    writer.finish()?;
+
+    Ok(encrypted)
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::BlackBox;
+
+    pub(crate) const TEST_AGE_SECRET_KEY: &str =
+        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+    pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
+
+    #[test]
+    fn encrypt_decrypt() {
+        let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
+
+        let encrypted = bbox.encrypt(&data).unwrap();
+        // dbg!(&encrypted);
+
+        let decrypted = bbox.decrypt(&encrypted).unwrap();
+        // dbg!(&decrypted);
+        assert_eq!(decrypted, &data[..]);
     }
 }
