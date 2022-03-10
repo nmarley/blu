@@ -6,8 +6,6 @@ See also: [https://rust-cli.github.io/book/index.html](Command line apps in Rust
 
 Clap: <https://docs.rs/clap/latest/clap/>
 
-De-facto most use SQLite library in Rust: <https://rust-lang-nursery.github.io/rust-cookbook/database/sqlite.html>
-
 Multihash for hashing <https://github.com/multiformats/rust-multihash>
 
 Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
@@ -19,6 +17,8 @@ Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
 Add 24-word seed phrase gen / recovery for AGE keys. This will be part of the recovery kit.
 
 Add passphrase encryption for the on-disk private key storage, which must be unlocked before Blu can decrypt antyhing.
+
+Priv key never leaves device (not in sync dir).
 
 ### Search
 
