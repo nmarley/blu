@@ -112,8 +112,12 @@ pub(crate) mod test {
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
         let index = cfg.load_index(&bbox).unwrap();
 
-        for entry in index.map.values() {
-            dbg!(&entry);
-        }
+        dbg!(&index);
+        // TODO: don't dip into .map here, should not know about internals.
+        // fixed once 'map' is not public. This code is more for debug anyway,
+        // not part of a real test.
+        // for entry in index.map.values() {
+        //    dbg!(&entry);
+        // }
     }
 }
