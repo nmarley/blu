@@ -55,10 +55,6 @@ pub struct Config {
     // which key has encrypted the metadata. Informational purposes only.
     // pub metadata_key_id: Option<KeyID>,
 
-    // TODO: should this be a pointer to a map elsewhere on-disk (e.g. a
-    // filename)?
-    pub enc_map: String,
-
     // The datadir should hold encrypted data and metadata.
     // priv keys should never be stored here, even encrypted
     pub datadir: Option<String>,
@@ -74,39 +70,32 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
     let cfg_data = fs::read_to_string(config_filename)?;
 
-    // serde into a Config
     let cfg: Config = serde_json::from_str(&cfg_data)?;
     Ok(cfg)
 }
 
-// pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
-//     base_dir: P,
-// ) -> Result<Config, Box<dyn std::error::Error>> {
 impl Config {
     pub fn load_index<P: AsRef<Path> + std::fmt::Debug>(
         &self,
         base_dir: P,
         bbox: &BlackBox,
     ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
-        let p = base_dir.as_ref().join(&self.datadir()).join("index.dat");
+        // should always sit in same directory with the data
+        // this should _not_ be user-configurable (e.g. should not be in Config)
+        let index_path = base_dir.as_ref().join(&self.datadir()).join("index.dat");
 
         // if error loading this (e.g. file doesn't exist) then return None or
         // build a new index ... consider building a new one instead of None.
-        // let index_data: Vec<u8> = fs::read(p)?;
         let index_data: Vec<u8>;
-        match fs::read(p) {
+        match fs::read(index_path) {
             Ok(data) => {
                 index_data = data;
             }
             Err(_) => return Ok(None),
         };
 
-        // TODO: this hex crap goes away, it should be read directly from disk, as binary (not hex)
-        // hex decode encrypted map
-        let map_enc = hex::decode(&self.enc_map).unwrap();
-
         // decrypt map, result is still serialized
-        let map_ser = bbox.decrypt(&map_enc).unwrap();
+        let map_ser = bbox.decrypt(&index_data).unwrap();
         // deserialize index
         let index = Index::deserialize(&map_ser)?;
         Ok(Some(index))
@@ -142,7 +131,6 @@ pub(crate) mod test {
                 backend: Backend::Local,
                 blu_version: "0.0.1".to_string(),
                 data_key_files: vec![TEST_AGE_SECRET_KEY_PATH.to_string()],
-                enc_map: "".to_string(),
                 ..Default::default()
             }
         );
