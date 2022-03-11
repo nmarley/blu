@@ -1,4 +1,5 @@
-use std::env;
+use std::io::Write;
+use std::{env, fs};
 
 pub mod age;
 pub mod clap;
@@ -45,6 +46,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let enc_map = bbox.encrypt(&serialized_map).unwrap();
     // dbg!(&enc_map);
     println!("{}", &hex::encode(&enc_map));
+
+    let mut file = fs::File::create("test-idx.dat")?;
+    file.write_all(&enc_map)?;
 
     let val = passphrase_encrypt(TEST_AGE_SECRET_KEY.as_bytes(), TEST_PASSPHRASE_ENIGMA)?;
     println!("{}", &hex::encode(&val));

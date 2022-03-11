@@ -89,7 +89,8 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize)]
 pub struct Index {
     map: HashMap<Vec<u8>, Entry>,
 }
@@ -196,6 +197,30 @@ impl Index {
         Ok(map_files)
     }
 }
+
+// use std::io::Write;
+impl fmt::Debug for Index {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = write!(f, "Index {{ map: \n");
+        for (k, v) in self.map.iter() {
+            let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
+        }
+        let _ = write!(f, "}}");
+        Ok(())
+    }
+}
+
+// write!(f, "Point [{} {}]", self.x, self.y)
+
+// f.debug_struct("Entry")
+//     .field("paths", &self.paths)
+//     .field("filetype", &self.filetype)
+//     .field("hash", &hex::encode(&self.hash))
+//     .field("size", &self.size)
+//     .field("enc", &self.enc)
+//     .field("tags", &self.tags)
+//     .field("notes", &self.notes)
+//     .finish()
 
 #[cfg(test)]
 mod test {

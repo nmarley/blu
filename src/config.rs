@@ -98,7 +98,7 @@ impl Config {
             Ok(data) => {
                 index_data = data;
             }
-            Err(e) => return Ok(None),
+            Err(_) => return Ok(None),
         };
 
         // TODO: this hex crap goes away, it should be read directly from disk, as binary (not hex)
@@ -123,8 +123,7 @@ impl Config {
 
 #[cfg(test)]
 pub(crate) mod test {
-    use super::{Backend, BlackBox, Config, KeyID, KeyType};
-    // use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_PASSPHRASE_ENIGMA};
+    use super::{Backend, BlackBox, Config};
     use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_AGE_SECRET_KEY_PATH};
 
     const TEST_CONFIG_DIR_T0: &str = "test/t0/";
@@ -133,12 +132,6 @@ pub(crate) mod test {
 
     #[test]
     fn read_config() {
-        let rando_age_key_id: KeyID = KeyID {
-            r#type: KeyType::Age,
-            public_key: "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
-                .to_string(),
-        };
-
         assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
         let cfg = super::read_config(TEST_CONFIG_DIR_T1).unwrap();
         dbg!(&cfg);
