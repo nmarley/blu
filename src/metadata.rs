@@ -262,30 +262,34 @@ mod test {
     }
 
     // TODO: Fix this to do Index, not just map anymore
-    // #[test]
-    // fn ser_de_index() {
-    //     let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
-    //     let mut map = HashMap::new();
-    //     for e in entries.into_iter() {
-    //         let ehash = e.hash.clone();
-    //         let _ = map.entry(ehash).or_insert(e);
-    //     }
+    #[test]
+    fn ser_de_index() {
+        let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
+        let mut map = HashMap::new();
+        for e in entries.into_iter() {
+            let ehash = e.hash.clone();
+            let _ = map.entry(ehash).or_insert(e);
+        }
 
-    //     let serialized_map = serialize_index(&map).unwrap();
-    //     println!(
-    //         "{} (len {} bytes)",
-    //         &hex::encode(&serialized_map),
-    //         serialized_map.len()
-    //     );
+        let index = Index {
+            version: super::CURRENT_INDEX_VERSION.to_string(),
+            map,
+        };
+        let serialized_idx = serialize_index(&index).unwrap();
+        println!(
+            "{} (len {} bytes)",
+            &hex::encode(&serialized_idx),
+            serialized_idx.len()
+        );
 
-    //     let compressed_ser_map = compress(&serialized_map).unwrap();
-    //     println!(
-    //         "compressed: {} (len {} bytes)",
-    //         &hex::encode(&compressed_ser_map),
-    //         compressed_ser_map.len()
-    //     );
+        let compressed_ser_idx = compress(&serialized_idx).unwrap();
+        println!(
+            "compressed: {} (len {} bytes)",
+            &hex::encode(&compressed_ser_idx),
+            compressed_ser_idx.len()
+        );
 
-    //     let map2 = deser_map(&serialized_map).unwrap();
-    //     assert_eq!(map, map2);
-    // }
+        let idx2 = deserialize_index(&serialized_idx).unwrap();
+        assert_eq!(index, idx2);
+    }
 }
