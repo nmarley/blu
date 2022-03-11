@@ -87,6 +87,17 @@ pub fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct MetaIndex {
+    map: HashMap<Vec<u8>, Entry>,
+}
+
+impl MetaIndex {
+    pub fn serialize(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
 // walk the dir and hash all regular files
 // ignore block/char specials, etc.
 pub fn index<P: AsRef<Path>>(

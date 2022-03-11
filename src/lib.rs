@@ -9,9 +9,8 @@ pub mod metadata;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
-use crate::age::BlackBox;
-// use crate::age::{passphrase_decrypt, passphrase_encrypt};
 use crate::age::passphrase_encrypt;
+use crate::age::BlackBox;
 
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
