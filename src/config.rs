@@ -1,5 +1,7 @@
 use crate::age::BlackBox;
+use crate::metadata::{Entry, Index};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{fs, path::Path};
 
 // TODO: implement backends -- probably a trait
@@ -56,25 +58,23 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     Ok(cfg)
 }
 
-use crate::metadata::{deser_map, Entry};
-use std::collections::HashMap;
 impl Config {
-    pub fn load_hashmap(
-        &self,
-        bbox: &BlackBox,
-    ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
-        // 1. decrypt data in-memory
+    pub fn load_index(&self, bbox: &BlackBox) -> Result<Index, Box<dyn std::error::Error>> {
+        // TODO: this hex crap goes away, it should be read directly from disk, as binary (not hex)
         // hex decode encrypted map
         let map_enc = hex::decode(&self.enc_map).unwrap();
         // decrypt map, result is still serialized
         let map_ser = bbox.decrypt(&map_enc).unwrap();
-        // deserialize hashmap
-        deser_map(&map_ser)
+        // deserialize index
+        let index = Index::deserialize(&map_ser)?;
+        Ok(index)
     }
 }
 
 #[cfg(test)]
 pub(crate) mod test {
+    use super::{Backend, BlackBox, Config, KeyID, KeyType};
+
     const TEST_CONFIG_DIR_T0: &str = "test/t0/";
     const TEST_CONFIG_DIR_T1: &str = "test/t1/";
     const TEST_CONFIG_DIR_T2: &str = "test/t2/";
@@ -82,7 +82,6 @@ pub(crate) mod test {
     // const TEST_PASSPHRASE_ENIGMA: &str = crate::age::test::TEST_PASSPHRASE_ENIGMA;
     const TEST_AGE_SECRET_KEY: &str = crate::age::test::TEST_AGE_SECRET_KEY;
 
-    use super::{Backend, Config, KeyID, KeyType};
     #[test]
     fn read_config() {
         let rando_age_key_id: KeyID = KeyID {
@@ -107,14 +106,13 @@ pub(crate) mod test {
         );
     }
 
-    use super::BlackBox;
     #[test]
     fn dec_t2_files() {
         let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
-        let map_files = cfg.load_hashmap(&bbox).unwrap();
+        let index = cfg.load_index(&bbox).unwrap();
 
-        for entry in map_files.values() {
+        for entry in index.map.values() {
             dbg!(&entry);
         }
     }

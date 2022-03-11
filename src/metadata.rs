@@ -61,26 +61,26 @@ impl fmt::Debug for Encrypted {
     }
 }
 
-pub fn ser_map(map_files: &HashMap<Vec<u8>, Entry>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn ser_map(map_files: &HashMap<Vec<u8>, Entry>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let encoded: Vec<u8> = bincode::serialize(map_files)?;
     // let encoded: Vec<u8> = serde_cbor::to_vec(map_files)?;
     Ok(encoded)
 }
 
-pub fn deser_map(data: &[u8]) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
+fn deser_map(data: &[u8]) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
     let decoded: HashMap<Vec<u8>, Entry> = bincode::deserialize(data)?;
     // let decoded: HashMap<Vec<u8>, Entry> = serde_cbor::from_slice(data)?;
     Ok(decoded)
 }
 
-pub fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
+fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzEncoder::new(data, Compression::fast());
     let mut buf = Vec::new();
     gz.read_to_end(&mut buf)?;
     Ok(buf)
 }
 
-pub fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
+fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzDecoder::new(data);
     let mut buf = Vec::new();
     gz.read_to_end(&mut buf)?;
@@ -115,7 +115,7 @@ impl Index {
 
     // walk the dir and hash all regular files
     // ignore block/char specials, etc.
-    pub fn index<P: AsRef<Path>>(
+    fn index<P: AsRef<Path>>(
         base_dir: P,
     ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
         let mut count = 0usize;
