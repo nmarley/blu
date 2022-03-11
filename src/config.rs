@@ -136,9 +136,8 @@ pub(crate) mod test {
         );
     }
 
-    // TODO: test only load_index by itself, move data decrypt elsewhere
     #[test]
-    fn dec_t2_files() {
+    fn load_index() {
         let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
         let index = cfg.load_index(TEST_CONFIG_DIR_T2, &bbox).unwrap();
@@ -146,5 +145,6 @@ pub(crate) mod test {
         assert!(index.is_some());
         let index = index.unwrap();
         dbg!(&index);
+        // TODO: test index? or is loading and is_some() enough?
     }
 }
