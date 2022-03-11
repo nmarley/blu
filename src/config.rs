@@ -79,20 +79,32 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     Ok(cfg)
 }
 
+// pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
+//     base_dir: P,
+// ) -> Result<Config, Box<dyn std::error::Error>> {
 impl Config {
-    pub fn load_index(&self, bbox: &BlackBox) -> Result<Index, Box<dyn std::error::Error>> {
+    pub fn load_index<P: AsRef<Path> + std::fmt::Debug>(
+        &self,
+        base_dir: P,
+        bbox: &BlackBox,
+    ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
+        let p = base_dir.as_ref().join(&self.datadir()).join("index.dat");
+
+        // if error loading this (e.g. file doesn't exist) then return None or
+        // build a new index ... consider building a new one instead of None.
+        let index_data: Vec<u8> = fs::read(p)?;
+
+        // dbg!(&p);
+
         // TODO: this hex crap goes away, it should be read directly from disk, as binary (not hex)
         // hex decode encrypted map
-        let p = Path::new(&self.datadir()).join("index.dat");
-        dbg!(&p);
-
         let map_enc = hex::decode(&self.enc_map).unwrap();
 
         // decrypt map, result is still serialized
         let map_ser = bbox.decrypt(&map_enc).unwrap();
         // deserialize index
         let index = Index::deserialize(&map_ser)?;
-        Ok(index)
+        Ok(Some(index))
     }
 
     pub fn datadir(&self) -> String {
@@ -142,7 +154,7 @@ pub(crate) mod test {
     fn dec_t2_files() {
         let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
-        let index = cfg.load_index(&bbox).unwrap();
+        let index = cfg.load_index(TEST_CONFIG_DIR_T2, &bbox).unwrap();
 
         dbg!(&index);
     }
