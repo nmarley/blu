@@ -34,8 +34,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // TODO: _iff_ we wanted to chdir before indexing, **HERE** is where to do
     // it
-    let map_files = metadata::MetaIndex::new(dir);
-    //let map_files = metadata::MetaIndex::new(dir)?;
+    let map_files = metadata::Index::new(dir);
+    //let map_files = metadata::Index::new(dir)?;
     // dbg!(&map_files);
     // TODO: ... and HERE is where to change back
 
