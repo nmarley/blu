@@ -34,11 +34,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // TODO: _iff_ we wanted to chdir before indexing, **HERE** is where to do
     // it
-    let map_files = metadata::index(dir)?;
+    let map_files = metadata::MetaIndex::new(dir);
+    //let map_files = metadata::MetaIndex::new(dir)?;
     // dbg!(&map_files);
     // TODO: ... and HERE is where to change back
 
-    let serialized_map = metadata::ser_map(&map_files)?;
+    // let serialized_map = metadata::ser_map(&map_files)?;
+    let serialized_map = map_files.serialize()?;
     dbg!(&serialized_map);
     // println!("{}", &hex::encode(&serialized_map));
 

@@ -89,106 +89,124 @@ pub fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct MetaIndex {
-    map: HashMap<Vec<u8>, Entry>,
+    // TODO: REMOVE THIS AS PUBLIC!! THIS IS ONLY TO LET THE TEST BELOW COMPILE WHILE REFACTORING...
+    pub map: HashMap<Vec<u8>, Entry>,
 }
 
 impl MetaIndex {
-    pub fn serialize(&self) -> Vec<u8> {
-        vec![]
-    }
-}
-
-// walk the dir and hash all regular files
-// ignore block/char specials, etc.
-pub fn index<P: AsRef<Path>>(
-    base_dir: P,
-) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
-    let mut count = 0usize;
-
-    // TODO: only build a new hashmap if we don't get metadata from the DB already
-    let mut map_files = HashMap::new();
-
-    // chdir into base before walking
-    //
-    // otherwise we get paths like "./test/file.txt" if we set the base dir to
-    // "./test"
-
-    // let current_dir = env::current_dir()?;
-    // env::set_current_dir(&base_dir)?;
-
-    let wiz = Wizard::new();
-
-    for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
-        let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
-        dbg!(&bludir);
-        // skip special .blu dir
-        // TODO: fix this shite, normalize path prefixes
-        if entry.path().starts_with(bludir) {
-            continue;
-        }
-
-        // for initial debugging
-        if count == 5 {
-            break;
-        }
-
-        // TODO: allow symlinks?
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        count += 1;
-
-        let metadata = fs::metadata(entry.path())?;
-        let size = metadata.len();
-        println!("{:?}: {:?} bytes", entry.path(), size);
-
-        // TODO: streaming reads here? as some files could be GB in size...
-        let filedata = fs::read(entry.path()).unwrap();
-        let filetype = wiz
-            .get_filetype(&filedata, size)
-            .unwrap_or_else(|_| "other".into());
-        // dbg!(&filetype);
-        let mh = Code::Sha2_512.digest(&filedata);
-
-        // e2 is a reference to the entry in the hashmap ...
-        let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
-            filetype,
-            paths: vec![],
-            size,
-            hash: mh.to_bytes(),
-            enc: None,
-            tags: vec![],
-            notes: None,
-        });
-        // ... so when it gets modified here, it is updated in the hashmap
-        // TODO: fix this, serialize correctly
-        e2.paths.push(entry.path().display().to_string());
+    // note: NOT SURE YET if this is the interface I want to offer ...
+    pub fn new<P: AsRef<Path>>(dir: P) -> Self {
+        // TODO: unwrap, seriously? fix this <<----
+        let map = Self::index(dir).unwrap();
+        MetaIndex { map }
     }
 
-    // only print entries once
-    for e2 in map_files.values() {
-        dbg!(&e2);
-        println!("========================================================================");
+    pub fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let index = MetaIndex {
+            map: deser_map(data)?,
+        };
+        Ok(index)
     }
 
-    // now go back to previous state
-    // env::set_current_dir(current_dir)?;
+    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let x = ser_map(&self.map)?;
+        Ok(x)
+    }
 
-    Ok(map_files)
+    // walk the dir and hash all regular files
+    // ignore block/char specials, etc.
+    pub fn index<P: AsRef<Path>>(
+        base_dir: P,
+    ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
+        let mut count = 0usize;
+
+        // TODO: only build a new hashmap if we don't get metadata from the DB already
+        let mut map_files = HashMap::new();
+
+        // chdir into base before walking
+        //
+        // otherwise we get paths like "./test/file.txt" if we set the base dir to
+        // "./test"
+
+        // let current_dir = env::current_dir()?;
+        // env::set_current_dir(&base_dir)?;
+
+        let wiz = Wizard::new();
+
+        for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
+            let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
+            dbg!(&bludir);
+            // skip special .blu dir
+            // TODO: fix this shite, normalize path prefixes
+            if entry.path().starts_with(bludir) {
+                continue;
+            }
+
+            // for initial debugging
+            if count == 5 {
+                break;
+            }
+
+            // TODO: allow symlinks?
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            count += 1;
+
+            let metadata = fs::metadata(entry.path())?;
+            let size = metadata.len();
+            println!("{:?}: {:?} bytes", entry.path(), size);
+
+            // TODO: streaming reads here? as some files could be GB in size...
+            let filedata = fs::read(entry.path()).unwrap();
+            let filetype = wiz
+                .get_filetype(&filedata, size)
+                .unwrap_or_else(|_| "other".into());
+            // dbg!(&filetype);
+            let mh = Code::Sha2_512.digest(&filedata);
+
+            // e2 is a reference to the entry in the hashmap ...
+            let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
+                filetype,
+                paths: vec![],
+                size,
+                hash: mh.to_bytes(),
+                enc: None,
+                tags: vec![],
+                notes: None,
+            });
+            // ... so when it gets modified here, it is updated in the hashmap
+            // TODO: fix this, serialize correctly
+            e2.paths.push(entry.path().display().to_string());
+        }
+
+        // only print entries once
+        for e2 in map_files.values() {
+            dbg!(&e2);
+            println!("========================================================================");
+        }
+
+        // now go back to previous state
+        // env::set_current_dir(current_dir)?;
+
+        Ok(map_files)
+    }
 }
 
 #[cfg(test)]
 mod test {
+    // use super::MetaIndex;
     const TEST_DIR_T0: &str = "test/t0/";
     // const TEST_DIR_T1: &str = "test/t1/";
     // const TEST_DIR_T2: &str = "test/t2/";
 
     #[test]
     fn index() {
-        let map_files = super::index(TEST_DIR_T0).unwrap();
+        let map_files = super::MetaIndex::new(TEST_DIR_T0);
+
         // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
-        let entry = map_files.get(&art1_hash).unwrap();
+        let entry = map_files.map.get(&art1_hash).unwrap();
 
         assert_eq!(
             super::Entry {
