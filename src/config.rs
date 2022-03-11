@@ -1,7 +1,6 @@
 use crate::age::BlackBox;
-use crate::metadata::{Entry, Index};
+use crate::metadata::Index;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::{fs, path::Path};
 
 // TODO: implement backends -- probably a trait
@@ -74,13 +73,12 @@ impl Config {
 #[cfg(test)]
 pub(crate) mod test {
     use super::{Backend, BlackBox, Config, KeyID, KeyType};
+    // use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_PASSPHRASE_ENIGMA};
+    use crate::age::test::TEST_AGE_SECRET_KEY;
 
     const TEST_CONFIG_DIR_T0: &str = "test/t0/";
     const TEST_CONFIG_DIR_T1: &str = "test/t1/";
     const TEST_CONFIG_DIR_T2: &str = "test/t2/";
-
-    // const TEST_PASSPHRASE_ENIGMA: &str = crate::age::test::TEST_PASSPHRASE_ENIGMA;
-    const TEST_AGE_SECRET_KEY: &str = crate::age::test::TEST_AGE_SECRET_KEY;
 
     #[test]
     fn read_config() {
@@ -113,11 +111,5 @@ pub(crate) mod test {
         let index = cfg.load_index(&bbox).unwrap();
 
         dbg!(&index);
-        // TODO: don't dip into .map here, should not know about internals.
-        // fixed once 'map' is not public. This code is more for debug anyway,
-        // not part of a real test.
-        // for entry in index.map.values() {
-        //    dbg!(&entry);
-        // }
     }
 }

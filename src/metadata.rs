@@ -73,6 +73,7 @@ fn deser_map(data: &[u8]) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error:
     Ok(decoded)
 }
 
+#[allow(dead_code)]
 fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzEncoder::new(data, Compression::fast());
     let mut buf = Vec::new();
@@ -80,6 +81,7 @@ fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+#[allow(dead_code)]
 fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzDecoder::new(data);
     let mut buf = Vec::new();
