@@ -15,7 +15,7 @@ use crate::magic::Wizard;
 
 // TODO: rename this struct ...
 // FileMeta? Archive?
-#[derive(PartialEq, Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
     // paths: Vec<std::path::Path>,
     paths: Vec<String>,
@@ -44,7 +44,7 @@ impl fmt::Debug for Entry {
 }
 
 // TODO: rename ?
-#[derive(PartialEq, Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
     hash: Vec<u8>,
     size: u64,
@@ -91,8 +91,7 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Index {
-    // TODO: REMOVE THIS AS PUBLIC!! THIS IS ONLY TO LET THE TEST BELOW COMPILE WHILE REFACTORING...
-    pub map: HashMap<Vec<u8>, Entry>,
+    map: HashMap<Vec<u8>, Entry>,
 }
 
 impl Index {
@@ -113,6 +112,12 @@ impl Index {
     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let x = ser_map(&self.map)?;
         Ok(x)
+    }
+
+    // TODO: remove? currently used in 1 test below
+    pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Entry, Box<dyn std::error::Error>> {
+        let e = self.map.get(hash).unwrap();
+        Ok(e)
     }
 
     // walk the dir and hash all regular files
@@ -204,11 +209,11 @@ mod test {
 
     #[test]
     fn index() {
-        let map_files = super::Index::new(TEST_DIR_T0);
+        let index = super::Index::new(TEST_DIR_T0);
 
         // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
-        let entry = map_files.map.get(&art1_hash).unwrap();
+        let entry = index.get_entry_ref(&art1_hash).unwrap();
 
         assert_eq!(
             super::Entry {

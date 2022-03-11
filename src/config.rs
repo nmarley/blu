@@ -11,7 +11,7 @@ pub enum Backend {
 }
 
 // for now locked to just Age keys, for simplicity
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum KeyType {
     // RSA,
     // DSA,
@@ -20,7 +20,7 @@ pub enum KeyType {
     Age,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct KeyID {
     r#type: KeyType,
     public_key: String, // TODO: Vec<u8> ?
