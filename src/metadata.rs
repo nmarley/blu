@@ -96,22 +96,19 @@ pub struct Index {
 
 impl Index {
     // note: NOT SURE YET if this is the interface I want to offer ...
-    pub fn new<P: AsRef<Path>>(dir: P) -> Self {
-        // TODO: unwrap, seriously? fix this <<----
-        let map = Self::index(dir).unwrap();
-        Index { map }
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let map = Self::build_index(dir)?;
+        Ok(Index { map })
     }
 
     pub fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let index = Index {
+        Ok(Index {
             map: deser_map(data)?,
-        };
-        Ok(index)
+        })
     }
 
     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let x = ser_map(&self.map)?;
-        Ok(x)
+        ser_map(&self.map)
     }
 
     // TODO: remove? currently used in 1 test below
@@ -122,7 +119,7 @@ impl Index {
 
     // walk the dir and hash all regular files
     // ignore block/char specials, etc.
-    fn index<P: AsRef<Path>>(
+    fn build_index<P: AsRef<Path>>(
         base_dir: P,
     ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
         let mut count = 0usize;
@@ -211,7 +208,7 @@ mod test {
 
     #[test]
     fn index() {
-        let index = Index::new(TEST_DIR_T0);
+        let index = Index::new(TEST_DIR_T0).unwrap();
 
         // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();

@@ -92,9 +92,14 @@ impl Config {
 
         // if error loading this (e.g. file doesn't exist) then return None or
         // build a new index ... consider building a new one instead of None.
-        let index_data: Vec<u8> = fs::read(p)?;
-
-        // dbg!(&p);
+        // let index_data: Vec<u8> = fs::read(p)?;
+        let index_data: Vec<u8>;
+        match fs::read(p) {
+            Ok(data) => {
+                index_data = data;
+            }
+            Err(e) => return Ok(None),
+        };
 
         // TODO: this hex crap goes away, it should be read directly from disk, as binary (not hex)
         // hex decode encrypted map
@@ -155,7 +160,6 @@ pub(crate) mod test {
         let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
         let index = cfg.load_index(TEST_CONFIG_DIR_T2, &bbox).unwrap();
-
         dbg!(&index);
     }
 }

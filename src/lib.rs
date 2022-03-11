@@ -24,8 +24,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // let key = read-key-from-.blu/metadata.json;
     // decrypt somehow?
 
-    // let dir = "."; // TODO: use Args
-
     let args: Vec<String> = env::args().collect();
     let dir = &args[1];
 
@@ -34,13 +32,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // TODO: _iff_ we wanted to chdir before indexing, **HERE** is where to do
     // it
-    let map_files = metadata::Index::new(dir);
-    //let map_files = metadata::Index::new(dir)?;
-    // dbg!(&map_files);
+    let index = metadata::Index::new(dir)?;
+    // dbg!(&index);
     // TODO: ... and HERE is where to change back
 
     // let serialized_map = metadata::ser_map(&map_files)?;
-    let serialized_map = map_files.serialize()?;
+    let serialized_map = index.serialize()?;
     dbg!(&serialized_map);
     // println!("{}", &hex::encode(&serialized_map));
 
