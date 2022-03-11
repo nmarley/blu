@@ -8,7 +8,6 @@ pub struct BlackBox {
 }
 
 // TODO:
-// - passphrase enc/dec (for on-disk key dec/enc only)
 // - seed gen / recovery (24-word seed -> key only)
 impl BlackBox {
     pub fn new(priv_keys: &[&str]) -> BlackBox {
@@ -97,11 +96,11 @@ pub mod test {
 
     pub(crate) const TEST_AGE_SECRET_KEY: &str =
         "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
-    // pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
+    pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
     pub(crate) const TEST_AGE_SECRET_KEY_PATH: &str = "test/blu_secrets/blu.key";
 
     #[test]
-    fn encrypt_decrypt() {
+    fn asym_encrypt_decrypt() {
         let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
         let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
 
@@ -110,6 +109,19 @@ pub mod test {
 
         let decrypted = bbox.decrypt(&encrypted).unwrap();
         // dbg!(&decrypted);
+
+        assert_eq!(decrypted, &data[..]);
+    }
+
+    #[test]
+    fn sym_encrypt_decrypt() {
+        let data: [u8; 16] = [
+            0xde, 0xae, 0xbe, 0xef, 0xde, 0xae, 0xbe, 0xef, 0xde, 0xae, 0xbe, 0xef, 0xbe, 0xef,
+            0xbe, 0xef,
+        ];
+        let encrypted = super::passphrase_encrypt(&data, TEST_PASSPHRASE_ENIGMA).unwrap();
+        let decrypted = super::passphrase_decrypt(&encrypted, TEST_PASSPHRASE_ENIGMA).unwrap();
+
         assert_eq!(decrypted, &data[..]);
     }
 }
