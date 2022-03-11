@@ -1,9 +1,7 @@
 {
   "backend": "Local",
   "blu_version": "0.0.1",
-  "data_keys": [
-    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94"
-  ],
+  "data_key_files": ["test/blu_secrets/blu.key"],
   "metadata_key_id": {
     "type": "Age",
     "public_key": "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
