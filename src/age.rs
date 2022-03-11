@@ -98,6 +98,7 @@ pub mod test {
     pub(crate) const TEST_AGE_SECRET_KEY: &str =
         "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
     // pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
+    pub(crate) const TEST_AGE_SECRET_KEY_PATH: &str = "test/blu_secrets/blu.key";
 
     #[test]
     fn encrypt_decrypt() {
