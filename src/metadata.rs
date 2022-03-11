@@ -202,21 +202,23 @@ impl Index {
 
 #[cfg(test)]
 mod test {
-    // use super::Index;
+    use super::{compress, deser_map, ser_map, Entry, HashMap, Index};
+    use multihash::{Code, MultihashDigest};
+
     const TEST_DIR_T0: &str = "test/t0/";
     // const TEST_DIR_T1: &str = "test/t1/";
     // const TEST_DIR_T2: &str = "test/t2/";
 
     #[test]
     fn index() {
-        let index = super::Index::new(TEST_DIR_T0);
+        let index = Index::new(TEST_DIR_T0);
 
         // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry = index.get_entry_ref(&art1_hash).unwrap();
 
         assert_eq!(
-            super::Entry {
+            Entry {
                 paths: vec![
                     "test/t0/art1_dup_en.txt".to_string(),
                     "test/t0/article1_en.txt".to_string()
@@ -232,12 +234,10 @@ mod test {
         );
     }
 
-    use super::*;
-
-    fn test_entry(content: &str) -> super::Entry {
+    fn test_entry(content: &str) -> Entry {
         let b = content.as_bytes();
         let mh = Code::Sha2_512.digest(b);
-        super::Entry {
+        Entry {
             paths: vec!["testfile.txt".to_string()],
             filetype: "ASCII text".to_string(),
             size: b.len() as u64,
