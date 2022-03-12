@@ -127,9 +127,7 @@ impl Index {
     pub fn read<R: io::Read>(mut stream: R) -> Result<Self, Box<dyn std::error::Error>> {
         let mut compressed = Vec::new();
         let _ = stream.read_to_end(&mut compressed)?;
-        dbg!(&compressed);
         let serialized = decompress(&compressed)?;
-        dbg!(&serialized);
         Self::deserialize(&serialized)
     }
 
