@@ -10,6 +10,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
+use crate::age::BlackBox;
 use crate::config::KeyID;
 use crate::magic::Wizard;
 
@@ -117,16 +118,25 @@ impl Index {
 
     // Intended to be read/written to /from disk, but UNENCRYPTED. Should we
     // also integrate BlackBox here?
-    pub fn write<W: io::Write>(&self, mut stream: W) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write<W: io::Write>(
+        &self,
+        mut stream: W,
+        bbox: &BlackBox,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let serialized = &self.serialize()?;
         let compressed = compress(&serialized)?;
-        let _ = stream.write_all(&compressed);
+        let encrypted = bbox.encrypt(&compressed)?;
+        let _ = stream.write_all(&encrypted);
         Ok(())
     }
 
-    pub fn read<R: io::Read>(mut stream: R) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut compressed = Vec::new();
-        let _ = stream.read_to_end(&mut compressed)?;
+    pub fn read<R: io::Read>(
+        mut stream: R,
+        bbox: &BlackBox,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut encrypted = Vec::new();
+        let _ = stream.read_to_end(&mut encrypted)?;
+        let compressed = bbox.decrypt(&encrypted)?;
         let serialized = decompress(&compressed)?;
         Self::deserialize(&serialized)
     }

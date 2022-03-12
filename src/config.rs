@@ -94,11 +94,8 @@ impl Config {
             Err(_) => return Ok(None),
         };
 
-        // decrypt idx, result is still serialized + compressed
-        let idx_ser = bbox.decrypt(&index_data)?;
-
         // read index
-        let index = Index::read(&idx_ser[..])?;
+        let index = Index::read(&index_data[..], bbox)?;
 
         Ok(Some(index))
     }

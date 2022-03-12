@@ -33,13 +33,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let index = metadata::Index::new(dir)?;
     // TODO: ... and HERE is where to change back
 
-    let mut compressed = Vec::new();
-    let _ = index.write(&mut compressed)?;
-
+    let mut enc_idx = Vec::new();
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let enc_idx = bbox.encrypt(&compressed).unwrap();
+    let _ = index.write(&mut enc_idx, &bbox)?;
 
-    let mut file = fs::File::create("test-idx-compressed.dat")?;
+    let mut file = fs::File::create("test-idx-enc.dat")?;
     file.write_all(&enc_idx)?;
 
     Ok(())
