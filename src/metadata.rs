@@ -107,11 +107,11 @@ impl Index {
         })
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         deserialize_index(data)
     }
 
-    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         serialize_index(&self)
     }
 
