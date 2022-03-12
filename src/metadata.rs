@@ -154,7 +154,6 @@ impl Index {
     ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
         let mut count = 0usize;
 
-        // TODO: only build a new hashmap if we don't get metadata from the DB already
         let mut map_files = HashMap::new();
 
         // chdir into base before walking
@@ -169,9 +168,9 @@ impl Index {
 
         for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
             let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
-            dbg!(&bludir);
+            // dbg!(&bludir);
             // skip special .blu dir
-            // TODO: fix this shite, normalize path prefixes
+            // TODO: normalize path prefixes
             if entry.path().starts_with(bludir) {
                 continue;
             }
@@ -210,15 +209,15 @@ impl Index {
                 notes: None,
             });
             // ... so when it gets modified here, it is updated in the hashmap
-            // TODO: fix this, serialize correctly
+            // TODO: fix this, properly serialize paths
             e2.paths.push(entry.path().display().to_string());
         }
 
         // only print entries once
-        for e2 in map_files.values() {
-            dbg!(&e2);
-            println!("========================================================================");
-        }
+        // for e2 in map_files.values() {
+        //     dbg!(&e2);
+        //     println!("========================================================================");
+        // }
 
         // now go back to previous state
         // env::set_current_dir(current_dir)?;
