@@ -120,14 +120,16 @@ impl Index {
     pub fn write<W: io::Write>(&self, mut stream: W) -> Result<(), Box<dyn std::error::Error>> {
         let serialized = &self.serialize()?;
         let compressed = compress(&serialized)?;
-        let _ = stream.write(&compressed);
+        let _ = stream.write_all(&compressed);
         Ok(())
     }
 
     pub fn read<R: io::Read>(mut stream: R) -> Result<Self, Box<dyn std::error::Error>> {
         let mut compressed = Vec::new();
-        let _ = stream.read(&mut compressed)?;
+        let _ = stream.read_to_end(&mut compressed)?;
+        dbg!(&compressed);
         let serialized = decompress(&compressed)?;
+        dbg!(&serialized);
         Self::deserialize(&serialized)
     }
 
