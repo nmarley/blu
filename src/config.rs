@@ -94,10 +94,13 @@ impl Config {
             Err(_) => return Ok(None),
         };
 
-        // decrypt map, result is still serialized
-        let map_ser = bbox.decrypt(&index_data).unwrap();
-        // deserialize index
-        let index = Index::deserialize(&map_ser)?;
+        // decrypt idx, result is still serialized + compressed
+        let idx_ser = bbox.decrypt(&index_data).unwrap();
+
+        // read index
+        let index = Index::read(&idx_ser[..])?;
+        // println!
+
         Ok(Some(index))
     }
 
