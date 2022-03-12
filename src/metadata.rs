@@ -115,6 +115,22 @@ impl Index {
         serialize_index(&self)
     }
 
+    // Intended to be read/written to /from disk, but UNENCRYPTED. Should we
+    // also integrate BlackBox here?
+    pub fn write<W: io::Write>(&self, mut stream: W) -> Result<(), Box<dyn std::error::Error>> {
+        let serialized = &self.serialize()?;
+        let compressed = compress(&serialized)?;
+        let _ = stream.write(&compressed);
+        Ok(())
+    }
+
+    pub fn read<R: io::Read>(mut stream: R) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut compressed = Vec::new();
+        let _ = stream.read(&mut compressed)?;
+        let serialized = decompress(&compressed)?;
+        Self::deserialize(&serialized)
+    }
+
     // TODO: remove? currently used in 1 test below
     pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Entry, Box<dyn std::error::Error>> {
         let e = self.map.get(hash).unwrap();
