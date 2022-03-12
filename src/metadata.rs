@@ -113,7 +113,7 @@ impl Index {
     }
 
     fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        serialize_index(&self)
+        serialize_index(self)
     }
 
     // Intended to be read/written to /from disk, but UNENCRYPTED. Should we
@@ -123,7 +123,7 @@ impl Index {
         mut stream: W,
         bbox: &BlackBox,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let serialized = &self.serialize()?;
+        let serialized = self.serialize()?;
         let compressed = compress(&serialized)?;
         let encrypted = bbox.encrypt(&compressed)?;
         let _ = stream.write_all(&encrypted);
@@ -230,7 +230,7 @@ impl Index {
 // use std::io::Write;
 impl fmt::Debug for Index {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = write!(f, "Index {{ version: {}, map: \n", &self.version);
+        let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
         for (k, v) in self.map.iter() {
             let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
         }

@@ -86,11 +86,8 @@ impl Config {
 
         // if error loading this (e.g. file doesn't exist) then return None or
         // build a new index ... consider building a new one instead of None.
-        let index_data: Vec<u8>;
-        match fs::read(index_path) {
-            Ok(data) => {
-                index_data = data;
-            }
+        let index_data: Vec<u8> = match fs::read(index_path) {
+            Ok(data) => data,
             Err(_) => return Ok(None),
         };
 
