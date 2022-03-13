@@ -1,5 +1,5 @@
 use crate::age::BlackBox;
-use crate::metadata::Index;
+use crate::metadata::{Index, INDEX_FILENAME};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -46,17 +46,10 @@ const DEFAULT_DATADIR: &str = ".blu/data";
 pub struct Config {
     pub backend: Backend,
     pub blu_version: String,
-
-    // TODO: Should be pointer to files somewhere else? Yeah ...
-    // pub data_keys: Vec<String>,
     pub data_key_files: Vec<String>,
 
-    // The purpose of the `metadata_key_id` field is just to show in the config,
-    // which key has encrypted the metadata. Informational purposes only.
-    // pub metadata_key_id: Option<KeyID>,
-
-    // The datadir should hold encrypted data and metadata.
-    // priv keys should never be stored here, even encrypted
+    // The datadir should hold encrypted data and metadata. Priv keys should
+    // never be stored here, even encrypted.
     pub datadir: Option<String>,
 }
 
@@ -82,7 +75,8 @@ impl Config {
     ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
         // should always sit in same directory with the data
         // this should _not_ be user-configurable (e.g. should not be in Config)
-        let index_path = base_dir.as_ref().join(&self.datadir()).join("index.dat");
+        let index_path = base_dir.as_ref().join(&self.datadir()).join(INDEX_FILENAME);
+        // todo: filter index.dat
 
         // if error loading this (e.g. file doesn't exist) then return None or
         // build a new index ... consider building a new one instead of None.
@@ -134,7 +128,7 @@ pub(crate) mod test {
 
     #[test]
     fn load_index() {
-        let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
         let index = cfg.load_index(TEST_CONFIG_DIR_T2, &bbox).unwrap();
 

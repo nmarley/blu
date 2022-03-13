@@ -26,19 +26,28 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let dir = &args[1];
 
-    // let cfg = config::read_config(dir);
+    let cfg = config::read_config(dir)?;
     // dbg!(&cfg);
 
+    let abs_datadir = std::path::Path::new(dir).join(cfg.datadir());
+    // dbg!(&abs_datadir);
+
+    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let index = match cfg.load_index(dir, &bbox)? {
+        None => metadata::Index::new(dir)?,
+        Some(idx) => idx,
+    };
     // TODO: _iff_ we want to chdir before indexing, **HERE** is where
-    let index = metadata::Index::new(dir)?;
+    // let index = metadata::Index::new(dir)?;
     // TODO: ... and HERE is where to change back
 
-    let mut enc_idx = Vec::new();
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let _ = index.write(&mut enc_idx, &bbox)?;
+    let data_idx = metadata::index_data_dir(&abs_datadir, &index)?;
+    dbg!(&data_idx);
 
-    let mut file = fs::File::create("test-idx-enc.dat")?;
-    file.write_all(&enc_idx)?;
+    // let mut enc_idx = Vec::new();
+    // let _ = index.write(&mut enc_idx, &bbox)?;
+    // let mut file = fs::File::create("test-idx-enc.dat")?;
+    // file.write_all(&enc_idx)?;
 
     Ok(())
 }

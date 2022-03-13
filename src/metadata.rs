@@ -14,6 +14,8 @@ use crate::age::BlackBox;
 use crate::config::KeyID;
 use crate::magic::Wizard;
 
+pub const INDEX_FILENAME: &str = "index.dat";
+
 // TODO: rename this struct ...
 // FileMeta? Archive?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
@@ -148,8 +150,6 @@ impl Index {
     fn build_index<P: AsRef<Path>>(
         base_dir: P,
     ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
-        let mut count = 0usize;
-
         let mut map_files = HashMap::new();
 
         // chdir into base before walking
@@ -174,7 +174,6 @@ impl Index {
             if !entry.file_type().is_file() {
                 continue;
             }
-            count += 1;
 
             let metadata = fs::metadata(entry.path())?;
             let size = metadata.len();
@@ -213,6 +212,44 @@ impl Index {
 
         Ok(map_files)
     }
+}
+
+// TODO TODO (2022-03-13): What do we need from this output?
+//
+//
+//
+// walk the data dir and check archives against the index
+// ignore block/char specials, etc.
+pub fn index_data_dir<P: AsRef<Path>>(
+    data_dir: P,
+    idx: &Index,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("data_dir: {:?}", data_dir.as_ref());
+
+    let index_file = data_dir.as_ref().join(INDEX_FILENAME);
+
+    for elem in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
+        // TODO: allow symlinks?
+        if !elem.file_type().is_file() {
+            continue;
+        }
+
+        if elem.path() == index_file {
+            // println!("HO, HO, HO!! We found the index!!!");
+            continue;
+        }
+
+        // todo: filter index.dat
+        let metadata = fs::metadata(elem.path())?;
+        let size = metadata.len();
+            println!("{:?}: {:?} bytes", elem.path(), size);
+
+        // TODO: streaming reads here? as some files could be GB in size...
+        // let filedata = fs::read(elem.path()).unwrap();
+        // let mh = Code::Sha2_512.digest(&filedata);
+    }
+
+    Ok(())
 }
 
 impl fmt::Debug for Index {
