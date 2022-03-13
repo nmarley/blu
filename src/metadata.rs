@@ -216,7 +216,11 @@ impl Index {
 
 // TODO TODO (2022-03-13): What do we need from this output?
 //
+// enchash -> found? or
+// enchash -> entry?
 //
+// How to handle plain entries that are NOT in enc dir?
+// How to handle enc entries that are NOT in plain dir?
 //
 // walk the data dir and check archives against the index
 // ignore block/char specials, etc.
@@ -242,7 +246,7 @@ pub fn index_data_dir<P: AsRef<Path>>(
         // todo: filter index.dat
         let metadata = fs::metadata(elem.path())?;
         let size = metadata.len();
-            println!("{:?}: {:?} bytes", elem.path(), size);
+        println!("{:?}: {:?} bytes", elem.path(), size);
 
         // TODO: streaming reads here? as some files could be GB in size...
         // let filedata = fs::read(elem.path()).unwrap();
