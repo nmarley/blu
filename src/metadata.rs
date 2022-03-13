@@ -74,7 +74,6 @@ fn deserialize_index(data: &[u8]) -> Result<Index, Box<dyn std::error::Error>> {
     Ok(decoded)
 }
 
-#[allow(dead_code)]
 fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzEncoder::new(data, Compression::fast());
     let mut buf = Vec::new();
@@ -82,7 +81,6 @@ fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[allow(dead_code)]
 fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzDecoder::new(data);
     let mut buf = Vec::new();
@@ -90,7 +88,6 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-// #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[derive(PartialEq, Serialize, Deserialize)]
 pub struct Index {
     map: HashMap<Vec<u8>, Entry>,
@@ -99,7 +96,6 @@ pub struct Index {
 
 const CURRENT_INDEX_VERSION: &str = "0.1.0";
 impl Index {
-    // note: NOT SURE YET if this is the interface I want to offer ...
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         let map = Self::build_index(dir)?;
         Ok(Index {
@@ -116,8 +112,8 @@ impl Index {
         serialize_index(self)
     }
 
-    // Intended to be read/written to /from disk, but UNENCRYPTED. Should we
-    // also integrate BlackBox here?
+    // read / write serialization methods integrate BlackBox for automagic
+    // decryption / encryption when reading from disk
     pub fn write<W: io::Write>(
         &self,
         mut stream: W,
@@ -168,16 +164,10 @@ impl Index {
 
         for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
             let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
-            // dbg!(&bludir);
             // skip special .blu dir
             // TODO: normalize path prefixes
             if entry.path().starts_with(bludir) {
                 continue;
-            }
-
-            // for initial debugging
-            if count == 5 {
-                break;
             }
 
             // TODO: allow symlinks?
@@ -188,14 +178,13 @@ impl Index {
 
             let metadata = fs::metadata(entry.path())?;
             let size = metadata.len();
-            println!("{:?}: {:?} bytes", entry.path(), size);
+            // println!("{:?}: {:?} bytes", entry.path(), size);
 
             // TODO: streaming reads here? as some files could be GB in size...
             let filedata = fs::read(entry.path()).unwrap();
             let filetype = wiz
                 .get_filetype(&filedata, size)
                 .unwrap_or_else(|_| "other".into());
-            // dbg!(&filetype);
             let mh = Code::Sha2_512.digest(&filedata);
 
             // e2 is a reference to the entry in the hashmap ...
@@ -226,7 +215,6 @@ impl Index {
     }
 }
 
-// use std::io::Write;
 impl fmt::Debug for Index {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
@@ -250,8 +238,6 @@ mod test {
     #[test]
     fn index() {
         let index = Index::new(TEST_DIR_T0).unwrap();
-
-        // dbg!(&map_files);
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry = index.get_entry_ref(&art1_hash).unwrap();
 
@@ -286,7 +272,6 @@ mod test {
         }
     }
 
-    // TODO: Fix this to do Index, not just map anymore
     #[test]
     fn ser_de_index() {
         let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
