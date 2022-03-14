@@ -524,7 +524,7 @@ mod test {
         let deleted_entries = index.update(TEST_DIR_T3).unwrap();
 
         assert_eq!(deleted_entries, vec![Entry {
-            paths: HashSet::from(["./test/t3/article1_lu.txt".into()]),
+            paths: HashSet::from(["test/t3/article1_lu.txt".into()]),
             filetype: "Unicode text, UTF-8 text".to_string(),
             hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
             size: 223,
@@ -536,8 +536,8 @@ mod test {
         let entries = index.get_all_entry_refs();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0], &Entry {
-            // paths: HashSet::from(["./test/t3/article1_en.txt".into(), "./test/t3/art1_dup_en.txt".into()]),
-            paths: HashSet::from(["./test/t3/article-one.txt".into()]),
+            // paths: HashSet::from(["test/t3/article1_en.txt".into(), "test/t3/art1_dup_en.txt".into()]),
+            paths: HashSet::from(["test/t3/article-one.txt".into()]),
             filetype: "ASCII text".to_string(),
             hash: hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap(),
             size: 171,
