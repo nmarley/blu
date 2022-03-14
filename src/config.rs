@@ -51,6 +51,9 @@ pub struct Config {
     // The datadir should hold encrypted data and metadata. Priv keys should
     // never be stored here, even encrypted.
     pub datadir: Option<String>,
+
+    // should blu delete dangling Encrypted from filesystem?
+    pub prune_dangling: bool,
 }
 
 pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
