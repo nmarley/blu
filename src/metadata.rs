@@ -229,15 +229,6 @@ impl Index {
         }
         to_encrypt
     }
-
-
-    // TODO: reverse of the above method -- how to get the difference when
-    // enc_idx has items that don't exist in plain idx?
-    // Also make tests for it
-    //
-    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // to make sure this returns the right values)
-
 }
 
 impl fmt::Debug for Index {
@@ -309,6 +300,41 @@ impl EncryptedIndex {
 
         Ok(map)
     }
+
+    // TODO: restore is a bit more tricky than imagined ... the entries in the
+    // regular Index **MUST** exist, otherwise we have no path data to restore
+    // to, nor do we know how to reconcile it.
+    //
+    //     - did it decrypt properly?
+    //     - what is the hash/size of the un-encrypted file?
+    //
+    //
+    // // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist
+    // // in the plain Index.
+    // //
+    // // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // // to make sure this returns the right values)
+    // pub fn difference_idx<'a, 'b>(&'a self, idx: &'b Index) -> Vec<&'a Encrypted> {
+    //     let mut to_decrypt: Vec<&Encrypted> = vec![];
+    //     for enc in self.map.values() {
+    //         match &enc.enc {
+    //             None => to_decrypt.push(enc),
+    //             Some(enc) => {
+    //                 // if enc_idx.get_entry_ref(&enc.hash).is_err() {
+    //                 //     to_decrypt.push(enc);
+    //                 // }
+    //             }
+    //         };
+    //     }
+    //     to_decrypt
+    // }
+
+    // TODO: reverse of the above method -- how to get the difference when
+    // enc_idx has items that don't exist in plain idx?
+    // Also make tests for it
+    //
+    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // to make sure this returns the right values)
 }
 
 impl fmt::Debug for EncryptedIndex {
