@@ -206,6 +206,11 @@ impl Index {
         Ok(map_files)
     }
 
+    // get all entries in the index
+    pub fn get_all_entry_refs(&self) -> Vec<&Entry> {
+        self.map.values().map(|e| e).collect::<Vec<&Entry>>()
+    }
+
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
     // in the EncIdx.
     //
@@ -240,7 +245,6 @@ impl Index {
             not_found.insert(k.to_vec());
         }
         dbg!(&not_found);
-
 
         let wiz = Wizard::new();
         for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
@@ -494,24 +498,35 @@ mod test {
         assert_eq!(index, idx2);
     }
 
-    // const TEST_DIR_T1: &str = "test/t1/";
-    // const TEST_DIR_T2: &str = "test/t2/";
-    //
+    const TEST_AGE_SECRET_KEY: &str =
+        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+    const TEST_DIR_T3: &str = "test/t3/";
+    use crate::age::BlackBox;
+    use crate::config;
     // TODO: THIS!! Ensure deleted entries are returned, and add a
     // same-hash,different-path entry for good measure.
+
     #[test]
     fn update_idx() {
-        assert!(false);
-        // let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
-        // let mut map = HashMap::new();
-        // for e in entries.into_iter() {
-        //     let ehash = e.hash.clone();
-        //     let _ = map.entry(ehash).or_insert(e);
-        // }
+        let cfg = config::read_config(TEST_DIR_T3).unwrap();
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut index = match cfg.load_index(TEST_DIR_T3, &bbox).unwrap() {
+            None => Index::new(TEST_DIR_T3).unwrap(),
+            Some(idx) => idx,
+        };
+        let deleted_entries = index.update(TEST_DIR_T3).unwrap();
 
-        // let index = Index {
-        //     version: super::CURRENT_INDEX_VERSION.to_string(),
-        //     map,
-        // };
+        assert_eq!(deleted_entries, vec![&Entry {
+            paths: HashSet::from([PathBuf::from("./test/t3/article1_lu.txt")]),
+            filetype: "Unicode text, UTF-8 text".to_string(),
+            hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
+            size: 223,
+            enc: None,
+            tags: vec![],
+            notes: None,
+        }]);
+
+        // ensure any deleted entries were removed from index
+        // TODO ...
     }
 }
