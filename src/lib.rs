@@ -34,16 +34,18 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // dbg!(&abs_datadir);
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let index = match cfg.load_index(dir, &bbox)? {
+    let mut index = match cfg.load_index(dir, &bbox)? {
         None => metadata::Index::new(dir)?,
         Some(idx) => idx,
     };
+    // let mut index = metadata::Index::new(dir)?;
 
     // Consider the case in which we load the index from disk as above, but
     // entries are either added to or deleted from the disk. The index will have
     // to be updated to reflect this. Something like:
     //
-    // index.update(dir)?;
+    let deleted_entries = index.update(dir)?;
+    dbg!(&deleted_entries);
     //
     // What do we do with files which were removed from the disk?
     //
@@ -77,7 +79,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&to_encrypt);
 
     // writing index for testing
-    // write_index_file(&index, &bbox);
+    // let _ = write_index_file(&index, &bbox)?;
 
     Ok(())
 }

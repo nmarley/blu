@@ -19,7 +19,7 @@ pub const INDEX_FILENAME: &str = "index.dat";
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
     // TODO: Should this be an ordered set instead?
-    paths: Vec<PathBuf>,
+    paths: HashSet<PathBuf>,
     filetype: String,
 
     hash: Vec<u8>,
@@ -189,7 +189,7 @@ impl Index {
             // e2 is a reference to the entry in the hashmap ...
             let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
                 filetype,
-                paths: vec![],
+                paths: HashSet::new(),
                 size,
                 hash: mh.to_bytes(),
                 enc: None,
@@ -197,7 +197,7 @@ impl Index {
                 notes: None,
             });
             // ... so when it gets modified here, it is updated in the hashmap
-            e2.paths.push(elem.into_path());
+            e2.paths.insert(elem.into_path());
         }
 
         // now go back to previous state
@@ -228,7 +228,8 @@ impl Index {
 
     // Update the index
     // TODO(2022-03-14): What to return here? List of removed?
-    fn update<'a, P: AsRef<Path>>(
+    // TODO(2022-03-14): TEST THIS!!!!
+    pub fn update<'a, P: AsRef<Path>>(
         &'a mut self,
         base_dir: P,
     ) -> Result<Vec<&'a Entry>, Box<dyn std::error::Error>> {
@@ -238,6 +239,8 @@ impl Index {
             // TODO: Better to deref k (*k)?  Would that move the value?
             not_found.insert(k.to_vec());
         }
+        dbg!(&not_found);
+
 
         let wiz = Wizard::new();
         for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
@@ -267,7 +270,7 @@ impl Index {
             // entry is a reference to the entry in the hashmap ...
             let entry = self.map.entry(mh.to_bytes()).or_insert(Entry {
                 filetype,
-                paths: vec![],
+                paths: HashSet::new(),
                 size,
                 hash: mh.to_bytes(),
                 enc: None,
@@ -275,7 +278,7 @@ impl Index {
                 notes: None,
             });
             // ... so when it gets modified here, it is updated in the hashmap
-            entry.paths.push(elem.into_path());
+            entry.paths.insert(elem.into_path());
         }
 
         // for (k, v)
@@ -415,6 +418,7 @@ impl fmt::Debug for EncryptedIndex {
 mod test {
     use super::{compress, deserialize_index, serialize_index, Entry, HashMap, Index};
     use multihash::{Code, MultihashDigest};
+    use std::collections::HashSet;
     use std::path::PathBuf;
 
     const TEST_DIR_T0: &str = "test/t0/";
@@ -426,13 +430,14 @@ mod test {
         let index = Index::new(TEST_DIR_T0).unwrap();
         let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry = index.get_entry_ref(&art1_hash).unwrap();
+        let paths = HashSet::from([
+            PathBuf::from("test/t0/art1_dup_en.txt"),
+            PathBuf::from("test/t0/article1_en.txt"),
+        ]);
 
         assert_eq!(
             Entry {
-                paths: vec![
-                    PathBuf::from("test/t0/art1_dup_en.txt"),
-                    PathBuf::from("test/t0/article1_en.txt"),
-                ],
+                paths,
                 filetype: "ASCII text".to_string(),
                 size: 171,
                 hash: art1_hash,
@@ -448,7 +453,7 @@ mod test {
         let b = content.as_bytes();
         let mh = Code::Sha2_512.digest(b);
         Entry {
-            paths: vec![PathBuf::from("testfile.txt")],
+            paths: HashSet::from([PathBuf::from("testfile.txt")]),
             filetype: "ASCII text".to_string(),
             size: b.len() as u64,
             hash: mh.to_bytes(),
@@ -487,5 +492,26 @@ mod test {
 
         let idx2 = deserialize_index(&serialized_idx).unwrap();
         assert_eq!(index, idx2);
+    }
+
+    // const TEST_DIR_T1: &str = "test/t1/";
+    // const TEST_DIR_T2: &str = "test/t2/";
+    //
+    // TODO: THIS!! Ensure deleted entries are returned, and add a
+    // same-hash,different-path entry for good measure.
+    #[test]
+    fn update_idx() {
+        assert!(false);
+        // let entries: Vec<Entry> = vec![test_entry("one"), test_entry("two")];
+        // let mut map = HashMap::new();
+        // for e in entries.into_iter() {
+        //     let ehash = e.hash.clone();
+        //     let _ = map.entry(ehash).or_insert(e);
+        // }
+
+        // let index = Index {
+        //     version: super::CURRENT_INDEX_VERSION.to_string(),
+        //     map,
+        // };
     }
 }
