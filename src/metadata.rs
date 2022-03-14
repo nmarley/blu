@@ -165,25 +165,25 @@ impl Index {
 
         let wiz = Wizard::new();
 
-        for entry in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
+        for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
             let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
             // skip special .blu dir
             // TODO: normalize path prefixes
-            if entry.path().starts_with(bludir) {
+            if elem.path().starts_with(bludir) {
                 continue;
             }
 
             // TODO: allow symlinks?
-            if !entry.file_type().is_file() {
+            if !elem.file_type().is_file() {
                 continue;
             }
 
-            let metadata = fs::metadata(entry.path())?;
+            let metadata = fs::metadata(elem.path())?;
             let size = metadata.len();
-            // println!("{:?}: {:?} bytes", entry.path(), size);
+            // println!("{:?}: {:?} bytes", elem.path(), size);
 
             // TODO: streaming reads here? as some files could be GB in size...
-            let filedata = fs::read(entry.path()).unwrap();
+            let filedata = fs::read(elem.path()).unwrap();
             let filetype = wiz
                 .get_filetype(&filedata, size)
                 .unwrap_or_else(|_| "other".into());
@@ -201,14 +201,8 @@ impl Index {
             });
             // ... so when it gets modified here, it is updated in the hashmap
             // TODO: fix this, properly serialize paths
-            e2.paths.push(entry.path().display().to_string());
+            e2.paths.push(elem.path().display().to_string());
         }
-
-        // only print entries once
-        // for e2 in map_files.values() {
-        //     dbg!(&e2);
-        //     println!("========================================================================");
-        // }
 
         // now go back to previous state
         // env::set_current_dir(current_dir)?;
