@@ -26,7 +26,8 @@ pub struct Entry {
 
     hash: Vec<u8>,
     size: u64,
-    enc: Option<Encrypted>,
+    // TODO: make private again
+    pub enc: Option<Encrypted>,
 
     tags: Vec<String>,     // TODO: proper tagging, or... ?
     notes: Option<String>, // free-form text
@@ -49,7 +50,8 @@ impl fmt::Debug for Entry {
 // TODO: rename ?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
-    hash: Vec<u8>,
+    // TODO: private
+    pub hash: Vec<u8>,
     size: u64,
     keys: Vec<KeyID>,
 }
@@ -92,7 +94,8 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
 
 #[derive(PartialEq, Serialize, Deserialize)]
 pub struct Index {
-    map: HashMap<Vec<u8>, Entry>,
+    // TODO: remove this (move diff methods to internal metadata module)
+    pub map: HashMap<Vec<u8>, Entry>,
     version: String,
 }
 
@@ -225,59 +228,62 @@ impl fmt::Debug for Index {
     }
 }
 
-// TODO TODO (2022-03-13): What do we need from this output?
-//
-// enchash -> found? or
-// enchash -> entry?
-//
-// How to handle plain entries that are NOT in enc dir?
-// How to handle enc entries that are NOT in plain dir?
-//
-// walk the data dir and check archives against the index
-// ignore block/char specials, etc.
-pub fn index_data_dir<P: AsRef<Path>>(
-    data_dir: P,
-    idx: &Index,
-) -> Result<EncryptedIndex, Box<dyn std::error::Error>> {
-    println!("data_dir: {:?}", data_dir.as_ref());
-
-    let index_file = data_dir.as_ref().join(INDEX_FILENAME);
-    let idx = EncryptedIndex::new();
-
-    for elem in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
-        // TODO: allow symlinks?
-        if !elem.file_type().is_file() {
-            continue;
-        }
-
-        if elem.path() == index_file {
-            // println!("HO, HO, HO!! We found the index!!!");
-            continue;
-        }
-
-        // todo: filter index.dat
-        let metadata = fs::metadata(elem.path())?;
-        let size = metadata.len();
-        println!("{:?}: {:?} bytes", elem.path(), size);
-
-        // TODO: streaming reads here? as some files could be GB in size...
-        // let filedata = fs::read(elem.path()).unwrap();
-        // let mh = Code::Sha2_512.digest(&filedata);
-    }
-
-    Ok(idx)
-}
-
 #[derive(PartialEq)]
 pub struct EncryptedIndex {
     map: HashMap<Vec<u8>, Encrypted>,
     // datadir?
 }
 impl EncryptedIndex {
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            map: Self::build_index(dir)?,
+        })
+    }
+
+    pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Encrypted, Box<dyn std::error::Error>> {
+        let e = self.map.get(hash).unwrap();
+        Ok(e)
+    }
+
+    // walk the data dir and check archives against the index
+    // ignore block/char specials, etc.
+    pub fn build_index<P: AsRef<Path>>(
+        data_dir: P,
+    ) -> Result<HashMap<Vec<u8>, Encrypted>, Box<dyn std::error::Error>> {
+        // println!("data_dir: {:?}", data_dir.as_ref());
+        let index_file = data_dir.as_ref().join(INDEX_FILENAME);
+        let mut map = HashMap::new();
+
+        for elem in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
+            // TODO: allow symlinks?
+            if !elem.file_type().is_file() {
+                continue;
+            }
+
+            // filter index.dat
+            if elem.path() == index_file {
+                // println!("HO, HO, HO!! We found the index!!!");
+                continue;
+            }
+
+            let metadata = fs::metadata(elem.path())?;
+            let size = metadata.len();
+            // println!("{:?}: {:?} bytes", elem.path(), size);
+
+            // TODO: streaming reads here? as some files could be GB in size...
+            let filedata = fs::read(elem.path()).unwrap();
+            let mh = Code::Sha2_512.digest(&filedata);
+
+            let encrypted = map.entry(mh.to_bytes()).or_insert({
+                Encrypted {
+                    hash: mh.to_bytes(),
+                    size,
+                    keys: vec![],
+                }
+            });
         }
+
+        Ok(map)
     }
 }
 

@@ -11,6 +11,8 @@ const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
 
+use crate::metadata::Entry;
+
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: handle cmd-line args w/clap
@@ -41,9 +43,41 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // let index = metadata::Index::new(dir)?;
     // TODO: ... and HERE is where to change back
 
-    let data_idx = metadata::index_data_dir(&abs_datadir, &index)?;
-    dbg!(&data_idx);
+    let enc_idx = metadata::EncryptedIndex::new(&abs_datadir)?;
+    dbg!(&enc_idx);
 
+    // There are 2 operations:
+    //     a. archive - encrypt+de-duplicate new files
+    //     b. restore - restore from backup
+    //
+    // now, difference method depends on the operation...
+    //
+    // if we are doing in archive (encrypted any new files), then we want to get
+    // the difference of:
+    //
+    // index - enc_idx
+    // ... ignoring any extra encrypted files lying around.
+    //
+    // Likewise, a restore operation would be the opposite.
+    // enc_idx - index
+    // ... restore any left over, ignoring un-encrypted files lying around.
+
+    // ... now, how to get difference?
+    let mut to_encrypt: Vec<&Entry> = vec![];
+    for entry in index.map.values() {
+        match &entry.enc {
+            None => to_encrypt.push(entry),
+            Some(enc) => {
+                match enc_idx.get_entry_ref(&enc.hash) {
+                    Ok(_) => {} // all good
+                    Err(_) => to_encrypt.push(entry),
+                }
+            }
+        };
+    }
+    dbg!(&to_encrypt);
+
+    // writing index for testing
     // let mut enc_idx = Vec::new();
     // let _ = index.write(&mut enc_idx, &bbox)?;
     // let mut file = fs::File::create("test-idx-enc.dat")?;
