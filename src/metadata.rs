@@ -527,9 +527,15 @@ mod test {
         }]);
 
         let entries = index.get_all_entry_refs();
-        assert_eq!(entries.len(), 2);
-
-        // ensure any deleted entries were removed from index
-        // TODO ...
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], &Entry {
+            paths: HashSet::from([PathBuf::from("./test/t3/article1_en.txt"), PathBuf::from("./test/t3/art1_dup_en.txt")]),
+            filetype: "ASCII text".to_string(),
+            hash: hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap(),
+            size: 171,
+            enc: None,
+            tags: vec![],
+            notes: None,
+        });
     }
 }
