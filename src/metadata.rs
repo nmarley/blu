@@ -242,10 +242,8 @@ impl Index {
         let mut new_paths: HashMap<Vec<u8>, HashSet<PathBuf>> = HashMap::new();
 
         for hash in self.map.keys() {
-            if new_index.map.contains_key(hash) {
-                if let Some(e) = new_index.map.get(hash) {
-                    new_paths.insert(hash.to_vec(), e.paths.clone());
-                }
+            if let Some(entry) = new_index.map.get(hash) {
+                new_paths.insert(hash.to_vec(), entry.paths.clone());
             } else {
                 to_delete.insert(hash.to_vec());
             }
