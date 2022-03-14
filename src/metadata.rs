@@ -272,15 +272,21 @@ impl Index {
             let _was_there = not_found.remove(&(mh.to_bytes()));
 
             // entry is a reference to the entry in the hashmap ...
-            let entry = self.map.entry(mh.to_bytes()).or_insert(Entry {
-                filetype,
-                paths: HashSet::new(),
-                size,
-                hash: mh.to_bytes(),
-                enc: None,
-                tags: vec![],
-                notes: None,
-            });
+            let entry = self
+                .map
+                .entry(mh.to_bytes())
+                .and_modify(|e| {
+                    e.paths = HashSet::new();
+                })
+                .or_insert(Entry {
+                    filetype,
+                    paths: HashSet::new(),
+                    size,
+                    hash: mh.to_bytes(),
+                    enc: None,
+                    tags: vec![],
+                    notes: None,
+                });
             // ... so when it gets modified here, it is updated in the hashmap
             entry.paths.insert(elem.into_path());
         }
