@@ -1,5 +1,8 @@
 # TODO
 
+- 2022-03-14: binary that just takes a dir and writes a brand new index file to disk
+
+
 Uses <https://crates.io/crates/age> for encryption.
 
 See also: [https://rust-cli.github.io/book/index.html](Command line apps in Rust).
