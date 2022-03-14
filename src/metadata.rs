@@ -214,6 +214,17 @@ impl Index {
     }
 }
 
+impl fmt::Debug for Index {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
+        for (k, v) in self.map.iter() {
+            let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
+        }
+        let _ = write!(f, "}}");
+        Ok(())
+    }
+}
+
 // TODO TODO (2022-03-13): What do we need from this output?
 //
 // enchash -> found? or
@@ -227,10 +238,11 @@ impl Index {
 pub fn index_data_dir<P: AsRef<Path>>(
     data_dir: P,
     idx: &Index,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<EncryptedIndex, Box<dyn std::error::Error>> {
     println!("data_dir: {:?}", data_dir.as_ref());
 
     let index_file = data_dir.as_ref().join(INDEX_FILENAME);
+    let idx = EncryptedIndex::new();
 
     for elem in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
         // TODO: allow symlinks?
@@ -253,12 +265,25 @@ pub fn index_data_dir<P: AsRef<Path>>(
         // let mh = Code::Sha2_512.digest(&filedata);
     }
 
-    Ok(())
+    Ok(idx)
 }
 
-impl fmt::Debug for Index {
+#[derive(PartialEq)]
+pub struct EncryptedIndex {
+    map: HashMap<Vec<u8>, Encrypted>,
+    // datadir?
+}
+impl EncryptedIndex {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+}
+
+impl fmt::Debug for EncryptedIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
+        let _ = writeln!(f, "EncryptedIndex {{ map: ");
         for (k, v) in self.map.iter() {
             let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
         }
