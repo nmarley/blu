@@ -208,7 +208,7 @@ impl Index {
 
     // get all entries in the index
     pub fn get_all_entry_refs(&self) -> Vec<&Entry> {
-        self.map.values().map(|e| e).collect::<Vec<&Entry>>()
+        self.map.values().collect::<Vec<&Entry>>()
     }
 
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
@@ -231,71 +231,35 @@ impl Index {
         to_encrypt
     }
 
-    // Update the index
-    // TODO(2022-03-14): What to return here? List of removed?
-    // TODO(2022-03-14): TEST THIS!!!!
+    // Update the index, return a list of removed (dangling) entries
     pub fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
     ) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
-        // TODO: how to mark found/notfound?
-        let mut not_found: HashSet<Vec<u8>> = HashSet::new();
-        for k in self.map.keys() {
-            // TODO: Better to deref k (*k)?  Would that move the value?
-            not_found.insert(k.to_vec());
-        }
-        dbg!(&not_found);
+        let new_index = Self::new(base_dir)?;
 
-        let wiz = Wizard::new();
-        for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
-            let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
-            // skip special .blu dir
-            // TODO: normalize path prefixes
-            if elem.path().starts_with(bludir) {
-                continue;
+        let mut to_delete: HashSet<Vec<u8>> = HashSet::new();
+        let mut new_paths: HashMap<Vec<u8>, HashSet<PathBuf>> = HashMap::new();
+
+        for hash in self.map.keys() {
+            if new_index.map.contains_key(hash) {
+                if let Some(e) = new_index.map.get(hash) {
+                    new_paths.insert(hash.to_vec(), e.paths.clone());
+                }
+            } else {
+                to_delete.insert(hash.to_vec());
             }
-
-            // TODO: allow symlinks?
-            if !elem.file_type().is_file() {
-                continue;
-            }
-
-            let metadata = fs::metadata(elem.path())?;
-            let size = metadata.len();
-            // TODO: streaming reads here? as some files could be GB in size...
-            let filedata = fs::read(elem.path()).unwrap();
-            let filetype = wiz
-                .get_filetype(&filedata, size)
-                .unwrap_or_else(|_| "other".into());
-            let mh = Code::Sha2_512.digest(&filedata);
-
-            let _was_there = not_found.remove(&(mh.to_bytes()));
-
-            // entry is a reference to the entry in the hashmap ...
-            let entry = self
-                .map
-                .entry(mh.to_bytes())
-                .and_modify(|e| {
-                    e.paths = HashSet::new();
-                })
-                .or_insert(Entry {
-                    filetype,
-                    paths: HashSet::new(),
-                    size,
-                    hash: mh.to_bytes(),
-                    enc: None,
-                    tags: vec![],
-                    notes: None,
-                });
-            // ... so when it gets modified here, it is updated in the hashmap
-            entry.paths.insert(elem.into_path());
         }
 
-        // for (k, v)
         let mut deleted_entries: Vec<Entry> = vec![];
-        for hash in not_found.iter() {
-            let entry = self.map.remove(hash).unwrap();
-            deleted_entries.push(entry);
+        for hash in to_delete.into_iter() {
+            let e = self.map.remove(&hash).unwrap();
+            deleted_entries.push(e);
+        }
+
+        for (k, v) in new_paths {
+            let entry = self.map.get_mut(&k).unwrap();
+            entry.paths = v;
         }
 
         Ok(deleted_entries)
@@ -430,7 +394,6 @@ mod test {
     use super::{compress, deserialize_index, serialize_index, Entry, HashMap, Index};
     use multihash::{Code, MultihashDigest};
     use std::collections::HashSet;
-    use std::path::PathBuf;
 
     const TEST_DIR_T0: &str = "test/t0/";
     // const TEST_DIR_T1: &str = "test/t1/";
