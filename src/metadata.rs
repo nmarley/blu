@@ -49,6 +49,9 @@ impl fmt::Debug for Entry {
 // TODO: rename ?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
+    // in theory, there won't be multiple files in the encrypted datadir with
+    // the same hash
+    path: PathBuf,
     hash: Vec<u8>,
     size: u64,
     keys: Vec<KeyID>,
@@ -57,6 +60,7 @@ pub struct Encrypted {
 impl fmt::Debug for Encrypted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encrypted")
+            .field("path", &self.path)
             .field("hash", &hex::encode(&self.hash))
             .field("size", &self.size)
             .field("keys", &self.keys)
@@ -295,6 +299,7 @@ impl EncryptedIndex {
 
             let encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
+                    path: elem.into_path(),
                     hash: mh.to_bytes(),
                     size,
                     keys: vec![],
