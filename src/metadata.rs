@@ -233,7 +233,7 @@ impl Index {
         base_dir: P,
     ) -> Result<Vec<&'a Entry>, Box<dyn std::error::Error>> {
         // TODO: how to mark found/notfound?
-        let not_found: HashSet<Vec<u8>> = HashSet::new();
+        let mut not_found: HashSet<Vec<u8>> = HashSet::new();
         for k in self.map.keys() {
             // TODO: Better to deref k (*k)?  Would that move the value?
             not_found.insert(k.to_vec());
@@ -262,21 +262,29 @@ impl Index {
                 .unwrap_or_else(|_| "other".into());
             let mh = Code::Sha2_512.digest(&filedata);
 
-            // e2 is a reference to the entry in the hashmap ...
-            // let e2 = self.map.entry(mh.to_bytes()).or_insert(Entry {
-            //     filetype,
-            //     paths: vec![],
-            //     size,
-            //     hash: mh.to_bytes(),
-            //     enc: None,
-            //     tags: vec![],
-            //     notes: None,
-            // });
-            // // ... so when it gets modified here, it is updated in the hashmap
-            // e2.paths.push(elem.into_path());
+            let _was_there = not_found.remove(&(mh.to_bytes()));
+
+            // entry is a reference to the entry in the hashmap ...
+            let entry = self.map.entry(mh.to_bytes()).or_insert(Entry {
+                filetype,
+                paths: vec![],
+                size,
+                hash: mh.to_bytes(),
+                enc: None,
+                tags: vec![],
+                notes: None,
+            });
+            // ... so when it gets modified here, it is updated in the hashmap
+            entry.paths.push(elem.into_path());
         }
 
-        Ok(map_files)
+        // for (k, v)
+        let mut deleted_entries: Vec<&Entry> = vec![];
+        for hash in not_found.iter() {
+            deleted_entries.push(self.get_entry_ref(hash)?);
+        }
+
+        Ok(deleted_entries)
     }
 }
 
@@ -337,7 +345,7 @@ impl EncryptedIndex {
             let filedata = fs::read(elem.path()).unwrap();
             let mh = Code::Sha2_512.digest(&filedata);
 
-            let encrypted = map.entry(mh.to_bytes()).or_insert({
+            let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
                     path: elem.into_path(),
                     hash: mh.to_bytes(),

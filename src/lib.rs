@@ -82,6 +82,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn write_index_file(index: &Index, bbox: &BlackBox) -> Result<(), Box<dyn std::error::Error>> {
     let mut enc_idx_bytes = Vec::new();
     let _ = index.write(&mut enc_idx_bytes, bbox)?;
