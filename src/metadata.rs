@@ -18,7 +18,6 @@ pub const INDEX_FILENAME: &str = "index.dat";
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
-    // TODO: Should this be an ordered set instead?
     paths: HashSet<PathBuf>,
     filetype: String,
 
