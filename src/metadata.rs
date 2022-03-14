@@ -26,8 +26,7 @@ pub struct Entry {
 
     hash: Vec<u8>,
     size: u64,
-    // TODO: make private again
-    pub enc: Option<Encrypted>,
+    enc: Option<Encrypted>,
 
     tags: Vec<String>,     // TODO: proper tagging, or... ?
     notes: Option<String>, // free-form text
@@ -50,8 +49,7 @@ impl fmt::Debug for Entry {
 // TODO: rename ?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
-    // TODO: private
-    pub hash: Vec<u8>,
+    hash: Vec<u8>,
     size: u64,
     keys: Vec<KeyID>,
 }
@@ -94,8 +92,7 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
 
 #[derive(PartialEq, Serialize, Deserialize)]
 pub struct Index {
-    // TODO: remove this (move diff methods to internal metadata module)
-    pub map: HashMap<Vec<u8>, Entry>,
+    map: HashMap<Vec<u8>, Entry>,
     version: String,
 }
 
@@ -208,6 +205,23 @@ impl Index {
         // env::set_current_dir(current_dir)?;
 
         Ok(map_files)
+    }
+
+    // Return a Vec of Entries that exist in this Index, but do *not* yet exist
+    // in the EncIdx.
+    pub fn difference_enc_idx<'a, 'b>(&'a self, enc_idx: &'b EncryptedIndex) -> Vec<&'a Entry> {
+        let mut to_encrypt: Vec<&Entry> = vec![];
+        for entry in self.map.values() {
+            match &entry.enc {
+                None => to_encrypt.push(entry),
+                Some(enc) => {
+                    if enc_idx.get_entry_ref(&enc.hash).is_err() {
+                        to_encrypt.push(entry);
+                    }
+                }
+            };
+        }
+        to_encrypt
     }
 }
 

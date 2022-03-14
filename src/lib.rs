@@ -62,21 +62,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // enc_idx - index
     // ... restore any left over, ignoring un-encrypted files lying around.
 
-    // ... now, to get to difference:
-    // TODO: move this to metadata module as a method, and write tests for this
-    // (incl. a tX dir w/some enc files and some not, to make sure this returns
-    // the right values)
-    let mut to_encrypt: Vec<&Entry> = vec![];
-    for entry in index.map.values() {
-        match &entry.enc {
-            None => to_encrypt.push(entry),
-            Some(enc) => {
-                if enc_idx.get_entry_ref(&enc.hash).is_err() {
-                    to_encrypt.push(entry);
-                }
-            }
-        };
-    }
+    // get difference:
+    let to_encrypt = index.difference_enc_idx(&enc_idx);
     dbg!(&to_encrypt);
 
     // writing index for testing
