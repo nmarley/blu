@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::{env, fs};
 
 const TEST_AGE_SECRET_KEY: &str =
