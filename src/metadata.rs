@@ -234,10 +234,10 @@ impl Index {
     // Update the index
     // TODO(2022-03-14): What to return here? List of removed?
     // TODO(2022-03-14): TEST THIS!!!!
-    pub fn update<'a, P: AsRef<Path>>(
-        &'a mut self,
+    pub fn update<P: AsRef<Path>>(
+        &mut self,
         base_dir: P,
-    ) -> Result<Vec<&'a Entry>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
         // TODO: how to mark found/notfound?
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
         for k in self.map.keys() {
@@ -286,9 +286,10 @@ impl Index {
         }
 
         // for (k, v)
-        let mut deleted_entries: Vec<&Entry> = vec![];
+        let mut deleted_entries: Vec<Entry> = vec![];
         for hash in not_found.iter() {
-            deleted_entries.push(self.get_entry_ref(hash)?);
+            let entry = self.map.remove(hash).unwrap();
+            deleted_entries.push(entry);
         }
 
         Ok(deleted_entries)
@@ -516,7 +517,7 @@ mod test {
         };
         let deleted_entries = index.update(TEST_DIR_T3).unwrap();
 
-        assert_eq!(deleted_entries, vec![&Entry {
+        assert_eq!(deleted_entries, vec![Entry {
             paths: HashSet::from(["./test/t3/article1_lu.txt".into()]),
             filetype: "Unicode text, UTF-8 text".to_string(),
             hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
