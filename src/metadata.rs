@@ -2,7 +2,7 @@ use flate2::bufread::{GzDecoder, GzEncoder};
 use flate2::Compression;
 use multihash::{Code, MultihashDigest};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{
     fmt, fs,
     io::{self, Read},
@@ -16,8 +16,6 @@ use crate::magic::Wizard;
 
 pub const INDEX_FILENAME: &str = "index.dat";
 
-// TODO: rename this struct ...
-// FileMeta? Archive?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
     // TODO: Should this be an ordered set instead?
@@ -46,7 +44,6 @@ impl fmt::Debug for Entry {
     }
 }
 
-// TODO: rename ?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
     // in theory, there won't be multiple files in the encrypted datadir with
@@ -143,7 +140,6 @@ impl Index {
         Self::deserialize(&serialized)
     }
 
-    // TODO: remove? currently used in 1 test below
     pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Entry, Box<dyn std::error::Error>> {
         let e = self.map.get(hash).unwrap();
         Ok(e)
@@ -229,6 +225,59 @@ impl Index {
         }
         to_encrypt
     }
+
+    // Update the index
+    // TODO(2022-03-14): What to return here? List of removed?
+    fn update<'a, P: AsRef<Path>>(
+        &'a mut self,
+        base_dir: P,
+    ) -> Result<Vec<&'a Entry>, Box<dyn std::error::Error>> {
+        // TODO: how to mark found/notfound?
+        let not_found: HashSet<Vec<u8>> = HashSet::new();
+        for k in self.map.keys() {
+            // TODO: Better to deref k (*k)?  Would that move the value?
+            not_found.insert(k.to_vec());
+        }
+
+        let wiz = Wizard::new();
+        for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
+            let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
+            // skip special .blu dir
+            // TODO: normalize path prefixes
+            if elem.path().starts_with(bludir) {
+                continue;
+            }
+
+            // TODO: allow symlinks?
+            if !elem.file_type().is_file() {
+                continue;
+            }
+
+            let metadata = fs::metadata(elem.path())?;
+            let size = metadata.len();
+            // TODO: streaming reads here? as some files could be GB in size...
+            let filedata = fs::read(elem.path()).unwrap();
+            let filetype = wiz
+                .get_filetype(&filedata, size)
+                .unwrap_or_else(|_| "other".into());
+            let mh = Code::Sha2_512.digest(&filedata);
+
+            // e2 is a reference to the entry in the hashmap ...
+            // let e2 = self.map.entry(mh.to_bytes()).or_insert(Entry {
+            //     filetype,
+            //     paths: vec![],
+            //     size,
+            //     hash: mh.to_bytes(),
+            //     enc: None,
+            //     tags: vec![],
+            //     notes: None,
+            // });
+            // // ... so when it gets modified here, it is updated in the hashmap
+            // e2.paths.push(elem.into_path());
+        }
+
+        Ok(map_files)
+    }
 }
 
 impl fmt::Debug for Index {
@@ -307,6 +356,12 @@ impl EncryptedIndex {
     //
     //     - did it decrypt properly?
     //     - what is the hash/size of the un-encrypted file?
+    //
+    //  If there are any EncryptedEntries that cannot be reconciled to the plain
+    //  index, those would be considered dangling. We don't know how to restore
+    //  them, so to do so would be to give a best guess. It could still be done
+    //  into a .restored/ dir with the plain hash as the filename and a message
+    //  about what happened (dangling enc files found, restored to .restored/, etc.)
     //
     //
     // // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist

@@ -39,6 +39,17 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => metadata::Index::new(dir)?,
         Some(idx) => idx,
     };
+
+    // Consider the case in which we load the index from disk as above, but
+    // entries are either added to or deleted from the disk. The index will have
+    // to be updated to reflect this. Something like:
+    //
+    // index.update(dir)?;
+    //
+    // What do we do with files which were removed from the disk?
+    //
+    // Delete them from encrypted archive also? Or leave them to dangle?
+
     // TODO: _iff_ we want to chdir before indexing, **HERE** is where
     // let index = metadata::Index::new(dir)?;
     // TODO: ... and HERE is where to change back
