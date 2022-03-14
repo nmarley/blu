@@ -10,8 +10,7 @@ pub mod metadata;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
-
-use crate::metadata::Entry;
+use crate::metadata::Index;
 
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,10 +77,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&to_encrypt);
 
     // writing index for testing
-    // let mut enc_idx = Vec::new();
-    // let _ = index.write(&mut enc_idx, &bbox)?;
-    // let mut file = fs::File::create("test-idx-enc.dat")?;
-    // file.write_all(&enc_idx)?;
+    // write_index_file(&index, &bbox);
 
+    Ok(())
+}
+
+fn write_index_file(index: &Index, bbox: &BlackBox) -> Result<(), Box<dyn std::error::Error>> {
+    let mut enc_idx_bytes = Vec::new();
+    let _ = index.write(&mut enc_idx_bytes, bbox)?;
+    let mut file = fs::File::create("test-idx-enc.dat")?;
+    file.write_all(&enc_idx_bytes)?;
     Ok(())
 }
