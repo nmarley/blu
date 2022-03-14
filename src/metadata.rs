@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::{
     fmt, fs,
     io::{self, Read},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
 
@@ -20,8 +20,8 @@ pub const INDEX_FILENAME: &str = "index.dat";
 // FileMeta? Archive?
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
-    // paths: Vec<std::path::Path>,
-    paths: Vec<String>,
+    // TODO: Should this be an ordered set instead?
+    paths: Vec<PathBuf>,
     filetype: String,
 
     hash: Vec<u8>,
@@ -197,8 +197,7 @@ impl Index {
                 notes: None,
             });
             // ... so when it gets modified here, it is updated in the hashmap
-            // TODO: fix this, properly serialize paths
-            e2.paths.push(elem.path().display().to_string());
+            e2.paths.push(elem.into_path());
         }
 
         // now go back to previous state
@@ -322,6 +321,7 @@ impl fmt::Debug for EncryptedIndex {
 mod test {
     use super::{compress, deserialize_index, serialize_index, Entry, HashMap, Index};
     use multihash::{Code, MultihashDigest};
+    use std::path::PathBuf;
 
     const TEST_DIR_T0: &str = "test/t0/";
     // const TEST_DIR_T1: &str = "test/t1/";
@@ -336,8 +336,8 @@ mod test {
         assert_eq!(
             Entry {
                 paths: vec![
-                    "test/t0/art1_dup_en.txt".to_string(),
-                    "test/t0/article1_en.txt".to_string()
+                    PathBuf::from("test/t0/art1_dup_en.txt"),
+                    PathBuf::from("test/t0/article1_en.txt"),
                 ],
                 filetype: "ASCII text".to_string(),
                 size: 171,
@@ -354,7 +354,7 @@ mod test {
         let b = content.as_bytes();
         let mh = Code::Sha2_512.digest(b);
         Entry {
-            paths: vec!["testfile.txt".to_string()],
+            paths: vec![PathBuf::from("testfile.txt")],
             filetype: "ASCII text".to_string(),
             size: b.len() as u64,
             hash: mh.to_bytes(),
