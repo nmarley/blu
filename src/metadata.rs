@@ -186,8 +186,8 @@ impl Index {
                 .unwrap_or_else(|_| "other".into());
             let mh = Code::Sha2_512.digest(&filedata);
 
-            // e2 is a reference to the entry in the hashmap ...
-            let e2 = map_files.entry(mh.to_bytes()).or_insert(Entry {
+            // entry is a reference to the entry in the hashmap ...
+            let entry = map_files.entry(mh.to_bytes()).or_insert(Entry {
                 filetype,
                 paths: HashSet::new(),
                 size,
@@ -197,7 +197,7 @@ impl Index {
                 notes: None,
             });
             // ... so when it gets modified here, it is updated in the hashmap
-            e2.paths.insert(elem.into_path());
+            entry.paths.insert(elem.into_path());
         }
 
         // now go back to previous state
