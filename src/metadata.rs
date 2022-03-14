@@ -43,6 +43,12 @@ impl fmt::Debug for Entry {
     }
 }
 
+impl Entry {
+    pub fn get_enc(&mut self) -> Option<Encrypted> {
+        self.enc.clone()
+    }
+}
+
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
 pub struct Encrypted {
     // in theory, there won't be multiple files in the encrypted datadir with

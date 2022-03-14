@@ -3,6 +3,7 @@ use std::env;
 pub mod age;
 pub mod clap;
 pub mod config;
+pub mod dir;
 pub mod magic;
 pub mod metadata;
 
@@ -48,6 +49,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // What do we do with files which were removed from the disk?
     //
     // Delete them from encrypted archive also? Or leave them to dangle?
+    //
+    //
+    //
+    //
+    // Note: this is one form of "dangling"
+    //
+    // the other way is to crawl enc dir (EncryptedIndex) and attempt to
+    // reconcile back to the index. If no reconciliation is possible (no hash
+    // matches for decrypted data), then those are truly "dangling".
+    let dir_manager = dir::Manager::new(&abs_datadir);
+    if cfg.prune_dangling {
+        for mut entry in deleted_entries.into_iter() {
+            if let Some(enc) = entry.get_enc() {
+                dir_manager.delete_encrypted(&enc)?;
+            }
+        }
+    }
 
     // TODO: _iff_ we want to chdir before indexing, **HERE** is where
     // let index = metadata::Index::new(dir)?;

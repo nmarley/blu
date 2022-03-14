@@ -52,6 +52,8 @@ pub struct Config {
     // never be stored here, even encrypted.
     pub datadir: Option<String>,
 
+    // should blu delete Encrypted from filesystem, if the plain version was deleted?
+    pub prune_deleted: bool,
     // should blu delete dangling Encrypted from filesystem?
     pub prune_dangling: bool,
 }
