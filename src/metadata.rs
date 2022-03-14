@@ -526,6 +526,9 @@ mod test {
             notes: None,
         }]);
 
+        let entries = index.get_all_entry_refs();
+        assert_eq!(entries.len(), 2);
+
         // ensure any deleted entries were removed from index
         // TODO ...
     }
