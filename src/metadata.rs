@@ -209,6 +209,9 @@ impl Index {
 
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
     // in the EncIdx.
+    //
+    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // to make sure this returns the right values)
     pub fn difference_enc_idx<'a, 'b>(&'a self, enc_idx: &'b EncryptedIndex) -> Vec<&'a Entry> {
         let mut to_encrypt: Vec<&Entry> = vec![];
         for entry in self.map.values() {
@@ -223,6 +226,15 @@ impl Index {
         }
         to_encrypt
     }
+
+
+    // TODO: reverse of the above method -- how to get the difference when
+    // enc_idx has items that don't exist in plain idx?
+    // Also make tests for it
+    //
+    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // to make sure this returns the right values)
+
 }
 
 impl fmt::Debug for Index {
