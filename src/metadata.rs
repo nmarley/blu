@@ -49,7 +49,7 @@ impl Entry {
     }
 
     pub fn read_filedata(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let path = self.paths.iter().nth(0).unwrap();
+        let path = self.paths.iter().next().unwrap();
         let data = fs::read(path)?;
         Ok(data)
     }

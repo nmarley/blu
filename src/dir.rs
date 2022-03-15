@@ -28,7 +28,7 @@ impl Manager {
     pub fn write_encrypted(&self, data: &[u8]) -> Result<Encrypted, Box<dyn std::error::Error>> {
         // if this worked, caller should replace the None in the index w/an Encrypted
 
-        let mh = hash::hash(&data);
+        let mh = hash::hash(data);
         let hash = mh.to_bytes();
 
         let path = self.abs_path_for(&hash)?;
@@ -78,8 +78,7 @@ impl Manager {
             .join(&hash_str[0..1])
             .join(&hash_str[0..3])
             .join(&hash_str[0..5])
-            .join(&hash_str)
-            .into())
+            .join(&hash_str))
     }
 }
 
