@@ -32,6 +32,9 @@ impl Manager {
         let hash = mh.to_bytes();
 
         let path = self.abs_path_for(&hash)?;
+
+        // TODO: CREATE THE PATH (directories)
+
         let size = hash.len() as u64;
 
         let _ = fs::write(&path, &data)?;
