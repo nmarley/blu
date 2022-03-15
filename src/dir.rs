@@ -28,11 +28,15 @@ impl Manager {
     pub fn write_encrypted(&self, data: &[u8]) -> Result<Encrypted, Box<dyn std::error::Error>> {
         // if this worked, caller should replace the None in the index w/an Encrypted
 
-        // hash data
         let mh = hash::hash(&data);
         let hash = mh.to_bytes();
+
         let path = self.abs_path_for(&hash)?;
         let size = hash.len() as u64;
+
+        let _ = fs::write(&path, &data)?;
+
+        // hash data
         let enc = Encrypted {
             path,
             hash,

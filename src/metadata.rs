@@ -68,10 +68,10 @@ impl Entry {
 pub struct Encrypted {
     // in theory, there won't be multiple files in the encrypted datadir with
     // the same hash
-    path: PathBuf,
-    hash: Vec<u8>,
-    size: u64,
-    keys: Vec<KeyID>,
+    pub path: PathBuf,
+    pub hash: Vec<u8>,
+    pub size: u64,
+    pub keys: Vec<KeyID>,
 }
 
 impl fmt::Debug for Encrypted {
@@ -250,14 +250,14 @@ impl Index {
     //
     // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
     // to make sure this returns the right values)
-    pub fn difference_enc_idx<'a, 'b>(&'a self, enc_idx: &'b EncryptedIndex) -> Vec<&'a Entry> {
-        let mut to_encrypt: Vec<&Entry> = vec![];
+    pub fn difference_enc_idx(&self, enc_idx: &EncryptedIndex) -> Vec<Entry> {
+        let mut to_encrypt: Vec<Entry> = vec![];
         for entry in self.map.values() {
             match &entry.enc {
-                None => to_encrypt.push(entry),
+                None => to_encrypt.push(entry.clone()),
                 Some(enc) => {
                     if enc_idx.get_entry_ref(&enc.hash).is_err() {
-                        to_encrypt.push(entry);
+                        to_encrypt.push(entry.clone());
                     }
                 }
             };

@@ -1,4 +1,7 @@
 use std::env;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
 
 pub mod age;
 pub mod clap;
@@ -11,6 +14,7 @@ pub mod metadata;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
+use crate::metadata::{EncryptedIndex, Index, INDEX_FILENAME};
 
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,15 +34,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::read_config(dir)?;
     // dbg!(&cfg);
 
-    let abs_datadir = std::path::Path::new(dir).join(cfg.datadir());
+    let abs_datadir = Path::new(dir).join(cfg.datadir());
     // dbg!(&abs_datadir);
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let mut index = match cfg.load_index(dir, &bbox)? {
-        None => metadata::Index::new(dir)?,
+        None => Index::new(dir)?,
         Some(idx) => idx,
     };
-    // let mut index = metadata::Index::new(dir)?;
+    // let mut index = Index::new(dir)?;
 
     // Consider the case in which we load the index from disk as above, but
     // entries are either added to or deleted from the disk. The index will have
@@ -69,10 +73,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // TODO: _iff_ we want to chdir before indexing, **HERE** is where
-    // let index = metadata::Index::new(dir)?;
+    // let index = Index::new(dir)?;
     // TODO: ... and HERE is where to change back
 
-    let enc_idx = metadata::EncryptedIndex::new(&abs_datadir)?;
+    let enc_idx = EncryptedIndex::new(&abs_datadir)?;
     dbg!(&enc_idx);
 
     // There are 2 operations:
@@ -104,15 +108,21 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("error: {}", e);
             }
             Ok(enc) => {
-                // entry.set_encrypted(enc);
-                //
                 let e = index.get_mut_entry_ref(&entry.get_hash())?;
-                e.set_encrypted(enc);
-                //
-                // index.get_entry_ref(&entry.get_hash())?.set_encrypted(enc)?;
+                e.set_encrypted(enc)?;
             }
         };
     }
+
+    dbg!(&index);
+    // TODO: add this to either metadata, dir, config
+    let index_filename = abs_datadir.join(INDEX_FILENAME);
+    dbg!(&index_filename);
+
+    let mut enc_idx_bytes = Vec::new();
+    let _ = index.write(&mut enc_idx_bytes, &bbox)?;
+    let mut file = fs::File::create(index_filename)?;
+    file.write_all(&enc_idx_bytes)?;
 
     Ok(())
 }
