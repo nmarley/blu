@@ -95,7 +95,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let to_encrypt = index.difference_enc_idx(&enc_idx);
     dbg!(&to_encrypt);
 
-    for mut entry in to_encrypt.into_iter() {
+    for entry in to_encrypt.iter() {
         // read file data from entry and encrypt it . Need to read one of the paths
         let unencrypted_filedata = entry.read_filedata()?;
         let encrypted_filedata = bbox.encrypt(&unencrypted_filedata)?;
@@ -105,8 +105,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok(enc) => {
                 // entry.set_encrypted(enc);
-                let &mut e = index.get_entry_ref(&entry.get_hash())?;
+                //
+                let e = index.get_mut_entry_ref(&entry.get_hash())?;
                 e.set_encrypted(enc);
+                //
+                // index.get_entry_ref(&entry.get_hash())?.set_encrypted(enc)?;
             }
         };
     }

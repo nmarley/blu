@@ -171,6 +171,14 @@ impl Index {
         Ok(e)
     }
 
+    pub fn get_mut_entry_ref(
+        &mut self,
+        hash: &[u8],
+    ) -> Result<&mut Entry, Box<dyn std::error::Error>> {
+        let e = self.map.get_mut(hash).unwrap();
+        Ok(e)
+    }
+
     // walk the dir and hash all regular files
     // ignore block/char specials, etc.
     fn build_index<P: AsRef<Path>>(
