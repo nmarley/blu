@@ -1,6 +1,5 @@
 use flate2::bufread::{GzDecoder, GzEncoder};
 use flate2::Compression;
-use multihash::{Code, MultihashDigest};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::{
@@ -12,6 +11,7 @@ use walkdir::WalkDir;
 
 use crate::age::BlackBox;
 use crate::config::KeyID;
+use crate::hash;
 use crate::magic::Wizard;
 
 pub const INDEX_FILENAME: &str = "index.dat";
@@ -206,7 +206,7 @@ impl Index {
             let filetype = wiz
                 .get_filetype(&filedata, size)
                 .unwrap_or_else(|_| "other".into());
-            let mh = Code::Sha2_512.digest(&filedata);
+            let mh = hash::hash(&filedata);
 
             // entry is a reference to the entry in the hashmap ...
             let entry = map_files.entry(mh.to_bytes()).or_insert(Entry {
@@ -341,7 +341,7 @@ impl EncryptedIndex {
 
             // TODO: streaming reads here? as some files could be GB in size...
             let filedata = fs::read(elem.path()).unwrap();
-            let mh = Code::Sha2_512.digest(&filedata);
+            let mh = hash::hash(&filedata);
 
             let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
@@ -412,7 +412,7 @@ impl fmt::Debug for EncryptedIndex {
 #[cfg(test)]
 mod test {
     use super::{compress, deserialize_index, serialize_index, Entry, HashMap, Index};
-    use multihash::{Code, MultihashDigest};
+    use crate::hash;
     use std::collections::HashSet;
 
     const TEST_DIR_T0: &str = "test/t0/";
@@ -445,7 +445,7 @@ mod test {
 
     fn test_entry(content: &str) -> Entry {
         let b = content.as_bytes();
-        let mh = Code::Sha2_512.digest(b);
+        let mh = hash::hash(b);
         Entry {
             paths: HashSet::from(["testfile.txt".into()]),
             filetype: "ASCII text".to_string(),

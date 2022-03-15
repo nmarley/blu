@@ -1,5 +1,5 @@
+use crate::hash;
 use crate::metadata::Encrypted;
-use multihash::{Code, MultihashDigest};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,7 +29,7 @@ impl Manager {
         // if this worked, caller should replace the None in the index w/an Encrypted
 
         // hash data
-        let mh = Code::Sha2_512.digest(&data);
+        let mh = hash::hash(&data);
         let hash = mh.to_bytes();
         let path = self.abs_path_for(&hash)?;
         let size = hash.len() as u64;

@@ -4,6 +4,7 @@ pub mod age;
 pub mod clap;
 pub mod config;
 pub mod dir;
+pub mod hash;
 pub mod magic;
 pub mod metadata;
 
