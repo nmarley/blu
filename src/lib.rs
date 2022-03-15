@@ -94,5 +94,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let to_encrypt = index.difference_enc_idx(&enc_idx);
     dbg!(&to_encrypt);
 
+    for entry in to_encrypt.iter() {
+        // read file data from entry and encrypt it . Need to read one of the paths
+        let unencrypted_filedata = entry.read_filedata()?;
+        let encrypted_filedata = bbox.encrypt(&unencrypted_filedata)?;
+        match dir_manager.write_encrypted(&encrypted_filedata) {
+            Err(e) => {
+                eprintln!("error: {}", e);
+            }
+            Ok(enc) => {
+                entry.set_encrypted(enc);
+            }
+        };
+    }
+
     Ok(())
 }

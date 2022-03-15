@@ -47,6 +47,17 @@ impl Entry {
     pub fn get_enc(&mut self) -> Option<Encrypted> {
         self.enc.clone()
     }
+
+    pub fn read_filedata(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let path = self.paths.iter().nth(0).unwrap();
+        let data = fs::read(path)?;
+        Ok(data)
+    }
+
+    pub fn set_encrypted(&mut self, enc: Encrypted) -> Result<(), Box<dyn std::error::Error>> {
+        self.enc = Some(enc);
+        Ok(())
+    }
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
@@ -67,6 +78,12 @@ impl fmt::Debug for Encrypted {
             .field("size", &self.size)
             .field("keys", &self.keys)
             .finish()
+    }
+}
+
+impl Encrypted {
+    pub fn get_hash(&self) -> Vec<u8> {
+        self.hash.clone()
     }
 }
 
