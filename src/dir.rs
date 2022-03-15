@@ -33,11 +33,12 @@ impl Manager {
 
         let path = self.abs_path_for(&hash)?;
 
-        // TODO: CREATE THE PATH (directories)
-
         let size = hash.len() as u64;
 
-        let _ = fs::write(&path, &data)?;
+        // create the path (directories)
+        fs::create_dir_all(path.parent().unwrap())?;
+        // write file
+        fs::write(&path, &data)?;
 
         // hash data
         let enc = Encrypted {
