@@ -58,6 +58,10 @@ impl Entry {
         self.enc = Some(enc);
         Ok(())
     }
+
+    pub fn get_hash(&self) -> Vec<u8> {
+        self.hash.clone()
+    }
 }
 
 #[derive(PartialEq, Serialize, Deserialize, Clone)]
