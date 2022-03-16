@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use flate2::bufread::{GzDecoder, GzEncoder};
 use flate2::Compression;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use walkdir::WalkDir;
 
 use crate::age::BlackBox;
 use crate::config::KeyID;
+use crate::format::datetime_format;
 use crate::hash;
 use crate::magic::Wizard;
 
@@ -54,6 +56,8 @@ impl Entry {
         Ok(data)
     }
 
+    // in theory we want to set the updated_at timestamp for the containing
+    // Index here, but not sure how to do that right now ...
     pub fn set_encrypted(&mut self, enc: Encrypted) -> Result<(), Box<dyn std::error::Error>> {
         self.enc = Some(enc);
         Ok(())
@@ -98,9 +102,34 @@ fn serialize_index(index: &Index) -> Result<Vec<u8>, Box<dyn std::error::Error>>
 }
 
 fn deserialize_index(data: &[u8]) -> Result<Index, Box<dyn std::error::Error>> {
-    let decoded: Index = bincode::deserialize(data)?;
     // let decoded: Index = serde_cbor::from_slice(data)?;
+    let decoded: Index = match bincode::deserialize(data) {
+        Ok(index) => index,
+        Err(_) => OldIndex::deserialize(data)?.into_index(),
+    };
     Ok(decoded)
+}
+
+// This struct is only used to deserialize and convert into a new index with
+// timestamps.
+#[derive(PartialEq, Serialize, Deserialize)]
+pub struct OldIndex {
+    map: HashMap<Vec<u8>, Entry>,
+    version: String,
+}
+impl OldIndex {
+    pub fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let decoded: OldIndex = bincode::deserialize(data)?;
+        Ok(decoded)
+    }
+    pub fn into_index(self) -> Index {
+        let (map, _version) = (self.map, self.version);
+        Index {
+            map,
+            version: CURRENT_INDEX_VERSION.to_string(),
+            ..Default::default()
+        }
+    }
 }
 
 fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
@@ -121,15 +150,20 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
 pub struct Index {
     map: HashMap<Vec<u8>, Entry>,
     version: String,
+    #[serde(with = "datetime_format")]
+    created_at: NaiveDateTime,
+    #[serde(with = "datetime_format")]
+    updated_at: NaiveDateTime,
 }
 
-const CURRENT_INDEX_VERSION: &str = "0.1.0";
+const CURRENT_INDEX_VERSION: &str = "0.1.1";
 impl Index {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         let map = Self::build_index(dir)?;
         Ok(Index {
             version: CURRENT_INDEX_VERSION.to_string(),
             map,
+            ..Default::default()
         })
     }
 
@@ -274,6 +308,7 @@ impl Index {
 
         let mut to_delete: HashSet<Vec<u8>> = HashSet::new();
         let mut new_paths: HashMap<Vec<u8>, HashSet<PathBuf>> = HashMap::new();
+        let mut is_updated = false;
 
         for hash in self.map.keys() {
             if let Some(entry) = new_index.map.get(hash) {
@@ -287,11 +322,20 @@ impl Index {
         for hash in to_delete.into_iter() {
             let e = self.map.remove(&hash).unwrap();
             deleted_entries.push(e);
+            is_updated = true;
         }
 
         for (k, v) in new_paths {
             let entry = self.map.get_mut(&k).unwrap();
-            entry.paths = v;
+            if entry.paths != v {
+                entry.paths = v;
+                is_updated = true;
+            }
+        }
+
+        // update the timestamp
+        if is_updated {
+            self.updated_at = now();
         }
 
         Ok(deleted_entries)
@@ -300,12 +344,33 @@ impl Index {
 
 impl fmt::Debug for Index {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
+        // let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
+        let _ = writeln!(f, "Index {{");
+        let _ = writeln!(f, "  version: {},", &self.version);
+        let _ = writeln!(f, "  created_at: {},", &self.created_at);
+        let _ = writeln!(f, "  updated_at: {},", &self.updated_at);
+        let _ = writeln!(f, "  map: ");
         for (k, v) in self.map.iter() {
             let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
         }
         let _ = write!(f, "}}");
         Ok(())
+    }
+}
+
+fn now() -> chrono::NaiveDateTime {
+    // returns a NaiveDateTime without milli/nano seconds
+    NaiveDateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Self {
+            map: HashMap::new(),
+            version: CURRENT_INDEX_VERSION.to_string(),
+            created_at: now(),
+            updated_at: now(),
+        }
     }
 }
 
@@ -481,6 +546,7 @@ mod test {
         let index = Index {
             version: super::CURRENT_INDEX_VERSION.to_string(),
             map,
+            ..Default::default()
         };
         let serialized_idx = serialize_index(&index).unwrap();
         println!(
