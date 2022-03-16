@@ -1,7 +1,10 @@
 use crate::age::BlackBox;
 use crate::metadata::{Index, INDEX_FILENAME};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 // TODO: implement backends -- probably a trait
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -32,15 +35,14 @@ pub struct KeyID {
     public_key: String, // TODO: Vec<u8> ?
 }
 
-// ???
 const DEFAULT_DATADIR: &str = ".blu/data";
 // TODO: also, don't worry for now, this is not MVP. For now we can hard-code
 // paths in data_key_files instead.
 //
-// // TODO: how to do this w/const? possible or nah?
+// TODO: how to do this w/const? possible or nah?
 // const DEFAULT_DATA_KEY_FILES: &'static str = "$HOME/.blu/secrets/blu.key";
-// //                                              "$HOME/.blu/secrets/blu.pub";
-// // std::env::get("HOME")
+//                                              "$HOME/.blu/secrets/blu.pub";
+// std::env::get("HOME")
 
 #[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
@@ -48,9 +50,13 @@ pub struct Config {
     pub blu_version: String,
     pub data_key_files: Vec<String>,
 
+    // base dir
+    #[serde(skip)]
+    pub basedir: PathBuf,
+
     // The datadir should hold encrypted data and metadata. Priv keys should
     // never be stored here, even encrypted.
-    pub datadir: Option<String>,
+    pub datadir: Option<PathBuf>,
 
     // should blu delete Encrypted from filesystem, if the plain version was deleted?
     pub prune_deleted: bool,
@@ -68,19 +74,16 @@ pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
     let cfg_data = fs::read_to_string(config_filename)?;
 
-    let cfg: Config = serde_json::from_str(&cfg_data)?;
+    let mut cfg: Config = serde_json::from_str(&cfg_data)?;
+    cfg.basedir = base_dir.as_ref().to_path_buf();
     Ok(cfg)
 }
 
 impl Config {
-    pub fn load_index<P: AsRef<Path> + std::fmt::Debug>(
-        &self,
-        base_dir: P,
-        bbox: &BlackBox,
-    ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
+    pub fn load_index(&self, bbox: &BlackBox) -> Result<Option<Index>, Box<dyn std::error::Error>> {
         // should always sit in same directory with the data
         // this should _not_ be user-configurable (e.g. should not be in Config)
-        let index_path = base_dir.as_ref().join(&self.datadir()).join(INDEX_FILENAME);
+        let index_path = self.datadir().join(INDEX_FILENAME);
         // todo: filter index.dat
 
         // if error loading this (e.g. file doesn't exist) then return None or
@@ -96,12 +99,12 @@ impl Config {
         Ok(Some(index))
     }
 
-    pub fn datadir(&self) -> String {
-        match &self.datadir {
+    pub fn datadir(&self) -> PathBuf {
+        let rel_dir = match self.datadir.clone() {
             Some(s) => s,
-            None => DEFAULT_DATADIR,
-        }
-        .to_string()
+            None => PathBuf::from(DEFAULT_DATADIR),
+        };
+        self.basedir.join(rel_dir)
     }
 }
 
@@ -124,6 +127,7 @@ pub(crate) mod test {
             cfg,
             Config {
                 backend: Backend::Local,
+                basedir: TEST_CONFIG_DIR_T1.into(),
                 blu_version: "0.0.1".to_string(),
                 data_key_files: vec![TEST_AGE_SECRET_KEY_PATH.to_string()],
                 ..Default::default()
@@ -135,7 +139,7 @@ pub(crate) mod test {
     fn load_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
-        let index = cfg.load_index(TEST_CONFIG_DIR_T2, &bbox).unwrap();
+        let index = cfg.load_index(&bbox).unwrap();
 
         assert!(index.is_some());
         let index = index.unwrap();

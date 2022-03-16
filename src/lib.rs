@@ -1,7 +1,6 @@
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
 
 pub mod age;
 pub mod clap;
@@ -35,11 +34,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::read_config(dir)?;
     // dbg!(&cfg);
 
-    let abs_datadir = Path::new(dir).join(cfg.datadir());
+    let abs_datadir = cfg.datadir();
     // dbg!(&abs_datadir);
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let mut index = match cfg.load_index(dir, &bbox)? {
+    let mut index = match cfg.load_index(&bbox)? {
         None => Index::new(dir)?,
         Some(idx) => idx,
     };

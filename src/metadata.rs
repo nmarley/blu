@@ -606,7 +606,7 @@ mod test {
     fn update_idx() {
         let cfg = config::read_config(TEST_DIR_T3).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let mut index = match cfg.load_index(TEST_DIR_T3, &bbox).unwrap() {
+        let mut index = match cfg.load_index(&bbox).unwrap() {
             None => Index::new(TEST_DIR_T3).unwrap(),
             Some(idx) => idx,
         };
@@ -648,7 +648,7 @@ mod test {
         // TODO: create / load index
         let cfg = config::read_config(TEST_DIR_T4).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let mut index = match cfg.load_index(TEST_DIR_T4, &bbox).unwrap() {
+        let mut index = match cfg.load_index(&bbox).unwrap() {
             None => Index::new(TEST_DIR_T4).unwrap(),
             Some(idx) => idx,
         };
