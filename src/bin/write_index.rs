@@ -4,7 +4,8 @@ use std::{env, fs};
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
-use blu::metadata::Index;
+use blu::config;
+use blu::metadata::{EncryptedIndex, Index};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args();
@@ -15,7 +16,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = &args.nth(1).unwrap();
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let index = Index::new(dir)?;
+    let mut index = Index::new(dir)?;
+
+    let cfg = config::read_config(dir)?;
+    dbg!(&cfg);
+
+    let enc_idx = EncryptedIndex::new(cfg.datadir())?;
+    dbg!(&enc_idx);
+
+    let sth = enc_idx.difference_idx(&mut index, Some(&bbox));
+    dbg!(&sth);
+
+    dbg!(&index);
 
     // writing index for testing
     let _ = write_index_file(&index, &bbox)?;
