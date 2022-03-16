@@ -452,20 +452,37 @@ impl EncryptedIndex {
     // //
     // // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
     // // to make sure this returns the right values)
-    // pub fn difference_idx<'a, 'b>(&'a self, idx: &'b Index) -> Vec<&'a Encrypted> {
-    //     let mut to_decrypt: Vec<&Encrypted> = vec![];
-    //     for enc in self.map.values() {
-    //         match &enc.enc {
-    //             None => to_decrypt.push(enc),
-    //             Some(enc) => {
-    //                 // if enc_idx.get_entry_ref(&enc.hash).is_err() {
-    //                 //     to_decrypt.push(enc);
-    //                 // }
-    //             }
-    //         };
-    //     }
-    //     to_decrypt
-    // }
+    //
+    // TODO: also consider the case when multiple different encrypted versions
+    // of the same plain files exist... clean up?
+    pub fn difference_idx(&self, idx: &Index) -> Vec<Encrypted> {
+        // let mut to_decrypt: Vec<Encrypted> = vec![];
+        let to_decrypt: Vec<Encrypted> = vec![];
+
+        // list of Encrypted's not found in the Index
+        let mut not_found: HashSet<Vec<u8>> = HashSet::new();
+
+        // TODO: should this be a method on Index?
+        let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        for entry in idx.map.values() {
+            if let Some(enc) = &entry.enc {
+                idx_enchash_plainhash.insert(entry.hash.clone(), enc.hash.clone());
+            }
+        }
+        dbg!(&idx_enchash_plainhash);
+
+        // NGM
+        for k in self.map.keys() {
+            if !idx_enchash_plainhash.contains_key(k) {
+                not_found.insert(k.to_vec());
+            }
+        }
+        dbg!(&not_found);
+
+        to_decrypt
+    }
+
+    // TODO: Reconciliation (incl. decrypt to try and discover unknown mapping)
 
     // TODO: reverse of the above method -- how to get the difference when
     // enc_idx has items that don't exist in plain idx?
@@ -606,5 +623,17 @@ mod test {
             tags: vec![],
             notes: None,
         });
+    }
+
+    // Return a Vec of Entries that exist in this Index, but do *not* yet exist
+    // in the EncIdx.
+    //
+    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // to make sure this returns the right values)
+    #[test]
+    fn diff_enc_idx() {
+        // TODO: create / load index
+        // TODO: get the difference w/EncryptedIndex dir
+        // TODO: ensure proper results
     }
 }
