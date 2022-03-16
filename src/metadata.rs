@@ -447,17 +447,20 @@ impl EncryptedIndex {
     //  about what happened (dangling enc files found, restored to .restored/, etc.)
     //
     //
-    // // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist
-    // // in the plain Index.
-    // //
-    // // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // // to make sure this returns the right values)
+    // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist
+    // in the plain Index.
+    //
+    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
+    // to make sure this returns the right values)
     //
     // TODO: also consider the case when multiple different encrypted versions
     // of the same plain files exist... clean up?
-    pub fn difference_idx(&self, idx: &Index) -> Vec<Encrypted> {
-        // let mut to_decrypt: Vec<Encrypted> = vec![];
-        let to_decrypt: Vec<Encrypted> = vec![];
+    pub fn difference_idx(
+        &self,
+        idx: &mut Index,
+        opt_bbox: Option<&BlackBox>,
+    ) -> Result<Vec<Encrypted>, Box<dyn std::error::Error>> {
+        let mut to_decrypt: Vec<Encrypted> = vec![];
 
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
@@ -471,25 +474,31 @@ impl EncryptedIndex {
         }
         dbg!(&idx_enchash_plainhash);
 
-        // NGM
-        for k in self.map.keys() {
+        for (k, v) in self.map.iter() {
             if !idx_enchash_plainhash.contains_key(k) {
                 not_found.insert(k.to_vec());
+            } else {
+                to_decrypt.push(v.clone())
             }
         }
         dbg!(&not_found);
 
-        to_decrypt
+        // TODO: Reconciliation (decrypt to try and discover unknown mappings)
+        // if a BlackBox passed in, then try and decrypt for reconciliation
+        if let Some(bbox) = opt_bbox {
+            for hash in not_found.into_iter() {
+                // decrypt it ...
+                let enc = self.map.get(&hash).unwrap();
+                let enc_filedata = fs::read(&enc.path)?;
+                let filedata = bbox.decrypt(&enc_filedata)?;
+                let mh = hash::hash(&filedata);
+                let entry = idx.get_mut_entry_ref(&mh.to_bytes())?;
+                entry.set_encrypted(enc.clone())?;
+            }
+        }
+
+        Ok(to_decrypt)
     }
-
-    // TODO: Reconciliation (incl. decrypt to try and discover unknown mapping)
-
-    // TODO: reverse of the above method -- how to get the difference when
-    // enc_idx has items that don't exist in plain idx?
-    // Also make tests for it
-    //
-    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // to make sure this returns the right values)
 }
 
 impl fmt::Debug for EncryptedIndex {
@@ -505,7 +514,9 @@ impl fmt::Debug for EncryptedIndex {
 
 #[cfg(test)]
 mod test {
-    use super::{compress, deserialize_index, serialize_index, Entry, HashMap, Index};
+    use super::{
+        compress, deserialize_index, serialize_index, EncryptedIndex, Entry, HashMap, Index,
+    };
     use crate::hash;
     use std::collections::HashSet;
 
@@ -630,10 +641,23 @@ mod test {
     //
     // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
     // to make sure this returns the right values)
+    const TEST_DIR_T4: &str = "test/t4/";
     #[test]
+    #[ignore]
     fn diff_enc_idx() {
         // TODO: create / load index
+        let cfg = config::read_config(TEST_DIR_T4).unwrap();
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut index = match cfg.load_index(TEST_DIR_T4, &bbox).unwrap() {
+            None => Index::new(TEST_DIR_T4).unwrap(),
+            Some(idx) => idx,
+        };
+        let _deleted_entries = index.update(TEST_DIR_T4).unwrap();
+
         // TODO: get the difference w/EncryptedIndex dir
+        let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
+        dbg!(&enc_idx);
+
         // TODO: ensure proper results
     }
 }
