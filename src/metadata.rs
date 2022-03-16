@@ -74,6 +74,11 @@ pub struct Encrypted {
     // the same hash
     pub path: PathBuf,
     pub hash: Vec<u8>,
+    // TODO: Add a hash which points back to the un-encrypted data? Would
+    // simplify reconciliation.
+    //
+    // note: would be necessary for block-level de-duplication.
+    // pub unenc_hash: Vec<u8>,
     pub size: u64,
     pub keys: Vec<KeyID>,
 }
@@ -83,6 +88,7 @@ impl fmt::Debug for Encrypted {
         f.debug_struct("Encrypted")
             .field("path", &self.path)
             .field("hash", &hex::encode(&self.hash))
+            // .field("unenc_hash", &hex::encode(&self.unenc_hash))
             .field("size", &self.size)
             .field("keys", &self.keys)
             .finish()
@@ -396,6 +402,10 @@ impl EncryptedIndex {
     pub fn build_index<P: AsRef<Path>>(
         data_dir: P,
     ) -> Result<HashMap<Vec<u8>, Encrypted>, Box<dyn std::error::Error>> {
+        // TODO: if unenc_hash is added to encrypted, it's necessary to add a
+        // &BlackBox to args here
+        //
+
         // println!("data_dir: {:?}", data_dir.as_ref());
         let index_file = data_dir.as_ref().join(INDEX_FILENAME);
         let mut map = HashMap::new();
@@ -420,10 +430,14 @@ impl EncryptedIndex {
             let filedata = fs::read(elem.path()).unwrap();
             let mh = hash::hash(&filedata);
 
+            // TODO: the only way to get hashes of the un-encrypted data here
+            // (unenc_hash) is to decrypt and hash
+
             let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
                     path: elem.into_path(),
                     hash: mh.to_bytes(),
+                    // unenc_hash: mh_plain.to_bytes(),
                     size,
                     keys: vec![],
                 }
@@ -460,6 +474,8 @@ impl EncryptedIndex {
         idx: &mut Index,
         opt_bbox: Option<&BlackBox>,
     ) -> Result<Vec<Encrypted>, Box<dyn std::error::Error>> {
+        // TODO: if unenc_hash is added to Encrypted, this entire fn gets
+        // re-written and implemented much simpler
         let mut to_decrypt: Vec<Encrypted> = vec![];
 
         // list of Encrypted's not found in the Index
