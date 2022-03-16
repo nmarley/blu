@@ -1,7 +1,6 @@
 # TODO
 
-- 2022-03-14: binary that just takes a dir and writes a brand new index file to disk
-
+- 2022-03-16: block-level de-duplication
 
 Uses <https://crates.io/crates/age> for encryption.
 
