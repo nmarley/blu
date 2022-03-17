@@ -78,17 +78,22 @@ pub struct Encrypted {
     // simplify reconciliation.
     //
     // note: would be necessary for block-level de-duplication.
-    // pub unenc_hash: Vec<u8>,
+    pub unenc_hash: Option<Vec<u8>>,
     pub size: u64,
     pub keys: Vec<KeyID>,
 }
 
 impl fmt::Debug for Encrypted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let unenc_hash_dbg = match &self.unenc_hash {
+            Some(uhash) => hex::encode(&uhash),
+            None => "None".to_string(),
+        };
+
         f.debug_struct("Encrypted")
             .field("path", &self.path)
             .field("hash", &hex::encode(&self.hash))
-            // .field("unenc_hash", &hex::encode(&self.unenc_hash))
+            .field("unenc_hash", &unenc_hash_dbg)
             .field("size", &self.size)
             .field("keys", &self.keys)
             .finish()
@@ -437,7 +442,8 @@ impl EncryptedIndex {
                 Encrypted {
                     path: elem.into_path(),
                     hash: mh.to_bytes(),
-                    // unenc_hash: mh_plain.to_bytes(),
+                    // unenc_hash: Some(mh_plain.to_bytes()),
+                    unenc_hash: None,
                     size,
                     keys: vec![],
                 }

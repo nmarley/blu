@@ -25,6 +25,12 @@ impl Manager {
         Ok(())
     }
 
+    // TODO: move most of the logic OUT of this... only writes should be in
+    // here, this module is for determining where to write the hash (`fn
+    // path_for`), and that's basically it.
+    //
+    // Needs to return Result<(), ...>, because the Encrypted struct should be
+    // private / not returned by this module.
     pub fn write_encrypted(&self, data: &[u8]) -> Result<Encrypted, Box<dyn std::error::Error>> {
         // if this worked, caller should replace the None in the index w/an Encrypted
 
@@ -44,6 +50,7 @@ impl Manager {
         let enc = Encrypted {
             path,
             hash,
+            unenc_hash: None,
             size,
             keys: vec![],
         };
