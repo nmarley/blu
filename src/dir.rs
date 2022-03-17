@@ -1,4 +1,3 @@
-use crate::hash;
 use crate::metadata::Encrypted;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,45 +15,25 @@ impl Manager {
         }
     }
 
-    // If this worked, caller should remove the Encrypted and make it a None in
-    // the index...  Sadly we can't know if it worked, so... I guess just assume
-    // it worked.
     pub fn delete_encrypted(&self, enc: &Encrypted) -> Result<(), Box<dyn std::error::Error>> {
         let path = self.path_for(&enc.get_hash())?;
         fs::remove_file(path)?;
         Ok(())
     }
 
-    // TODO: move most of the logic OUT of this... only writes should be in
-    // here, this module is for determining where to write the hash (`fn
-    // path_for`), and that's basically it.
-    //
-    // Needs to return Result<(), ...>, because the Encrypted struct should be
-    // private / not returned by this module.
-    pub fn write_encrypted(&self, data: &[u8]) -> Result<Encrypted, Box<dyn std::error::Error>> {
-        // if this worked, caller should replace the None in the index w/an Encrypted
-
-        let mh = hash::hash(data);
-        let hash = mh.to_bytes();
-
-        let path = self.path_for(&hash)?;
-
-        let size = hash.len() as u64;
+    pub fn write_encrypted(
+        &self,
+        hash: &[u8],
+        data: &[u8],
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = self.path_for(hash)?;
 
         // create the path (directories)
         fs::create_dir_all(path.parent().unwrap())?;
         // write file
         fs::write(&path, &data)?;
 
-        // hash data
-        let enc = Encrypted {
-            path,
-            hash,
-            unenc_hash: None,
-            size,
-            keys: vec![],
-        };
-        Ok(enc)
+        Ok(path)
     }
 
     // get a path for the encrypted
@@ -93,8 +72,7 @@ mod test {
     use super::Manager;
     use std::path::PathBuf;
 
-    // TODO: macro w/several different versions of this ... can use different
-    // multihashes too, to test that
+    // macro which tests several different hash algos
     macro_rules! test_path_for {
         ($name:ident, $hash:expr, $path:expr) => {
             #[test]

@@ -14,7 +14,7 @@ pub mod metadata;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
-use crate::metadata::{EncryptedIndex, Index, INDEX_FILENAME};
+use crate::metadata::{Encrypted, EncryptedIndex, Index, INDEX_FILENAME};
 
 // also: consider an internal webserver which serves up the UI for blu
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -101,17 +101,24 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     for entry in to_encrypt.iter() {
         // read file data from entry and encrypt it . Need to read one of the paths
-        let unencrypted_filedata = entry.read_filedata()?;
-        let encrypted_filedata = bbox.encrypt(&unencrypted_filedata)?;
-        match dir_manager.write_encrypted(&encrypted_filedata) {
-            Err(e) => {
-                eprintln!("error: {}", e);
-            }
-            Ok(enc) => {
-                let e = index.get_mut_entry_ref(&entry.get_hash())?;
-                e.set_encrypted(enc)?;
-            }
+        let unenc_filedata = entry.read_filedata()?;
+        let enc_filedata = bbox.encrypt(&unenc_filedata)?;
+
+        let enc_mh = hash::hash(&enc_filedata);
+        let enc_hash = enc_mh.to_bytes();
+        let size = enc_hash.len() as u64;
+        let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
+
+        let entry_hash = entry.get_hash();
+        let e = index.get_mut_entry_ref(&entry_hash)?;
+        let enc = Encrypted {
+            path: enc_path,
+            hash: enc_hash,
+            unenc_hash: Some(entry_hash),
+            size,
+            keys: vec![],
         };
+        e.set_encrypted(enc)?;
     }
 
     dbg!(&index);
