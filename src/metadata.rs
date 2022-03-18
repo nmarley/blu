@@ -498,6 +498,7 @@ impl EncryptedIndex {
         }
         dbg!(&not_found);
 
+        use std::str;
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
         //
@@ -505,20 +506,24 @@ impl EncryptedIndex {
         let mut dangling: Vec<Vec<u8>> = vec![];
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
+                dbg!(&hash);
                 // decrypt it ...
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
+                dbg!(str::from_utf8(&filedata).unwrap());
                 let mh = hash::hash(&filedata);
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
                     // TODO: what if entry already has something set here?
                     entry.set_encrypted(enc.clone())?;
                 } else {
-                    dangling.push(hash);
                     // TODO: got a dangler ...
+                    dangling.push(hash);
                 }
             }
         }
+
+        dbg!(&dangling);
 
         // TODO: sth with dangling?
 
@@ -709,20 +714,20 @@ mod test {
             None => Index::new(TEST_DIR_T5).unwrap(),
             Some(idx) => idx,
         };
-        let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
-        dbg!(&_deleted_entries);
+        dbg!(&index);
+
+        // let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
+        // dbg!(&_deleted_entries);
 
         // TODO: get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
-        dbg!(&enc_idx);
+        // dbg!(&enc_idx);
 
+        // ... actually, this just can get danglers ....
         // get the entries to be restored
-        let sth = enc_idx.difference_idx(&mut index, None);
-        dbg!(&sth);
+        // let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
+        // dbg!(&to_restore);
         // should return 1 entry?
-
-        // let to_reconcile = enc_idx.difference_idx(&);
-        // dbg!(&to_reconcile);
     }
 
     // TODO: test multiple different Encrypted's that decrypt to the same file
