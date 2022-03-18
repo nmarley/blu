@@ -56,8 +56,6 @@ impl Entry {
         Ok(data)
     }
 
-    // in theory we want to set the updated_at timestamp for the containing
-    // Index here, but not sure how to do that right now ...
     pub fn set_encrypted(&mut self, enc: Encrypted) -> Result<(), Box<dyn std::error::Error>> {
         self.enc = Some(enc);
         Ok(())
@@ -338,10 +336,14 @@ impl Index {
 
         // update the timestamp
         if is_updated {
-            self.updated_at = now();
+            self.set_updated_timestamp();
         }
 
         Ok(deleted_entries)
+    }
+
+    pub fn set_updated_timestamp(&mut self) {
+        self.updated_at = now();
     }
 }
 

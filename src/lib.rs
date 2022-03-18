@@ -99,6 +99,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let to_encrypt = index.difference_enc_idx(&enc_idx);
     dbg!(&to_encrypt);
 
+    let mut index_updated: bool = false;
     for entry in to_encrypt.iter() {
         // read file data from entry and encrypt it . Need to read one of the paths
         let unenc_filedata = entry.read_filedata()?;
@@ -110,6 +111,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
 
         let entry_hash = entry.get_hash();
+
+        // we know this exists because that's how it got into `to_encrypt` in
+        // the first place
         let e = index.get_mut_entry_ref(&entry_hash).unwrap();
         let enc = Encrypted {
             path: enc_path,
@@ -119,6 +123,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             keys: vec![],
         };
         e.set_encrypted(enc)?;
+        index_updated = true;
+    }
+    if index_updated {
+        index.set_updated_timestamp();
     }
 
     dbg!(&index);
