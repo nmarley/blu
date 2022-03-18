@@ -24,10 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let enc_idx = EncryptedIndex::new(cfg.datadir())?;
     dbg!(&enc_idx);
 
-    let sth = enc_idx.difference_idx(&mut index, Some(&bbox));
-    dbg!(&sth);
+    let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
+    dbg!(&to_restore);
 
-    dbg!(&index);
+    // dbg!(&index);
 
     // writing index for testing
     let _ = write_index_file(&index, &bbox)?;
