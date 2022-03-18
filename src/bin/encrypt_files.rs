@@ -18,19 +18,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let index = Index::new(dir)?;
-    // dbg!(&index);
+    dbg!(&index);
 
     let cfg = config::read_config(dir)?;
-    // dbg!(&cfg);
+    dbg!(&cfg);
 
     let enc_idx = EncryptedIndex::new(cfg.datadir())?;
-    // dbg!(&enc_idx);
+    dbg!(&enc_idx);
 
     let to_encrypt = index.difference_enc_idx(&enc_idx);
     dbg!(&to_encrypt);
 
     let dir_manager = Manager::new(&cfg.datadir());
     for entry in to_encrypt.iter() {
+        dbg!(&entry);
+
         // if this is some, assume it's already encrypted and on-disk
         if entry.get_enc().is_some() {
             println!(
