@@ -110,7 +110,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
 
         let entry_hash = entry.get_hash();
-        let e = index.get_mut_entry_ref(&entry_hash)?;
+        let e = index.get_mut_entry_ref(&entry_hash).unwrap();
         let enc = Encrypted {
             path: enc_path,
             hash: enc_hash,

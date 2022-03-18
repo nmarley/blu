@@ -74,10 +74,6 @@ pub struct Encrypted {
     // the same hash
     pub path: PathBuf,
     pub hash: Vec<u8>,
-    // TODO: Add a hash which points back to the un-encrypted data? Would
-    // simplify reconciliation.
-    //
-    // note: would be necessary for block-level de-duplication.
     pub unenc_hash: Option<Vec<u8>>,
     pub size: u64,
     pub keys: Vec<KeyID>,
@@ -216,12 +212,8 @@ impl Index {
         Ok(e)
     }
 
-    pub fn get_mut_entry_ref(
-        &mut self,
-        hash: &[u8],
-    ) -> Result<&mut Entry, Box<dyn std::error::Error>> {
-        let e = self.map.get_mut(hash).unwrap();
-        Ok(e)
+    pub fn get_mut_entry_ref(&mut self, hash: &[u8]) -> Option<&mut Entry> {
+        self.map.get_mut(hash)
     }
 
     // walk the dir and hash all regular files
@@ -480,10 +472,7 @@ impl EncryptedIndex {
         idx: &mut Index,
         opt_bbox: Option<&BlackBox>,
     ) -> Result<Vec<Encrypted>, Box<dyn std::error::Error>> {
-        // TODO: if unenc_hash is added to Encrypted, this entire fn gets
-        // re-written and implemented much simpler
         let mut to_decrypt: Vec<Encrypted> = vec![];
-
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
 
@@ -494,7 +483,7 @@ impl EncryptedIndex {
                 idx_enchash_plainhash.insert(entry.hash.clone(), enc.hash.clone());
             }
         }
-        dbg!(&idx_enchash_plainhash);
+        // dbg!(&idx_enchash_plainhash);
 
         for (k, v) in self.map.iter() {
             if !idx_enchash_plainhash.contains_key(k) {
@@ -503,10 +492,10 @@ impl EncryptedIndex {
                 to_decrypt.push(v.clone())
             }
         }
-        dbg!(&not_found);
+        // dbg!(&not_found);
 
-        // TODO: Reconciliation (decrypt to try and discover unknown mappings)
-        // if a BlackBox passed in, then try and decrypt for reconciliation
+        // Reconciliation (decrypt to try and discover unknown mappings) if a
+        // BlackBox passed in, then try and decrypt for reconciliation
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
                 // decrypt it ...
@@ -514,8 +503,9 @@ impl EncryptedIndex {
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
                 let mh = hash::hash(&filedata);
-                let entry = idx.get_mut_entry_ref(&mh.to_bytes())?;
-                entry.set_encrypted(enc.clone())?;
+                if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
+                    entry.set_encrypted(enc.clone())?;
+                }
             }
         }
 
