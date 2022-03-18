@@ -17,11 +17,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = &args.nth(1).unwrap();
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let index = Index::new(dir)?;
-    dbg!(&index);
 
     let cfg = config::read_config(dir)?;
     dbg!(&cfg);
+
+    let index = match cfg.load_index(&bbox)? {
+        None => Index::new(dir)?,
+        Some(idx) => idx,
+    };
+    // let mut index = Index::new(dir)?;
+    dbg!(&index);
 
     let enc_idx = EncryptedIndex::new(cfg.datadir())?;
     dbg!(&enc_idx);
