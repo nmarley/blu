@@ -34,9 +34,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::read_config(dir)?;
     // dbg!(&cfg);
 
-    let abs_datadir = cfg.datadir();
-    // dbg!(&abs_datadir);
-
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let mut index = match cfg.load_index(&bbox)? {
         None => Index::new(dir)?,
@@ -63,9 +60,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // the other way is to crawl enc dir (EncryptedIndex) and attempt to
     // reconcile back to the index. If no reconciliation is possible (no hash
     // matches for decrypted data), then those are truly "dangling".
-    let dir_manager = dir::Manager::new(&abs_datadir);
+    let datadir = cfg.datadir();
+    let dir_manager = dir::Manager::new(&datadir);
     if cfg.prune_dangling {
-        for mut entry in deleted_entries.into_iter() {
+        for entry in deleted_entries.into_iter() {
             if let Some(enc) = entry.get_enc() {
                 dir_manager.delete_encrypted(&enc)?;
             }
@@ -76,7 +74,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // let index = Index::new(dir)?;
     // TODO: ... and HERE is where to change back
 
-    let enc_idx = EncryptedIndex::new(&abs_datadir)?;
+    let enc_idx = EncryptedIndex::new(&datadir)?;
     dbg!(&enc_idx);
 
     // There are 2 operations:
@@ -131,7 +129,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     dbg!(&index);
     // TODO: add this to either metadata, dir, config
-    let index_filename = abs_datadir.join(INDEX_FILENAME);
+    let index_filename = &datadir.join(INDEX_FILENAME);
     dbg!(&index_filename);
 
     let mut enc_idx_bytes = Vec::new();

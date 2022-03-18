@@ -46,7 +46,7 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
-    pub fn get_enc(&mut self) -> Option<Encrypted> {
+    pub fn get_enc(&self) -> Option<Encrypted> {
         self.enc.clone()
     }
 
@@ -469,6 +469,8 @@ impl EncryptedIndex {
     //
     // TODO: also consider the case when multiple different encrypted versions
     // of the same plain files exist... clean up?
+    //
+    // TODO: split out reconciliation into own fn?
     pub fn difference_idx(
         &self,
         idx: &mut Index,
@@ -485,7 +487,7 @@ impl EncryptedIndex {
                 idx_enchash_plainhash.insert(entry.hash.clone(), enc.hash.clone());
             }
         }
-        // dbg!(&idx_enchash_plainhash);
+        dbg!(&idx_enchash_plainhash);
 
         for (k, v) in self.map.iter() {
             if !idx_enchash_plainhash.contains_key(k) {
@@ -494,10 +496,12 @@ impl EncryptedIndex {
                 to_decrypt.push(v.clone())
             }
         }
-        // dbg!(&not_found);
+        dbg!(&not_found);
 
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
+        //
+        // TODO: split out reconciliation into own fn?
         let mut dangling: Vec<Vec<u8>> = vec![];
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
@@ -646,7 +650,6 @@ mod test {
         let entries = index.get_all_entry_refs();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0], &Entry {
-            // paths: HashSet::from(["test/t3/article1_en.txt".into(), "test/t3/art1_dup_en.txt".into()]),
             paths: HashSet::from(["test/t3/article-one.txt".into()]),
             filetype: "ASCII text".to_string(),
             hash: hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap(),
@@ -664,9 +667,8 @@ mod test {
     // to make sure this returns the right values)
     const TEST_DIR_T4: &str = "test/t4/";
     #[test]
-    #[ignore]
     fn diff_enc_idx() {
-        // TODO: create / load index
+        // load index
         let cfg = config::read_config(TEST_DIR_T4).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut index = match cfg.load_index(&bbox).unwrap() {
@@ -674,11 +676,55 @@ mod test {
             Some(idx) => idx,
         };
         let _deleted_entries = index.update(TEST_DIR_T4).unwrap();
+        // dbg!(&_deleted_entries);
+
+        // TODO: get the difference w/EncryptedIndex dir
+        let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
+        // dbg!(&enc_idx);
+
+        // get the entries to be encrypted
+        let to_encrypt = index.difference_enc_idx(&enc_idx);
+        // dbg!(&to_encrypt);
+
+        assert_eq!(to_encrypt, vec![
+            Entry {
+                paths: HashSet::from(["test/t4/article1_lu.txt".into()]),
+                filetype: "Unicode text, UTF-8 text".to_string(),
+                hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
+                size: 223,
+                enc: None,
+                tags: vec![],
+                notes: None,
+            }
+        ]);
+    }
+
+    // TODO: test multiple different Encrypted's that decrypt to the same file
+    // (reconciliation / cleanup)
+
+    // TODO: test
+    const TEST_DIR_T5: &str = "test/t5/";
+    #[test]
+    fn diff_idx() {
+        // load index
+        let cfg = config::read_config(TEST_DIR_T5).unwrap();
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut index = match cfg.load_index(&bbox).unwrap() {
+            None => Index::new(TEST_DIR_T5).unwrap(),
+            Some(idx) => idx,
+        };
+        let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
+        dbg!(&_deleted_entries);
 
         // TODO: get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         dbg!(&enc_idx);
 
-        // TODO: ensure proper results
+        // get the entries to be encrypted
+        let sth = enc_idx.difference_idx(&mut index, None);
+        dbg!(&sth);
+
+        // let to_reconcile = enc_idx.difference_idx(&);
+        // dbg!(&to_reconcile);
     }
 }
