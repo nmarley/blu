@@ -498,6 +498,7 @@ impl EncryptedIndex {
 
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
+        let mut dangling: Vec<Vec<u8>> = vec![];
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
                 // decrypt it ...
@@ -506,10 +507,16 @@ impl EncryptedIndex {
                 let filedata = bbox.decrypt(&enc_filedata)?;
                 let mh = hash::hash(&filedata);
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
+                    // TODO: what if entry already has something set here?
                     entry.set_encrypted(enc.clone())?;
+                } else {
+                    dangling.push(hash);
+                    // TODO: got a dangler ...
                 }
             }
         }
+
+        // TODO: sth with dangling?
 
         Ok(to_decrypt)
     }
