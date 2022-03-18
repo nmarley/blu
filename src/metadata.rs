@@ -699,10 +699,6 @@ mod test {
         ]);
     }
 
-    // TODO: test multiple different Encrypted's that decrypt to the same file
-    // (reconciliation / cleanup)
-
-    // TODO: test
     const TEST_DIR_T5: &str = "test/t5/";
     #[test]
     fn diff_idx() {
@@ -720,11 +716,15 @@ mod test {
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         dbg!(&enc_idx);
 
-        // get the entries to be encrypted
+        // get the entries to be restored
         let sth = enc_idx.difference_idx(&mut index, None);
         dbg!(&sth);
+        // should return 1 entry?
 
         // let to_reconcile = enc_idx.difference_idx(&);
         // dbg!(&to_reconcile);
     }
+
+    // TODO: test multiple different Encrypted's that decrypt to the same file
+    // (reconciliation / cleanup)
 }
