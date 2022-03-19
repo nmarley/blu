@@ -459,6 +459,10 @@ impl EncryptedIndex {
     // If they exist in the plain Index, and also in the EncryptedIndex, then
     // they can be restored, which only makes sense if the files don't exist on
     // the filesystem.
+    //
+    // Note that this operation shouldn't need a special "difference" case -- it
+    // is the on the happy path. Just walk each entry and restore (decrypt)
+    // _iff_ it isn't on the filesystem.
 
     // Reconciliation is a special case in which the plain Index entries exist
     // but without a Encrypted to point to (enc set to None), AND ... there is a
@@ -744,8 +748,7 @@ mod test {
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         dbg!(&enc_idx);
 
-        // ... actually, this just can get danglers ....
-        // get the entries to be restored
+        // get the entries to be restored or dangling
         let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
         dbg!(&to_restore);
         // should return 1 entry?
