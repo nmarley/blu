@@ -46,6 +46,10 @@ impl fmt::Debug for Entry {
 }
 
 impl Entry {
+    pub fn get_enc_ref(&self) -> &Option<Encrypted> {
+        &self.enc
+    }
+
     pub fn get_enc(&self) -> Option<Encrypted> {
         self.enc.clone()
     }
@@ -448,8 +452,8 @@ impl EncryptedIndex {
     //  about what happened (dangling enc files found, restored to .restored/, etc.)
     //
 
-    // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist
-    // in the plain Index.
+    // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not*
+    // exist in the plain Index.
 
     // If they don't exist in the plain Index, but they _do_ exist in the
     // EncryptedIndex, then they are considered dangling Encrypted.
@@ -476,19 +480,29 @@ impl EncryptedIndex {
     // of the same plain files exist... clean up?
     //
     // TODO: split out reconciliation into own fn?
-    pub fn difference_idx(
-        &self,
-        idx: &mut Index,
-        opt_bbox: Option<&BlackBox>,
-    ) -> Result<Vec<Encrypted>, Box<dyn std::error::Error>> {
-        let mut to_decrypt: Vec<Encrypted> = vec![];
+    pub fn difference_idx<'a, 'b, 'c>(
+        &'a self,
+        idx: &'b mut Index,
+        opt_bbox: Option<&'c BlackBox>,
+    ) -> Result<Vec<&'a Encrypted>, Box<dyn std::error::Error>> {
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
+
+        // enc hash -> regular hash count
+        // enc_hash -> hashset(regular hash)
+        // ensure doubly encrypted files are reported / can be cleaned up
+        let mut map_enc_plain_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
 
         // TODO: should this be a method on Index?
         let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
+                // hashset (do not assume unique enc hashes in the index)
+                let hs = map_enc_plain_set
+                    .entry(enc.hash.clone())
+                    .or_insert_with(HashSet::new);
+                hs.insert(entry.hash.clone());
+
                 idx_enchash_plainhash.insert(enc.hash.clone(), entry.hash.clone());
             }
         }
@@ -500,11 +514,10 @@ impl EncryptedIndex {
         }
         println!("\n");
 
-        for (k, v) in self.map.iter() {
+        // not_found is candidate for reconciliation or dangling
+        for k in self.map.keys() {
             if !idx_enchash_plainhash.contains_key(k) {
                 not_found.insert(k.to_vec());
-            } else {
-                to_decrypt.push(v.clone())
             }
         }
 
@@ -515,12 +528,12 @@ impl EncryptedIndex {
         }
         println!("\n");
 
-        // use std::str;
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
         //
         // TODO: split out reconciliation into own fn?
-        let mut dangling: Vec<Vec<u8>> = vec![];
+        let mut dangling: Vec<&Encrypted> = vec![];
+
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
                 dbg!(hex::encode(&hash));
@@ -528,31 +541,33 @@ impl EncryptedIndex {
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
-                // dbg!(str::from_utf8(&filedata).unwrap());
                 let mh = hash::hash(&filedata);
                 // reconciliation happens here
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
                     // TODO: what if entry already has something set here?
-                    entry.set_encrypted(enc.clone())?;
-                    println!("Got a matching entry in index:");
-                    dbg!(&entry, &enc);
+
+                    // hashset (do not assume unique enc hashes in the index)
+                    let hs = map_enc_plain_set
+                        .entry(enc.hash.clone())
+                        .or_insert_with(HashSet::new);
+
+                    if hs.is_empty() && (*entry.get_enc_ref()).is_some() {
+                        entry.set_encrypted(enc.clone())?;
+                    }
+                    hs.insert(entry.hash.clone());
+                    // reconcile succeeded.
+
+                    // println!("Got a matching entry in index:");
+                    // dbg!(&entry, &enc);
                 } else {
-                    // TODO: got a dangler ...
-                    dangling.push(hash);
+                    dangling.push(enc);
                 }
             }
         }
 
         // dbg!(&dangling);
-        println!("\ndangling:");
-        for d in &dangling {
-            dbg!(hex::encode(&d));
-        }
-        println!("\n");
 
-        // TODO: sth with dangling?
-
-        Ok(to_decrypt)
+        Ok(dangling)
     }
 }
 
