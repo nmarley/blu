@@ -116,7 +116,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let enc = Encrypted {
             path: enc_path,
             hash: enc_hash,
-            unenc_hash: Some(entry_hash),
             size,
             keys: vec![],
         };

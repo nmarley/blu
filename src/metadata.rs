@@ -72,22 +72,15 @@ pub struct Encrypted {
     // the same hash
     pub path: PathBuf,
     pub hash: Vec<u8>,
-    pub unenc_hash: Option<Vec<u8>>,
     pub size: u64,
     pub keys: Vec<KeyID>,
 }
 
 impl fmt::Debug for Encrypted {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let unenc_hash_dbg = match &self.unenc_hash {
-            Some(uhash) => hex::encode(&uhash),
-            None => "None".to_string(),
-        };
-
         f.debug_struct("Encrypted")
             .field("path", &self.path)
             .field("hash", &hex::encode(&self.hash))
-            .field("unenc_hash", &unenc_hash_dbg)
             .field("size", &self.size)
             .field("keys", &self.keys)
             .finish()
@@ -401,10 +394,6 @@ impl EncryptedIndex {
     pub fn build_index<P: AsRef<Path>>(
         data_dir: P,
     ) -> Result<HashMap<Vec<u8>, Encrypted>, Box<dyn std::error::Error>> {
-        // TODO: if unenc_hash is added to encrypted, it's necessary to add a
-        // &BlackBox to args here
-        //
-
         // println!("data_dir: {:?}", data_dir.as_ref());
         let index_file = data_dir.as_ref().join(INDEX_FILENAME);
         let mut map = HashMap::new();
@@ -429,15 +418,13 @@ impl EncryptedIndex {
             let filedata = fs::read(elem.path()).unwrap();
             let mh = hash::hash(&filedata);
 
-            // TODO: the only way to get hashes of the un-encrypted data here
-            // (unenc_hash) is to decrypt and hash
+            // TODO: the only way to get hashes of the un-encrypted data here is
+            // to decrypt and hash
 
             let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
                     path: elem.into_path(),
                     hash: mh.to_bytes(),
-                    // unenc_hash: Some(mh_plain.to_bytes()),
-                    unenc_hash: None,
                     size,
                     keys: vec![],
                 }
