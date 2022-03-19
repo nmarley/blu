@@ -447,10 +447,24 @@ impl EncryptedIndex {
     //  into a .restored/ dir with the plain hash as the filename and a message
     //  about what happened (dangling enc files found, restored to .restored/, etc.)
     //
-    //
+
     // Return a Vec<Encrypted> that exists in this EncryptedIndex, but do *not* yet exist
     // in the plain Index.
-    //
+
+    // If they don't exist in the plain Index, but they _do_ exist in the
+    // EncryptedIndex, then they are considered dangling Encrypted.
+    // They can be restored to special .restored, but don't have a filename in
+    // the plain dir or any tags / notes.
+
+    // If they exist in the plain Index, and also in the EncryptedIndex, then
+    // they can be restored, which only makes sense if the files don't exist on
+    // the filesystem.
+
+    // Reconciliation is a special case in which the plain Index entries exist
+    // but without a Encrypted to point to (enc set to None), AND ... there is a
+    // matching Encrypted entry on-disk which can decrypt to match the plain
+    // hash.
+
     // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
     // to make sure this returns the right values)
     //
@@ -471,10 +485,16 @@ impl EncryptedIndex {
         let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
-                idx_enchash_plainhash.insert(entry.hash.clone(), enc.hash.clone());
+                idx_enchash_plainhash.insert(enc.hash.clone(), entry.hash.clone());
             }
         }
-        dbg!(&idx_enchash_plainhash);
+
+        // dbg!(&idx_enchash_plainhash);
+        println!("\nidx_enchash_plainhash:");
+        for (k, v) in idx_enchash_plainhash.iter() {
+            dbg!(hex::encode(k), hex::encode(v));
+        }
+        println!("\n");
 
         for (k, v) in self.map.iter() {
             if !idx_enchash_plainhash.contains_key(k) {
@@ -483,9 +503,15 @@ impl EncryptedIndex {
                 to_decrypt.push(v.clone())
             }
         }
-        dbg!(&not_found);
 
-        use std::str;
+        // dbg!(&not_found);
+        println!("\nnot_found:");
+        for v in not_found.iter() {
+            dbg!(hex::encode(v));
+        }
+        println!("\n");
+
+        // use std::str;
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
         //
@@ -493,16 +519,19 @@ impl EncryptedIndex {
         let mut dangling: Vec<Vec<u8>> = vec![];
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
-                dbg!(&hash);
+                dbg!(hex::encode(&hash));
                 // decrypt it ...
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
-                dbg!(str::from_utf8(&filedata).unwrap());
+                // dbg!(str::from_utf8(&filedata).unwrap());
                 let mh = hash::hash(&filedata);
+                // reconciliation happens here
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
                     // TODO: what if entry already has something set here?
                     entry.set_encrypted(enc.clone())?;
+                    println!("Got a matching entry in index:");
+                    dbg!(&entry, &enc);
                 } else {
                     // TODO: got a dangler ...
                     dangling.push(hash);
@@ -510,7 +539,12 @@ impl EncryptedIndex {
             }
         }
 
-        dbg!(&dangling);
+        // dbg!(&dangling);
+        println!("\ndangling:");
+        for d in &dangling {
+            dbg!(hex::encode(&d));
+        }
+        println!("\n");
 
         // TODO: sth with dangling?
 
@@ -703,17 +737,17 @@ mod test {
         };
         dbg!(&index);
 
-        // let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
-        // dbg!(&_deleted_entries);
+        let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
+        dbg!(&_deleted_entries);
 
         // TODO: get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
-        // dbg!(&enc_idx);
+        dbg!(&enc_idx);
 
         // ... actually, this just can get danglers ....
         // get the entries to be restored
-        // let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
-        // dbg!(&to_restore);
+        let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
+        dbg!(&to_restore);
         // should return 1 entry?
     }
 
