@@ -507,12 +507,12 @@ impl EncryptedIndex {
             }
         }
 
-        // dbg!(&idx_enchash_plainhash);
-        println!("\nidx_enchash_plainhash:");
-        for (k, v) in idx_enchash_plainhash.iter() {
-            dbg!(hex::encode(k), hex::encode(v));
-        }
-        println!("\n");
+        // // dbg!(&idx_enchash_plainhash);
+        // println!("\nidx_enchash_plainhash:");
+        // for (k, v) in idx_enchash_plainhash.iter() {
+        //     dbg!(hex::encode(k), hex::encode(v));
+        // }
+        // println!("\n");
 
         // not_found is candidate for reconciliation or dangling
         for k in self.map.keys() {
@@ -521,17 +521,15 @@ impl EncryptedIndex {
             }
         }
 
-        // dbg!(&not_found);
-        println!("\nnot_found:");
-        for v in not_found.iter() {
-            dbg!(hex::encode(v));
-        }
-        println!("\n");
+        // // dbg!(&not_found);
+        // println!("\nnot_found:");
+        // for v in not_found.iter() {
+        //     dbg!(hex::encode(v));
+        // }
+        // println!("\n");
 
         // Reconciliation (decrypt to try and discover unknown mappings) if a
         // BlackBox passed in, then try and decrypt for reconciliation
-        //
-        // TODO: split out reconciliation into own fn?
         let mut dangling: Vec<&Encrypted> = vec![];
 
         if let Some(bbox) = opt_bbox {
@@ -544,21 +542,22 @@ impl EncryptedIndex {
                 let mh = hash::hash(&filedata);
                 // reconciliation happens here
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
-                    // TODO: what if entry already has something set here?
-
                     // hashset (do not assume unique enc hashes in the index)
                     let hs = map_enc_plain_set
                         .entry(enc.hash.clone())
                         .or_insert_with(HashSet::new);
 
-                    if hs.is_empty() && (*entry.get_enc_ref()).is_some() {
+                    // in theory it will never happen because hs is populated
+                    // with all the Some(enc)'s earlier.
+                    //
+                    // I think only one of these conditoins is necessary, would
+                    // prefer the entry.get_enc_ref one and just use hs to keep
+                    // track of duplicated enc hashes
+                    if hs.is_empty() && (*entry.get_enc_ref()).is_none() {
                         entry.set_encrypted(enc.clone())?;
                     }
                     hs.insert(entry.hash.clone());
                     // reconcile succeeded.
-
-                    // println!("Got a matching entry in index:");
-                    // dbg!(&entry, &enc);
                 } else {
                     dangling.push(enc);
                 }
@@ -566,6 +565,14 @@ impl EncryptedIndex {
         }
 
         // dbg!(&dangling);
+
+        // TODO: also return multiply-encrypted items (values in
+        // map_enc_plain_set with multiple entries).
+
+        // TODO: test for doubly-encrypted entries with different enc hashes
+        // ALREADY in the index. Need some way to reconcile / converge upon only
+        // one and remove the others. This would be part of `cleanup` of the
+        // encrypted disk portion.
 
         Ok(dangling)
     }
