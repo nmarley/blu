@@ -533,7 +533,7 @@ impl EncryptedIndex {
 
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
-                dbg!(hex::encode(&hash));
+                // dbg!(hex::encode(&hash));
                 // decrypt it ...
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
@@ -562,8 +562,6 @@ impl EncryptedIndex {
                 }
             }
         }
-
-        // dbg!(&dangling);
 
         // TODO: also return multiply-encrypted items (values in
         // map_enc_plain_set with multiple entries).
@@ -595,12 +593,11 @@ impl EncryptedIndex {
             }
         }
 
-        // dbg!(&old_dup_enc_hashes);
-        println!("\nold_dup_enc_hashes:");
-        for v in old_dup_enc_hashes.iter() {
-            dbg!(hex::encode(v));
-        }
-        println!("\n");
+        // println!("\nold_dup_enc_hashes:");
+        // for v in old_dup_enc_hashes.iter() {
+        //     dbg!(hex::encode(v));
+        // }
+        // println!("\n");
 
         // TODO: test for doubly-encrypted entries with different enc hashes
         // ALREADY in the index. Need some way to reconcile / converge upon only
@@ -625,7 +622,8 @@ impl fmt::Debug for EncryptedIndex {
 #[cfg(test)]
 mod test {
     use super::{
-        compress, deserialize_index, serialize_index, EncryptedIndex, Entry, HashMap, Index,
+        compress, deserialize_index, serialize_index, Encrypted, EncryptedIndex, Entry, HashMap,
+        Index,
     };
     use crate::hash;
     use std::collections::HashSet;
@@ -794,21 +792,31 @@ mod test {
             None => Index::new(TEST_DIR_T5).unwrap(),
             Some(idx) => idx,
         };
-        dbg!(&index);
+        // dbg!(&index);
 
-        let _deleted_entries = index.update(TEST_DIR_T5).unwrap();
-        dbg!(&_deleted_entries);
+        let deleted_entries = index.update(TEST_DIR_T5).unwrap();
+        // dbg!(&deleted_entries);
+        assert_eq!(deleted_entries.len(), 0);
 
         // TODO: get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
-        dbg!(&enc_idx);
+        // dbg!(&enc_idx);
 
-        // get the entries to be restored or dangling
-        let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
-        dbg!(&to_restore);
-        // should return 1 entry?
+        // get dangling entries
+        // TODO: how to handle duplicate encrypted from this same fn?
+        let dangling = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
+        // dbg!(&dangling);
+
+        assert_eq!(dangling, vec![
+            &Encrypted {
+                path: "test/t5/.blu/data/9/9b1/9b1d7/9b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed".into(),
+                hash: hex::decode("13409b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed").unwrap(),
+                size: 563,
+                keys: vec![],
+            },
+        ]);
     }
 
     // TODO: test multiple different Encrypted's that decrypt to the same file
-    // (reconciliation / cleanup)
+    // (reconciliation / convergence (upon a single enc hash) / cleanup)
 }
