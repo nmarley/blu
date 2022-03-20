@@ -514,9 +514,9 @@ impl EncryptedIndex {
         // println!("\n");
 
         // not_found is candidate for reconciliation or dangling
-        for k in self.map.keys() {
-            if !idx_enchash_plainhash.contains_key(k) {
-                not_found.insert(k.to_vec());
+        for enchash in self.map.keys() {
+            if !idx_enchash_plainhash.contains_key(enchash) {
+                not_found.insert(enchash.to_vec());
             }
         }
 
@@ -568,6 +568,7 @@ impl EncryptedIndex {
         // let duplicate_encrypted_hashes = HashSet::new();
         // map_plain_enc_set => sort values and use the top one in index.
 
+        // converge upon a single enc hash value if multiple found
         let mut old_dup_enc_hashes: Vec<Vec<u8>> = Vec::new();
         for (plain_hash, set_enc) in map_plain_enc_set.iter() {
             if set_enc.len() > 1 {
