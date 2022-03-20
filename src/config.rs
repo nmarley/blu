@@ -113,21 +113,21 @@ pub(crate) mod test {
     use super::{Backend, BlackBox, Config};
     use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_AGE_SECRET_KEY_PATH};
 
-    const TEST_CONFIG_DIR_T0: &str = "test/t0/";
-    const TEST_CONFIG_DIR_T1: &str = "test/t1/";
-    const TEST_CONFIG_DIR_T2: &str = "test/t2/";
+    const TEST_DIR_T0: &str = "test/t0/";
+    const TEST_DIR_T1: &str = "test/t1/";
+    const TEST_DIR_T2: &str = "test/t2/";
 
     #[test]
     fn read_config() {
-        assert!(super::read_config(TEST_CONFIG_DIR_T0).is_err());
-        let cfg = super::read_config(TEST_CONFIG_DIR_T1).unwrap();
+        assert!(super::read_config(TEST_DIR_T0).is_err());
+        let cfg = super::read_config(TEST_DIR_T1).unwrap();
         dbg!(&cfg);
 
         assert_eq!(
             cfg,
             Config {
                 backend: Backend::Local,
-                basedir: TEST_CONFIG_DIR_T1.into(),
+                basedir: TEST_DIR_T1.into(),
                 blu_version: "0.0.1".to_string(),
                 data_key_files: vec![TEST_AGE_SECRET_KEY_PATH.to_string()],
                 ..Default::default()
@@ -138,7 +138,7 @@ pub(crate) mod test {
     #[test]
     fn load_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let cfg = super::read_config(TEST_CONFIG_DIR_T2).unwrap();
+        let cfg = super::read_config(TEST_DIR_T2).unwrap();
         let index = cfg.load_index(&bbox).unwrap();
 
         assert!(index.is_some());
