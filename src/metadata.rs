@@ -580,10 +580,9 @@ impl EncryptedIndex {
                 let top_enc_hash = v_iter.next().unwrap();
 
                 // this is so screwy ...
-                while let Some(item) = v_iter.next() {
+                for item in v_iter {
                     old_dup_enc_hashes.push((*item.clone()).to_vec());
                 }
-                // old_dup_enc_hashes.append(v_iter.map(|elem| *elem).collect());
 
                 // update index iff highest enc hash not used
                 if let Some(e) = idx.get_mut_entry_ref(plain_hash) {
@@ -595,6 +594,13 @@ impl EncryptedIndex {
                 }
             }
         }
+
+        // dbg!(&old_dup_enc_hashes);
+        println!("\nold_dup_enc_hashes:");
+        for v in old_dup_enc_hashes.iter() {
+            dbg!(hex::encode(v));
+        }
+        println!("\n");
 
         // TODO: test for doubly-encrypted entries with different enc hashes
         // ALREADY in the index. Need some way to reconcile / converge upon only
