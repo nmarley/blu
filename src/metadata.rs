@@ -484,7 +484,7 @@ impl EncryptedIndex {
         &'a self,
         idx: &'b mut Index,
         opt_bbox: Option<&'c BlackBox>,
-    ) -> Result<Vec<&'a Encrypted>, Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<&'a Encrypted>, Vec<Vec<u8>>), Box<dyn std::error::Error>> {
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
 
@@ -572,7 +572,6 @@ impl EncryptedIndex {
         let mut old_dup_enc_hashes: Vec<Vec<u8>> = Vec::new();
         for (plain_hash, set_enc) in map_plain_enc_set.iter() {
             if set_enc.len() > 1 {
-                // top_enc_hash = (*set_enc).to_vec().sort();
                 let mut v: Vec<_> = set_enc.iter().collect();
                 v.sort();
                 let mut v_iter = v.into_iter();
@@ -594,18 +593,19 @@ impl EncryptedIndex {
             }
         }
 
-        // println!("\nold_dup_enc_hashes:");
-        // for v in old_dup_enc_hashes.iter() {
-        //     dbg!(hex::encode(v));
-        // }
-        // println!("\n");
+        // old_dup_enc_hashes
+        println!("\nold_dup_enc_hashes:");
+        for v in old_dup_enc_hashes.iter() {
+            dbg!(hex::encode(v));
+        }
+        println!("\n");
 
         // TODO: test for doubly-encrypted entries with different enc hashes
         // ALREADY in the index. Need some way to reconcile / converge upon only
         // one and remove the others. This would be part of `cleanup` of the
         // encrypted disk portion.
 
-        Ok(dangling)
+        Ok((dangling, old_dup_enc_hashes))
     }
 }
 
@@ -805,7 +805,7 @@ mod test {
 
         // get dangling entries
         // TODO: how to handle duplicate encrypted from this same fn?
-        let dangling = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
+        let (dangling, _dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
         // dbg!(&dangling);
 
         assert_eq!(dangling, vec![
@@ -820,4 +820,42 @@ mod test {
 
     // TODO: test multiple different Encrypted's that decrypt to the same file
     // (reconciliation / convergence (upon a single enc hash) / cleanup)
+    const TEST_DIR_T6: &str = "test/t6/";
+    #[test]
+    fn double_enc() {
+        // load index
+        let cfg = config::read_config(TEST_DIR_T6).unwrap();
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut index = cfg
+            .load_index(&bbox)
+            .unwrap()
+            .unwrap_or_else(|| Index::new(TEST_DIR_T6).unwrap());
+        dbg!(&index);
+
+        // ensure the index changes after reconciliation + convergence
+        let en_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
+        let entry_ref = index.get_entry_ref(&en_hash).unwrap();
+        let enc = entry_ref.get_enc().unwrap();
+        assert_eq!(enc.hash, hex::decode("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e").unwrap());
+        // 13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3
+
+        // walk enc datadir and index
+        let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
+
+        // reconciliation + convergence -- this modifies the index
+        let (_dangling, dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
+        assert_eq!(dup_enc_hashes, vec![
+            hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap(),
+        ]);
+
+        // ensure the index changes after reconciliation + convergence
+        let entry_ref = index.get_entry_ref(&en_hash).unwrap();
+        let enc = entry_ref.get_enc().unwrap();
+        assert_eq!(enc.hash, hex::decode("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e").unwrap());
+
+        // use std::path::PathBuf;
+        // let dir_manager: crate::dir::Manager = crate::dir::Manager::new(cfg.datadir());
+        // let the_path = dir_manager.path_for(&dup_enc_hashes[0]).unwrap();
+        // assert_eq!(the_path, PathBuf::from("test/t6/.blu/data/2/2e3/2e361/2e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3"));
+    }
 }
