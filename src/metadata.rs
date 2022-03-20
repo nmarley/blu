@@ -491,8 +491,6 @@ impl EncryptedIndex {
         // plain_hash -> hashset(enc hash)
         // ensure doubly encrypted files are reported / can be cleaned up
         let mut map_plain_enc_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
-
-        // TODO: should this be a method on Index?
         let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
@@ -545,14 +543,7 @@ impl EncryptedIndex {
                     let hs = map_plain_enc_set
                         .entry(entry.hash.clone())
                         .or_insert_with(HashSet::new);
-
-                    // in theory it will never happen because hs is populated
-                    // with all the Some(enc)'s earlier.
-                    //
-                    // I think only one of these conditions is necessary, would
-                    // prefer the entry.get_enc_ref one and just use hs to keep
-                    // track of duplicated enc hashes
-                    if hs.is_empty() && (*entry.get_enc_ref()).is_none() {
+                    if (*entry.get_enc_ref()).is_none() {
                         entry.set_encrypted(enc.clone())?;
                     }
                     hs.insert(enc.hash.clone());
@@ -562,11 +553,6 @@ impl EncryptedIndex {
                 }
             }
         }
-
-        // TODO: also return multiply-encrypted items (values in
-        // map_enc_plain_set with multiple entries).
-        // let duplicate_encrypted_hashes = HashSet::new();
-        // map_plain_enc_set => sort values and use the top one in index.
 
         // converge upon a single enc hash value if multiple found
         let mut old_dup_enc_hashes: Vec<Vec<u8>> = Vec::new();
@@ -593,18 +579,20 @@ impl EncryptedIndex {
             }
         }
 
-        // old_dup_enc_hashes
-        println!("\nold_dup_enc_hashes:");
-        for v in old_dup_enc_hashes.iter() {
-            dbg!(hex::encode(v));
-        }
-        println!("\n");
+        // // old_dup_enc_hashes
+        // println!("\nold_dup_enc_hashes:");
+        // for v in old_dup_enc_hashes.iter() {
+        //     dbg!(hex::encode(v));
+        // }
+        // println!("\n");
 
-        // TODO: test for doubly-encrypted entries with different enc hashes
-        // ALREADY in the index. Need some way to reconcile / converge upon only
-        // one and remove the others. This would be part of `cleanup` of the
-        // encrypted disk portion.
-
+        // `dangling` are the enc entries which cannot be reconciled to any file
+        // data in the plain index, meaning we don't have a file name or other
+        // metadata to link with.
+        //
+        // `old_dup_enc_hashes` is the enc hashes of entries which are
+        // redundant. They shouldn't be referenced anywhere and should be able
+        // to be cleaned up (removed from disk).
         Ok((dangling, old_dup_enc_hashes))
     }
 }
@@ -686,18 +674,18 @@ mod test {
             ..Default::default()
         };
         let serialized_idx = serialize_index(&index).unwrap();
-        println!(
-            "{} (len {} bytes)",
-            &hex::encode(&serialized_idx),
-            serialized_idx.len()
-        );
+        // println!(
+        //     "{} (len {} bytes)",
+        //     &hex::encode(&serialized_idx),
+        //     serialized_idx.len()
+        // );
 
-        let compressed_ser_idx = compress(&serialized_idx).unwrap();
-        println!(
-            "compressed: {} (len {} bytes)",
-            &hex::encode(&compressed_ser_idx),
-            compressed_ser_idx.len()
-        );
+        let _compressed_ser_idx = compress(&serialized_idx).unwrap();
+        // println!(
+        //     "compressed: {} (len {} bytes)",
+        //     &hex::encode(&compressed_ser_idx),
+        //     _compressed_ser_idx.len()
+        // );
 
         let idx2 = deserialize_index(&serialized_idx).unwrap();
         assert_eq!(index, idx2);

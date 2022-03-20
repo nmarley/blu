@@ -121,7 +121,7 @@ pub(crate) mod test {
     fn read_config() {
         assert!(super::read_config(TEST_DIR_T0).is_err());
         let cfg = super::read_config(TEST_DIR_T1).unwrap();
-        dbg!(&cfg);
+        // dbg!(&cfg);
 
         assert_eq!(
             cfg,
@@ -142,8 +142,6 @@ pub(crate) mod test {
         let index = cfg.load_index(&bbox).unwrap();
 
         assert!(index.is_some());
-        let index = index.unwrap();
-        dbg!(&index);
-        // TODO: test index? or is loading and is_some() enough?
+        let _index = index.unwrap();
     }
 }
