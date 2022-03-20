@@ -830,18 +830,16 @@ mod test {
             .load_index(&bbox)
             .unwrap()
             .unwrap_or_else(|| Index::new(TEST_DIR_T6).unwrap());
-        dbg!(&index);
 
         // ensure the index changes after reconciliation + convergence
         let en_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
         let entry_ref = index.get_entry_ref(&en_hash).unwrap();
         let enc = entry_ref.get_enc().unwrap();
-        assert_eq!(enc.hash, hex::decode("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e").unwrap());
-        // 13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3
+        // initially this is the enc hash ...
+        assert_eq!(enc.hash, hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap());
 
         // walk enc datadir and index
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
-
         // reconciliation + convergence -- this modifies the index
         let (_dangling, dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
         assert_eq!(dup_enc_hashes, vec![
@@ -851,11 +849,7 @@ mod test {
         // ensure the index changes after reconciliation + convergence
         let entry_ref = index.get_entry_ref(&en_hash).unwrap();
         let enc = entry_ref.get_enc().unwrap();
+        // ... enc hash changes to this after convergence
         assert_eq!(enc.hash, hex::decode("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e").unwrap());
-
-        // use std::path::PathBuf;
-        // let dir_manager: crate::dir::Manager = crate::dir::Manager::new(cfg.datadir());
-        // let the_path = dir_manager.path_for(&dup_enc_hashes[0]).unwrap();
-        // assert_eq!(the_path, PathBuf::from("test/t6/.blu/data/2/2e3/2e361/2e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3"));
     }
 }
