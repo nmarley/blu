@@ -488,20 +488,19 @@ impl EncryptedIndex {
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
 
-        // enc hash -> regular hash count
-        // enc_hash -> hashset(regular hash)
+        // plain_hash -> hashset(enc hash)
         // ensure doubly encrypted files are reported / can be cleaned up
-        let mut map_enc_plain_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
+        let mut map_plain_enc_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
 
         // TODO: should this be a method on Index?
         let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
                 // hashset (do not assume unique enc hashes in the index)
-                let hs = map_enc_plain_set
-                    .entry(enc.hash.clone())
+                let hs = map_plain_enc_set
+                    .entry(entry.hash.clone())
                     .or_insert_with(HashSet::new);
-                hs.insert(entry.hash.clone());
+                hs.insert(enc.hash.clone());
 
                 idx_enchash_plainhash.insert(enc.hash.clone(), entry.hash.clone());
             }
@@ -543,20 +542,20 @@ impl EncryptedIndex {
                 // reconciliation happens here
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
                     // hashset (do not assume unique enc hashes in the index)
-                    let hs = map_enc_plain_set
-                        .entry(enc.hash.clone())
+                    let hs = map_plain_enc_set
+                        .entry(entry.hash.clone())
                         .or_insert_with(HashSet::new);
 
                     // in theory it will never happen because hs is populated
                     // with all the Some(enc)'s earlier.
                     //
-                    // I think only one of these conditoins is necessary, would
+                    // I think only one of these conditions is necessary, would
                     // prefer the entry.get_enc_ref one and just use hs to keep
                     // track of duplicated enc hashes
                     if hs.is_empty() && (*entry.get_enc_ref()).is_none() {
                         entry.set_encrypted(enc.clone())?;
                     }
-                    hs.insert(entry.hash.clone());
+                    hs.insert(enc.hash.clone());
                     // reconcile succeeded.
                 } else {
                     dangling.push(enc);
@@ -568,6 +567,34 @@ impl EncryptedIndex {
 
         // TODO: also return multiply-encrypted items (values in
         // map_enc_plain_set with multiple entries).
+        // let duplicate_encrypted_hashes = HashSet::new();
+        // map_plain_enc_set => sort values and use the top one in index.
+
+        let mut old_dup_enc_hashes: Vec<Vec<u8>> = Vec::new();
+        for (plain_hash, set_enc) in map_plain_enc_set.iter() {
+            if set_enc.len() > 1 {
+                // top_enc_hash = (*set_enc).to_vec().sort();
+                let mut v: Vec<_> = set_enc.iter().collect();
+                v.sort();
+                let mut v_iter = v.into_iter();
+                let top_enc_hash = v_iter.next().unwrap();
+
+                // this is so screwy ...
+                while let Some(item) = v_iter.next() {
+                    old_dup_enc_hashes.push((*item.clone()).to_vec());
+                }
+                // old_dup_enc_hashes.append(v_iter.map(|elem| *elem).collect());
+
+                // update index iff highest enc hash not used
+                if let Some(e) = idx.get_mut_entry_ref(plain_hash) {
+                    if let Some(enc) = e.get_enc_ref() {
+                        if enc.hash != *top_enc_hash {
+                            e.set_encrypted((*self.get_entry_ref(top_enc_hash)?).clone())?;
+                        }
+                    }
+                }
+            }
+        }
 
         // TODO: test for doubly-encrypted entries with different enc hashes
         // ALREADY in the index. Need some way to reconcile / converge upon only
