@@ -95,6 +95,10 @@ impl Encrypted {
     pub fn get_hash(&self) -> Vec<u8> {
         self.hash.clone()
     }
+
+    pub fn get_hash_ref(&self) -> &Vec<u8> {
+        &self.hash
+    }
 }
 
 fn serialize_index(index: &Index) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -483,13 +487,14 @@ impl EncryptedIndex {
         &'a self,
         idx: &'b mut Index,
         opt_bbox: Option<&'c BlackBox>,
-    ) -> Result<(Vec<&'a Encrypted>, Vec<Vec<u8>>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<&'a Encrypted>, Vec<&'a Encrypted>), Box<dyn std::error::Error>> {
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
 
-        // plain_hash -> hashset(enc hash)
         // ensure doubly encrypted files are reported / can be cleaned up
+        // plain_hash -> hashset(enc hash)
         let mut map_plain_enc_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
+        // enc hash -> plain hash mapping
         let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
@@ -552,33 +557,37 @@ impl EncryptedIndex {
         }
 
         // converge upon a single enc hash value if multiple found
-        let mut old_dup_enc_hashes: Vec<Vec<u8>> = Vec::new();
-        for (plain_hash, set_enc) in map_plain_enc_set.iter() {
+        let mut old_dup_encrypted: Vec<&Encrypted> = Vec::new();
+        for (plain_hash, set_enc) in map_plain_enc_set.into_iter() {
             if set_enc.len() > 1 {
                 let mut v: Vec<_> = set_enc.iter().collect();
                 v.sort();
                 let mut v_iter = v.into_iter();
-                let top_enc_hash = v_iter.next().unwrap();
+                let top_enc_hash = &*v_iter.next().unwrap();
 
                 // this is so screwy ...
                 for item in v_iter {
-                    old_dup_enc_hashes.push((*item.clone()).to_vec());
+                    // Due to the lifetime constraints, it's necessary to return
+                    // a ref from self, not idx. `item` here is a ref to idx.
+                    old_dup_encrypted.push(self.get_entry_ref(item).unwrap())
                 }
 
                 // update index iff highest enc hash not used
-                if let Some(e) = idx.get_mut_entry_ref(plain_hash) {
+                if let Some(e) = idx.get_mut_entry_ref(&plain_hash) {
                     if let Some(enc) = e.get_enc_ref() {
-                        if enc.hash != *top_enc_hash {
-                            e.set_encrypted((*self.get_entry_ref(top_enc_hash)?).clone())?;
+                        if &enc.hash != top_enc_hash {
+                            // e.set_encrypted((*self.get_entry_ref(top_enc_hash)?).clone())?;
+                            let top_enc = self.get_entry_ref(top_enc_hash).unwrap().clone();
+                            e.set_encrypted(top_enc)?;
                         }
                     }
                 }
             }
         }
 
-        // // old_dup_enc_hashes
-        // println!("\nold_dup_enc_hashes:");
-        // for v in old_dup_enc_hashes.iter() {
+        // // old_dup_encrypted
+        // println!("\nold_dup_encrypted:");
+        // for v in old_dup_encrypted.iter() {
         //     dbg!(hex::encode(v));
         // }
         // println!("\n");
@@ -587,10 +596,10 @@ impl EncryptedIndex {
         // data in the plain index, meaning we don't have a file name or other
         // metadata to link with.
         //
-        // `old_dup_enc_hashes` is the enc hashes of entries which are
+        // `old_dup_encrypted` contains the encrypted entries which are
         // redundant. They shouldn't be referenced anywhere and should be able
         // to be cleaned up (removed from disk).
-        Ok((dangling, old_dup_enc_hashes))
+        Ok((dangling, old_dup_encrypted))
     }
 }
 
@@ -826,10 +835,8 @@ mod test {
         // walk enc datadir and index
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         // reconciliation + convergence -- this modifies the index
-        let (_dangling, dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
-        assert_eq!(dup_enc_hashes, vec![
-            hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap(),
-        ]);
+        let (_dangling, dup_enc_entries) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
+        assert_eq!(dup_enc_entries[0].hash, hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap());
 
         // ensure the index changes after reconciliation + convergence
         let entry_ref = index.get_entry_ref(&en_hash).unwrap();
