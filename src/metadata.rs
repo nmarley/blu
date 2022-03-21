@@ -288,7 +288,7 @@ impl Index {
             match &entry.enc {
                 None => to_encrypt.push(entry.clone()),
                 Some(enc) => {
-                    if enc_idx.get_entry_ref(&enc.hash).is_err() {
+                    if enc_idx.get_entry_ref(&enc.hash).is_none() {
                         to_encrypt.push(entry.clone());
                     }
                 }
@@ -388,9 +388,8 @@ impl EncryptedIndex {
         })
     }
 
-    pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Encrypted, Box<dyn std::error::Error>> {
-        let e = self.map.get(hash).unwrap();
-        Ok(e)
+    pub fn get_entry_ref(&self, hash: &[u8]) -> Option<&Encrypted> {
+        self.map.get(hash)
     }
 
     // walk the data dir and check archives against the index
