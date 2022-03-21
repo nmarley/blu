@@ -379,8 +379,8 @@ impl Default for Index {
 #[derive(PartialEq)]
 pub struct EncryptedIndex {
     map: HashMap<Vec<u8>, Encrypted>,
-    // datadir?
 }
+
 impl EncryptedIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
@@ -498,7 +498,6 @@ impl EncryptedIndex {
                     .entry(entry.hash.clone())
                     .or_insert_with(HashSet::new);
                 hs.insert(enc.hash.clone());
-
                 idx_enchash_plainhash.insert(enc.hash.clone(), entry.hash.clone());
             }
         }
@@ -530,7 +529,6 @@ impl EncryptedIndex {
 
         if let Some(bbox) = opt_bbox {
             for hash in not_found.into_iter() {
-                // dbg!(hex::encode(&hash));
                 // decrypt it ...
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
