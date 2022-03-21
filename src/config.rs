@@ -20,7 +20,7 @@ impl Default for Backend {
 }
 
 // for now locked to just Age keys, for simplicity
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub enum KeyType {
     // RSA,
     // DSA,
@@ -29,7 +29,7 @@ pub enum KeyType {
     Age,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub struct KeyID {
     r#type: KeyType,
     public_key: String, // TODO: Vec<u8> ?

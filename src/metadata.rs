@@ -70,7 +70,7 @@ impl Entry {
     }
 }
 
-#[derive(PartialEq, Serialize, Deserialize, Clone)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub struct Encrypted {
     // in theory, there won't be multiple files in the encrypted datadir with
     // the same hash
