@@ -385,6 +385,8 @@ pub struct EncryptedIndex {
     map: HashMap<Vec<u8>, Encrypted>,
 }
 
+type PairVecEncRef<'a, Encrypted> = (Vec<&'a Encrypted>, Vec<&'a Encrypted>);
+
 impl EncryptedIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
@@ -487,7 +489,7 @@ impl EncryptedIndex {
         &'a self,
         idx: &'b mut Index,
         opt_bbox: Option<&'c BlackBox>,
-    ) -> Result<(Vec<&'a Encrypted>, Vec<&'a Encrypted>), Box<dyn std::error::Error>> {
+    ) -> Result<PairVecEncRef<'a, Encrypted>, Box<dyn std::error::Error>> {
         // list of Encrypted's not found in the Index
         let mut not_found: HashSet<Vec<u8>> = HashSet::new();
 
