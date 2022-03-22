@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Write;
 
 pub mod age;
+pub mod block;
 pub mod clap;
 pub mod config;
 pub mod dir;
