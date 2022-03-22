@@ -35,13 +35,10 @@ pub struct File<'a> {
     filetype: String,
 }
 
-// all this shit to debug the Vec<u8> as a hex string instead of numbers
+// all this to debug the Vec<u8> as a hex string instead of numbers
 #[derive(PartialEq, Clone, Hash)]
 pub struct MyHash(Vec<u8>);
 impl std::fmt::Debug for MyHash {
-    // f.debug_struct("Entry")
-    //     .field("hash", &hex::encode(&self.hash))
-    //     .finish()
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let _ = write!(f, "{:?}", &hex::encode(&self.0));
         Ok(())
@@ -52,20 +49,6 @@ impl<'a> From<Vec<u8>> for MyHash {
         Self(vec)
     }
 }
-
-// impl<'a> From<&'a T> for MyHash {
-//     fn from(slice: &'a T) -> Self {
-//         let mut vec = slice.to_owned();
-//         Self(vec)
-//     }
-// }
-
-// impl<T: Ord + Clone> From<Vec<T>> for SortedVec<T> {
-//     fn from(mut vec: Vec<T>) -> Self {
-//         vec.sort();
-//         SortedVec(vec)
-//     }
-// }
 
 impl File<'_> {
     pub fn hash(&self) -> Vec<u8> {
@@ -109,24 +92,6 @@ impl File<'_> {
 // }
 
 // fn read_blocks_f<sRef<dyn BufRead>>(reader: R) -> Vec<Vec<u8>> {
-//     let mut blocks: Vec<Vec<u8>> = vec![];
-//     let mut r = reader.as_ref();
-//     // mut dyn BufRead
-//     let mut size = 1;
-//     while size > 0 {
-//         let data = r.fill_buf().unwrap();
-//         size = data.len();
-//         r.consume(size);
-//         blocks.push(data.to_vec());
-//     }
-//     blocks
-//     // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-//     // dbg!(&BLOCK_SIZE);
-//     // let block_bytes = reader.fill_buf().unwrap();
-//     // dbg!(&block_bytes.len());
-// }
-
-// fn read_blocks<R: AsRef<dyn BufRead>>(reader: R) -> Vec<Vec<u8>> {
 //     let mut blocks: Vec<Vec<u8>> = vec![];
 //     let mut r = reader.as_ref();
 //     // mut dyn BufRead
