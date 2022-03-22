@@ -1,8 +1,6 @@
 # TODO
 
-- 2022-03-16: block-level de-duplication?
-
-- 2022-03-18: tests for multiply-encrypted data (check for redundant encrypted files, since enc produces indeterminate results each time)
+- 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
 
 Uses <https://crates.io/crates/age> for encryption.
 
