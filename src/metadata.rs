@@ -283,9 +283,6 @@ impl Index {
 
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
     // in the EncIdx.
-    //
-    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // to make sure this returns the right values)
     pub fn difference_enc_idx(&self, enc_idx: &EncryptedIndex) -> Vec<Entry> {
         let mut to_encrypt: Vec<Entry> = vec![];
         for entry in self.map.values() {
@@ -427,9 +424,6 @@ impl EncryptedIndex {
             let filedata = fs::read(elem.path()).unwrap();
             let mh = hash::hash(&filedata);
 
-            // TODO: the only way to get hashes of the un-encrypted data here is
-            // to decrypt and hash
-
             let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
                     path: elem.into_path(),
@@ -443,7 +437,7 @@ impl EncryptedIndex {
         Ok(map)
     }
 
-    // TODO: restore is a bit more tricky than imagined ... the entries in the
+    // restore is a bit more tricky than imagined ... the entries in the
     // regular Index **MUST** exist, otherwise we have no path data to restore
     // to, nor do we know how to reconcile it.
     //
@@ -477,14 +471,6 @@ impl EncryptedIndex {
     // but without a Encrypted to point to (enc set to None), AND ... there is a
     // matching Encrypted entry on-disk which can decrypt to match the plain
     // hash.
-
-    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // to make sure this returns the right values)
-    //
-    // TODO: also consider the case when multiple different encrypted versions
-    // of the same plain files exist... clean up?
-    //
-    // TODO: split out reconciliation into own fn?
     pub fn difference_idx<'a, 'b, 'c>(
         &'a self,
         idx: &'b mut Index,
@@ -704,8 +690,6 @@ mod test {
     const TEST_DIR_T3: &str = "test/t3/";
     use crate::age::BlackBox;
     use crate::config;
-    // TODO: THIS!! Ensure deleted entries are returned, and add a
-    // same-hash,different-path entry for good measure.
 
     #[test]
     fn update_idx() {
@@ -742,9 +726,6 @@ mod test {
 
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
     // in the EncIdx.
-    //
-    // TODO: write tests for this (incl. a tX dir w/some enc files and some not,
-    // to make sure this returns the right values)
     const TEST_DIR_T4: &str = "test/t4/";
     #[test]
     fn diff_enc_idx() {
@@ -758,7 +739,7 @@ mod test {
         let _deleted_entries = index.update(TEST_DIR_T4).unwrap();
         // dbg!(&_deleted_entries);
 
-        // TODO: get the difference w/EncryptedIndex dir
+        // get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         // dbg!(&enc_idx);
 
@@ -795,12 +776,11 @@ mod test {
         // dbg!(&deleted_entries);
         assert_eq!(deleted_entries.len(), 0);
 
-        // TODO: get the difference w/EncryptedIndex dir
+        // get the difference w/EncryptedIndex dir
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         // dbg!(&enc_idx);
 
         // get dangling entries
-        // TODO: how to handle duplicate encrypted from this same fn?
         let (dangling, _dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
         // dbg!(&dangling);
 
@@ -814,7 +794,7 @@ mod test {
         ]);
     }
 
-    // TODO: test multiple different Encrypted's that decrypt to the same file
+    // test multiple different Encrypted's that decrypt to the same file
     // (reconciliation / convergence (upon a single enc hash) / cleanup)
     const TEST_DIR_T6: &str = "test/t6/";
     #[test]
