@@ -1,35 +1,71 @@
+use std::fmt;
 use std::fs;
-use std::io::Read;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 // use serde::{Deserialize, Serialize};
 const BLOCK_SIZE: usize = 4096;
 
 // #[derive(PartialEq, Serialize, Deserialize, Clone, Hash)]
-#[derive(PartialEq, Clone, Hash)]
+#[derive(PartialEq, Clone, Hash, Debug)]
 pub struct Block {
-    hash: Vec<u8>,
+    // hash: Vec<u8>,
+    hash: MyHash,
     // data: Vec<u8>,
     size: usize,
 }
 
 impl Block {
-    // let mh = hash::hash(&filedata);
-    // pub fn new() -> Self {
-    //     Self {
-    //     }
-    // }
+    pub fn new(data: &[u8]) -> Self {
+        let mh = crate::hash::hash(data);
+        Self {
+            hash: MyHash::from(mh.to_bytes()),
+            size: data.len(),
+        }
+    }
 }
 
 type BlockVec<'a> = Vec<&'a Block>;
 
 // #[derive(PartialEq, Serialize, Deserialize, Clone)]
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct File<'a> {
     blocks: BlockVec<'a>,
     ref_count: usize,
     // TODO: ref table?
     filetype: String,
 }
+
+// all this shit to debug the Vec<u8> as a hex string instead of numbers
+#[derive(PartialEq, Clone, Hash)]
+pub struct MyHash(Vec<u8>);
+impl std::fmt::Debug for MyHash {
+    // f.debug_struct("Entry")
+    //     .field("hash", &hex::encode(&self.hash))
+    //     .finish()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = write!(f, "{:?}", &hex::encode(&self.0));
+        Ok(())
+    }
+}
+impl<'a> From<Vec<u8>> for MyHash {
+    fn from(vec: Vec<u8>) -> Self {
+        Self(vec)
+    }
+}
+
+// impl<'a> From<&'a T> for MyHash {
+//     fn from(slice: &'a T) -> Self {
+//         let mut vec = slice.to_owned();
+//         Self(vec)
+//     }
+// }
+
+// impl<T: Ord + Clone> From<Vec<T>> for SortedVec<T> {
+//     fn from(mut vec: Vec<T>) -> Self {
+//         vec.sort();
+//         SortedVec(vec)
+//     }
+// }
 
 impl File<'_> {
     pub fn hash(&self) -> Vec<u8> {
@@ -38,8 +74,23 @@ impl File<'_> {
     }
 
     pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(
-        path: P,
+        filepath: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let f = std::fs::File::open(filepath).unwrap();
+        let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
+        let mut size = 1;
+        let mut blocks: Vec<Vec<u8>> = vec![];
+        while size > 0 {
+            let data = reader.fill_buf().unwrap();
+            size = data.len();
+            blocks.push(data.to_vec());
+            reader.consume(size);
+        }
+        // dbg!(&blocks);
+
+        let block1 = Block::new(&blocks[0]);
+        dbg!(&block1);
+
         Ok(Self {
             // read_blocks()
             // TODO: blocks reading iterator
@@ -57,23 +108,41 @@ impl File<'_> {
 //     type Item = Block;
 // }
 
-fn read_blocks<R: AsRef<dyn std::io::BufRead>>(reader: R) -> Vec<Vec<u8>> {
-    let mut blocks: Vec<Vec<u8>> = vec![];
+// fn read_blocks_f<sRef<dyn BufRead>>(reader: R) -> Vec<Vec<u8>> {
+//     let mut blocks: Vec<Vec<u8>> = vec![];
+//     let mut r = reader.as_ref();
+//     // mut dyn BufRead
+//     let mut size = 1;
+//     while size > 0 {
+//         let data = r.fill_buf().unwrap();
+//         size = data.len();
+//         r.consume(size);
+//         blocks.push(data.to_vec());
+//     }
+//     blocks
+//     // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
+//     // dbg!(&BLOCK_SIZE);
+//     // let block_bytes = reader.fill_buf().unwrap();
+//     // dbg!(&block_bytes.len());
+// }
 
-    let mut size = 1;
-    while size > 0 {
-        let data = reader.as_ref().fill_buf().unwrap();
-        size = data.len();
-        reader.as_ref().consume(size);
-        blocks.push(data.to_vec());
-    }
-
-    blocks
-    // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-    // dbg!(&BLOCK_SIZE);
-    // let block_bytes = reader.fill_buf().unwrap();
-    // dbg!(&block_bytes.len());
-}
+// fn read_blocks<R: AsRef<dyn BufRead>>(reader: R) -> Vec<Vec<u8>> {
+//     let mut blocks: Vec<Vec<u8>> = vec![];
+//     let mut r = reader.as_ref();
+//     // mut dyn BufRead
+//     let mut size = 1;
+//     while size > 0 {
+//         let data = r.fill_buf().unwrap();
+//         size = data.len();
+//         r.consume(size);
+//         blocks.push(data.to_vec());
+//     }
+//     blocks
+//     // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
+//     // dbg!(&BLOCK_SIZE);
+//     // let block_bytes = reader.fill_buf().unwrap();
+//     // dbg!(&block_bytes.len());
+// }
 
 // let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
 // let file = File::open(file1_path).unwrap();
@@ -134,12 +203,16 @@ mod test {
         // https://doc.rust-lang.org/std/io/struct.BufReader.html#method.with_capacity
 
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-        let file = File::open(file1_path).unwrap();
-        let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-        dbg!(&BLOCK_SIZE);
+        // let file = File::open(file1_path).unwrap();
+        // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
+        // dbg!(&BLOCK_SIZE);
 
-        let block_bytes = reader.fill_buf().unwrap();
-        dbg!(&block_bytes.len());
+        // let block_bytes = reader.fill_buf().unwrap();
+        // dbg!(&block_bytes.len());
+
+        // let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
+        let fart = super::File::read_from_disk(file1_path);
+        dbg!(&fart);
 
         // dbg!(&block_bytes);
 
