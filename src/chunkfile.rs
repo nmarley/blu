@@ -1,4 +1,6 @@
+use crate::hash;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
@@ -28,7 +30,7 @@ impl ChunkFile {
 
         let index = self.count();
         let hash = hash::hash(chunk);
-        positions.insert(hash, index);
+        self.positions.insert(hash.to_bytes(), index);
 
         self.chunks.push(chunk.to_vec());
         Ok(())
@@ -49,7 +51,7 @@ impl ChunkFile {
     }
 
     pub fn get_index_for_hash(&self, hash: &[u8]) -> Option<usize> {
-        positions.get(hash)
+        self.positions.get(hash).map(|e| *e)
     }
 
     fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {

@@ -48,6 +48,7 @@ pub struct EncryptedBlockIndex {
     // map the encrypted hash to the location of the data on disk
     map: HashMap<Vec<u8>, ChunkFileLocation>,
 }
+
 impl EncryptedBlockIndex {
     pub fn new() -> Self {
         Self {
