@@ -40,10 +40,10 @@ impl ChunkFile {
         self.chunks.len()
     }
 
-    pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, &str> {
+    pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         if index >= self.capacity {
             return Err(
-                format!("index {} greater than capacity of {}", index, self.capacity).as_str(),
+                format!("index {} greater than capacity of {}", index, self.capacity).into(),
             );
         }
         Ok(self.chunks[index].to_vec())
