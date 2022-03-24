@@ -67,8 +67,6 @@ impl ChunkFile {
     }
 }
 
-// impl Default for ChunkFile { }
-
 #[cfg(test)]
 mod test {
     use super::*;
