@@ -1,12 +1,14 @@
-use std::fmt;
-use std::fs;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read};
-use std::path::Path;
-// use serde::{Deserialize, Serialize};
-const BLOCK_SIZE: usize = 4096;
+use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
-// #[derive(PartialEq, Serialize, Deserialize, Clone, Hash)]
-#[derive(PartialEq, Clone, Hash, Debug)]
+const BLOCK_SIZE: usize = 4096;
+use crate::chunkfile::ChunkFile;
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash)]
+// #[derive(PartialEq, Clone, Hash, Debug)]
 pub struct Block {
     // hash: Vec<u8>,
     hash: MyHash,
@@ -26,8 +28,8 @@ impl Block {
 
 type BlockVec<'a> = Vec<&'a Block>;
 
-// #[derive(PartialEq, Serialize, Deserialize, Clone)]
-#[derive(PartialEq, Clone, Debug)]
+// #[derive(PartialEq, Clone, Debug)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File<'a> {
     blocks: BlockVec<'a>,
     ref_count: usize,
@@ -35,8 +37,39 @@ pub struct File<'a> {
     filetype: String,
 }
 
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct ChunkFileLocation {
+    path: PathBuf,
+    index: usize,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct EncryptedBlockIndex {
+    // map the encrypted hash to the location of the data on disk
+    map: HashMap<Vec<u8>, ChunkFileLocation>,
+}
+impl EncryptedBlockIndex {
+    // returns the encrypted from disk, decrypt it yourself
+    //
+    // TODO: seems REALLY weird to just open a new ChunkFile on disk every time
+    // to read a single block ... should we maintain a map of open files for
+    //
+    // reading the chunks? e.g. once this particular location is opened, we
+    // don't close it, keep it open at least for X most recently accessed files?
+    pub fn get_enc_block(&self, hash: &[u8]) -> Option<Vec<u8>> {
+        let enc_location = self.map.get(hash)?;
+
+        let f = fs::File::open(enc_location.path).ok()?;
+        let mut buf = Vec::new();
+        let chunkdata = f.read(&mut buf).ok()?;
+        let chunkfile = ChunkFile::deserialize(chunkdata).ok()?;
+
+        chunkfile.get_chunk(enc_location.index)?
+    }
+}
+
 // all this to debug the Vec<u8> as a hex string instead of numbers
-#[derive(PartialEq, Clone, Hash)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash)]
 pub struct MyHash(Vec<u8>);
 impl std::fmt::Debug for MyHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
