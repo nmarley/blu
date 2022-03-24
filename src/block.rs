@@ -1,3 +1,4 @@
+use crate::hash;
 use crate::magic::Wizard;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -24,11 +25,15 @@ pub struct Block {
 
 impl Block {
     pub fn new(data: &[u8]) -> Self {
-        let mh = crate::hash::hash(data);
+        let mh = hash::hash(data);
         Self {
             hash: MyHash::from(mh.to_bytes()),
             size: data.len(),
         }
+    }
+
+    pub fn hash(&self) -> Vec<u8> {
+        self.hash.bytes()
     }
 }
 
@@ -36,8 +41,6 @@ impl Block {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File {
     blocks: Vec<Block>,
-    ref_count: usize,
-
     // TODO: ref table?
     filetype: String,
 }
@@ -100,11 +103,23 @@ impl<'a> From<Vec<u8>> for MyHash {
         Self(vec)
     }
 }
+impl MyHash {
+    pub fn bytes(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+}
 
 impl File {
-    pub fn hash(&self) -> Vec<u8> {
-        // concatenate all block hashes and ... hash?
-        vec![]
+    //                    Vec<u8> ... not sure about this... debugging Vec<u8>
+    //                    sucks
+    pub fn hash(&self) -> MyHash {
+        let mut all_hashes = vec![];
+        for block in self.blocks.iter() {
+            let mut block_hash = block.hash();
+            all_hashes.append(&mut block_hash);
+        }
+
+        MyHash::from(hash::hash(&all_hashes).to_bytes())
     }
 
     pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(
@@ -137,14 +152,7 @@ impl File {
             count += 1;
         }
 
-        Ok(Self {
-            // read_blocks()
-            // TODO: blocks reading iterator
-            // first block can be passed to magic to determine filetype
-            blocks,
-            ref_count: 0,
-            filetype,
-        })
+        Ok(Self { blocks, filetype })
     }
 }
 
@@ -171,13 +179,6 @@ impl File {
 //     // let block_bytes = reader.fill_buf().unwrap();
 //     // dbg!(&block_bytes.len());
 // }
-
-// let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-// let file = File::open(file1_path).unwrap();
-// let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-// dbg!(&BLOCK_SIZE);
-// let block_bytes = reader.fill_buf().unwrap();
-// dbg!(&block_bytes.len());
 
 // pub struct Entry {
 //     paths: HashSet<PathBuf>,
@@ -231,12 +232,19 @@ mod test {
         // https://doc.rust-lang.org/std/io/struct.BufReader.html#method.with_capacity
 
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
-        let file1 = super::File::read_from_disk(file1_path);
+        let file1 = super::File::read_from_disk(file1_path).unwrap();
         dbg!(&file1);
+        dbg!(&file1.hash());
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
-        let file2 = super::File::read_from_disk(file2_path);
+        let file2 = super::File::read_from_disk(file2_path).unwrap();
         dbg!(&file2);
+        dbg!(&file2.hash());
+
+        let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
+        let file3 = super::File::read_from_disk(file3_path).unwrap();
+        dbg!(&file3);
+        dbg!(&file3.hash());
 
         // -rw-r--r-- 1 nmarley staff 16384 Mar 22 15:32 file1.txt
         // -rw-r--r-- 1 nmarley staff  4096 Mar 22 15:32 file2.txt
