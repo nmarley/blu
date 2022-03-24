@@ -77,18 +77,9 @@ impl EncryptedBlockIndex {
         let _bytes_read = f.read(&mut chunkdata)?;
         let chunkfile = ChunkFile::deserialize(&chunkdata)?;
 
-        Ok(vec![])
-
-        // chunkfile.get_chunk(enc_location.index)
-        // Box::new("SQLite functions cannot take more than 127 parameters".to_string())
-        // match chunkfile.get_chunk(enc_location.index) {
-        //     Ok(z) => Ok(z),
-        //     Err(e) => {
-        //         dbg!(&e);
-        //         // Err(Box::new(&e))
-        //         // Err(Box::new("hiya".into()))
-        //     }
-        // }
+        let chunk = chunkfile.get_chunk(enc_location.index)?;
+        Ok(chunk)
+        // Ok(vec![])
     }
 }
 
