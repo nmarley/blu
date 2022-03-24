@@ -29,7 +29,7 @@ impl Wizard {
         let mut magic_buf = vec![0; magic_vec_capacity];
         let _ = &magic_buf[0..magic_vec_capacity].copy_from_slice(&data[0..magic_vec_capacity]);
 
-        self.magic.buffer(data)
+        self.magic.buffer(&magic_buf)
     }
 }
 
