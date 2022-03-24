@@ -7,8 +7,8 @@ use std::{fmt, fs};
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash)]
-// #[derive(PartialEq, Clone, Hash, Debug)]
+// #[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Hash)]
 pub struct Block {
     // hash: Vec<u8>,
     hash: MyHash,
@@ -28,8 +28,8 @@ impl Block {
 
 type BlockVec<'a> = Vec<&'a Block>;
 
-// #[derive(PartialEq, Clone, Debug)]
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(PartialEq, Clone, Debug)]
+// #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File<'a> {
     blocks: BlockVec<'a>,
     ref_count: usize,
@@ -59,12 +59,13 @@ impl EncryptedBlockIndex {
     pub fn get_enc_block(&self, hash: &[u8]) -> Option<Vec<u8>> {
         let enc_location = self.map.get(hash)?;
 
-        let f = fs::File::open(enc_location.path).ok()?;
+        let mut f = fs::File::open(&enc_location.path).ok()?;
         let mut buf = Vec::new();
         let chunkdata = f.read(&mut buf).ok()?;
-        let chunkfile = ChunkFile::deserialize(chunkdata).ok()?;
-
-        chunkfile.get_chunk(enc_location.index)?
+        dbg!(&chunkdata);
+        // let chunkfile = ChunkFile::deserialize(chunkdata).ok()?;
+        // chunkfile.get_chunk(enc_location.index)?
+        None
     }
 }
 
