@@ -43,7 +43,7 @@ pub struct ChunkFileLocation {
     index: usize,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
 pub struct EncryptedBlockIndex {
     // map the encrypted hash to the location of the data on disk
     map: HashMap<Vec<u8>, ChunkFileLocation>,
