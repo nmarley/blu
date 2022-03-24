@@ -23,7 +23,7 @@ impl ChunkFile {
         }
     }
 
-    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), String> {
+    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
         if self.count() >= self.capacity {
             return Err("capacity has been reached".into());
         }
@@ -40,12 +40,11 @@ impl ChunkFile {
         self.chunks.len()
     }
 
-    pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, String> {
+    pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, &str> {
         if index >= self.capacity {
-            return Err(format!(
-                "index {} greater than capacity of {}",
-                index, self.capacity
-            ));
+            return Err(
+                format!("index {} greater than capacity of {}", index, self.capacity).as_str(),
+            );
         }
         Ok(self.chunks[index].to_vec())
     }
@@ -54,13 +53,13 @@ impl ChunkFile {
         self.positions.get(hash).map(|e| *e)
     }
 
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let encoded: Vec<u8> = bincode::serialize(self)?;
         // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
         Ok(encoded)
     }
 
-    fn deserialize(data: &[u8]) -> Result<ChunkFile, Box<dyn std::error::Error>> {
+    pub fn deserialize(data: &[u8]) -> Result<ChunkFile, Box<dyn std::error::Error>> {
         // let decoded: ChunkFile = serde_cbor::from_slice(data)?;
         let decoded: ChunkFile = bincode::deserialize(data)?;
         Ok(decoded)

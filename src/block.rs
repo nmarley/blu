@@ -66,19 +66,29 @@ impl EncryptedBlockIndex {
     //
     // TODO: seems REALLY weird to just open a new ChunkFile on disk every time
     // to read a single block ... should we maintain a map of open files for
-    //
     // reading the chunks? e.g. once this particular location is opened, we
-    // don't close it, keep it open at least for X most recently accessed files?
-    pub fn get_enc_block(&self, hash: &[u8]) -> Option<Vec<u8>> {
-        let enc_location = self.map.get(hash)?;
+    // don't close it, keep it open at least for X most recently accessed
+    // files?
+    pub fn get_enc_block(&self, hash: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let enc_location = self.map.get(hash).ok_or("location not found")?;
 
-        let mut f = fs::File::open(&enc_location.path).ok()?;
-        let mut buf = Vec::new();
-        let chunkdata = f.read(&mut buf).ok()?;
-        dbg!(&chunkdata);
-        // let chunkfile = ChunkFile::deserialize(chunkdata).ok()?;
-        // chunkfile.get_chunk(enc_location.index)?
-        None
+        let mut f = fs::File::open(&enc_location.path)?;
+        let mut chunkdata = Vec::new();
+        let _bytes_read = f.read(&mut chunkdata)?;
+        let chunkfile = ChunkFile::deserialize(&chunkdata)?;
+
+        Ok(vec![])
+
+        // chunkfile.get_chunk(enc_location.index)
+        // Box::new("SQLite functions cannot take more than 127 parameters".to_string())
+        // match chunkfile.get_chunk(enc_location.index) {
+        //     Ok(z) => Ok(z),
+        //     Err(e) => {
+        //         dbg!(&e);
+        //         // Err(Box::new(&e))
+        //         // Err(Box::new("hiya".into()))
+        //     }
+        // }
     }
 }
 
