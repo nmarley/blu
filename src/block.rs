@@ -1,3 +1,4 @@
+use crate::magic::Wizard;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read};
@@ -7,8 +8,13 @@ use std::{fmt, fs};
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
 
-// #[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
-#[derive(Debug, PartialEq, Clone, Hash)]
+// File ==> ... hash?
+// pub struct FSHandle {
+//     File
+// }
+
+// #[derive(Debug, PartialEq, Clone, Hash)]
+#[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct Block {
     // hash: Vec<u8>,
     hash: MyHash,
@@ -26,13 +32,12 @@ impl Block {
     }
 }
 
-type BlockVec<'a> = Vec<&'a Block>;
-
-#[derive(PartialEq, Clone, Debug)]
-// #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct File<'a> {
-    blocks: BlockVec<'a>,
+// #[derive(PartialEq, Clone, Debug)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct File {
+    blocks: Vec<Block>,
     ref_count: usize,
+
     // TODO: ref table?
     filetype: String,
 }
@@ -96,7 +101,7 @@ impl<'a> From<Vec<u8>> for MyHash {
     }
 }
 
-impl File<'_> {
+impl File {
     pub fn hash(&self) -> Vec<u8> {
         // concatenate all block hashes and ... hash?
         vec![]
@@ -105,28 +110,38 @@ impl File<'_> {
     pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(
         filepath: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        // for file magic
+        let wiz = Wizard::new();
+
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
         let mut size = 1;
-        let mut blocks: Vec<Vec<u8>> = vec![];
+        let mut blocks: Vec<Block> = vec![];
+        let mut count: usize = 0;
+        let mut filetype: String = "".to_string();
         while size > 0 {
             let data = reader.fill_buf().unwrap();
             size = data.len();
-            blocks.push(data.to_vec());
+            let actual_data = data.to_vec();
+            blocks.push(Block::new(&actual_data));
             reader.consume(size);
-        }
-        // dbg!(&blocks);
 
-        let block1 = Block::new(&blocks[0]);
-        dbg!(&block1);
+            if count == 0 {
+                filetype = wiz
+                    .get_filetype(&actual_data, actual_data.len())
+                    .unwrap_or_else(|_| "other".into());
+            }
+
+            count += 1;
+        }
 
         Ok(Self {
             // read_blocks()
             // TODO: blocks reading iterator
             // first block can be passed to magic to determine filetype
-            blocks: BlockVec::new(),
+            blocks,
             ref_count: 0,
-            filetype: "".to_string(),
+            filetype,
         })
     }
 }

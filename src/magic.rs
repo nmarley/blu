@@ -1,6 +1,6 @@
 use filemagic::Magic;
 
-const MAGIC_BUF_MAX_SIZE: u64 = 1024;
+const MAGIC_BUF_MAX_SIZE: usize = 1024;
 const BREW_MAGIC_DB: &str = "/usr/local/share/misc/magic.mgc";
 
 pub struct Wizard {
@@ -19,13 +19,13 @@ impl Wizard {
     pub fn get_filetype(
         &self,
         data: &[u8],
-        size: u64,
+        size: usize,
     ) -> Result<String, filemagic::FileMagicError> {
         let magic_vec_capacity = if size < MAGIC_BUF_MAX_SIZE {
             size
         } else {
             MAGIC_BUF_MAX_SIZE
-        } as usize;
+        };
         let mut magic_buf = vec![0; magic_vec_capacity];
         let _ = &magic_buf[0..magic_vec_capacity].copy_from_slice(&data[0..magic_vec_capacity]);
 

@@ -24,7 +24,7 @@ pub struct Entry {
     filetype: String,
 
     hash: Vec<u8>,
-    size: u64,
+    size: usize,
     enc: Option<Encrypted>,
 
     tags: Vec<String>,     // TODO: proper tagging, or... ?
@@ -246,7 +246,7 @@ impl Index {
             }
 
             let metadata = fs::metadata(elem.path())?;
-            let size = metadata.len();
+            let size = metadata.len() as usize;
             // println!("{:?}: {:?} bytes", elem.path(), size);
 
             // TODO: streaming reads here? as some files could be GB in size...
@@ -645,7 +645,7 @@ mod test {
         Entry {
             paths: HashSet::from(["testfile.txt".into()]),
             filetype: "ASCII text".to_string(),
-            size: b.len() as u64,
+            size: b.len(),
             hash: mh.to_bytes(),
             enc: None,
             tags: vec![],
