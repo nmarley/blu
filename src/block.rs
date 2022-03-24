@@ -13,8 +13,18 @@ use crate::chunkfile::ChunkFile;
 // pub struct FSHandle {
 //     File
 // }
+// FSHandle => {
+//     label => PathBuf,
+//     file => &File,
+// } ... ??? Sth like this?
 
-// #[derive(Debug, PartialEq, Clone, Hash)]
+// TODO: Walk the dir and try it that way ...
+// PlainIndex::new(dir)   // walk dir
+// pub struct PlainIndex {
+//     files_map: HashMap<Vec<u8>, File>
+//     labels_map ??? : HashMap<Vec<u8>, HashSet<PathBuf> ??
+// }
+
 #[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct Block {
     // hash: Vec<u8>,
@@ -37,13 +47,14 @@ impl Block {
     }
 }
 
-// #[derive(PartialEq, Clone, Debug)]
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File {
     blocks: Vec<Block>,
     // TODO: ref table?
     filetype: String,
 }
+
+// == encrypted parts
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct ChunkFileLocation {
