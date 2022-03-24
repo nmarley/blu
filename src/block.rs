@@ -115,17 +115,19 @@ impl File {
 
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
-        let mut size = 1;
         let mut blocks: Vec<Block> = vec![];
         let mut count: usize = 0;
         let mut filetype: String = "".to_string();
-        while size > 0 {
-            let data = reader.fill_buf().unwrap();
-            size = data.len();
+
+        while let Ok(data) = reader.fill_buf() {
+            if data.len() == 0 {
+                break;
+            }
             let actual_data = data.to_vec();
             blocks.push(Block::new(&actual_data));
-            reader.consume(size);
+            reader.consume(actual_data.len());
 
+            // TODO: this but better
             if count == 0 {
                 filetype = wiz
                     .get_filetype(&actual_data, actual_data.len())
@@ -228,25 +230,13 @@ mod test {
         // see also BufReader
         // https://doc.rust-lang.org/std/io/struct.BufReader.html#method.with_capacity
 
-        let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-        // let file = File::open(file1_path).unwrap();
-        // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-        // dbg!(&BLOCK_SIZE);
+        let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
+        let file1 = super::File::read_from_disk(file1_path);
+        dbg!(&file1);
 
-        // let block_bytes = reader.fill_buf().unwrap();
-        // dbg!(&block_bytes.len());
-
-        // let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-        let fart = super::File::read_from_disk(file1_path);
-        dbg!(&fart);
-
-        // dbg!(&block_bytes);
-
-        // let mut buf: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
-        // let filedata = file.read(&mut buf);
-        // println!("fd: {:?}", filedata);
-        // println!("buf: {:?}", buf);
-        // dbg!(&buf.len());
+        let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
+        let file2 = super::File::read_from_disk(file2_path);
+        dbg!(&file2);
 
         // -rw-r--r-- 1 nmarley staff 16384 Mar 22 15:32 file1.txt
         // -rw-r--r-- 1 nmarley staff  4096 Mar 22 15:32 file2.txt
