@@ -77,9 +77,7 @@ impl EncryptedBlockIndex {
         let _bytes_read = f.read(&mut chunkdata)?;
         let chunkfile = ChunkFile::deserialize(&chunkdata)?;
 
-        let chunk = chunkfile.get_chunk(enc_location.index)?;
-        Ok(chunk)
-        // Ok(vec![])
+        chunkfile.get_chunk(enc_location.index)
     }
 }
 
