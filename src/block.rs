@@ -49,6 +49,18 @@ pub struct EncryptedBlockIndex {
     map: HashMap<Vec<u8>, ChunkFileLocation>,
 }
 impl EncryptedBlockIndex {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    pub fn add_chunk_location(&mut self, chunk_hash: &[u8], location: &ChunkFileLocation) -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
     // returns the encrypted from disk, decrypt it yourself
     //
     // TODO: seems REALLY weird to just open a new ChunkFile on disk every time

@@ -4,13 +4,9 @@ const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFile {
-    // TODO: how to track this? how to know which `chunkfile` has the data we
-    // need for dec? Index into it how?
-    //
-    // TO_DONE ^: ... I have a proposed index and location types in the blu
-    // project, need to integrate...
     chunks: Vec<Vec<u8>>,
     capacity: usize,
+    positions: HashMap<Vec<u8>, usize>,
 }
 
 impl ChunkFile {
@@ -21,6 +17,7 @@ impl ChunkFile {
         Self {
             capacity,
             chunks: Vec::with_capacity(capacity),
+            positions: HashMap::new(),
         }
     }
 
@@ -28,6 +25,11 @@ impl ChunkFile {
         if self.count() >= self.capacity {
             return Err("capacity has been reached".into());
         }
+
+        let index = self.count();
+        let hash = hash::hash(chunk);
+        positions.insert(hash, index);
+
         self.chunks.push(chunk.to_vec());
         Ok(())
     }
@@ -46,6 +48,10 @@ impl ChunkFile {
         Ok(self.chunks[index].to_vec())
     }
 
+    pub fn get_index_for_hash(&self, hash: &[u8]) -> Option<usize> {
+        positions.get(hash)
+    }
+
     fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let encoded: Vec<u8> = bincode::serialize(self)?;
         // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
@@ -58,6 +64,8 @@ impl ChunkFile {
         Ok(decoded)
     }
 }
+
+// impl Default for ChunkFile { }
 
 #[cfg(test)]
 mod test {
