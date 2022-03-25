@@ -13,7 +13,7 @@ use crate::chunkfile::ChunkFile;
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
     // file hash -> Sth{ file: File, paths: HashSet }
-    map: HashMap<MyHash, Sth>,
+    map: HashMap<MyHash, FileRef>,
 }
 impl PlainIndex {
     pub fn new<P: AsRef<Path> + std::fmt::Debug>(
@@ -26,12 +26,12 @@ impl PlainIndex {
 
     fn build_index<P: AsRef<Path> + std::fmt::Debug>(
         dir: P,
-    ) -> Result<HashMap<MyHash, Sth>, Box<dyn std::error::Error>> {
-        let mut map: HashMap<MyHash, Sth> = HashMap::new();
+    ) -> Result<HashMap<MyHash, FileRef>, Box<dyn std::error::Error>> {
+        let mut map: HashMap<MyHash, FileRef> = HashMap::new();
         // Walkdir and all that ...
         let bludir = dir.as_ref().join(".blu/");
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
-            dbg!(&elem);
+            // dbg!(&elem);
             // skip special .blu dir
             if elem.path().starts_with(&bludir) {
                 continue;
@@ -43,7 +43,7 @@ impl PlainIndex {
 
             let file = File::read_from_disk(&elem.path())?;
             let file_hash = file.hash();
-            let sth = map.entry(file_hash).or_insert(Sth {
+            let sth = map.entry(file_hash).or_insert(FileRef {
                 file,
                 paths: HashSet::new(),
             });
@@ -54,7 +54,7 @@ impl PlainIndex {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Sth {
+pub struct FileRef {
     file: File,
     paths: HashSet<PathBuf>,
 }
@@ -298,19 +298,18 @@ mod test {
         assert_eq!(file2, file3);
     }
 
-    use crate::block::Sth;
+    use crate::block::FileRef;
     use std::collections::{HashMap, HashSet};
 
     #[test]
     fn block_index() {
+        // build index and compare
         let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
-        dbg!(&index);
 
-        // TODO: build this index and compare
-        let map: HashMap<MyHash, Sth> = HashMap::from([
+        let map: HashMap<MyHash, FileRef> = HashMap::from([
             (
                 MyHash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
-                Sth {
+                FileRef {
                     file: File {
                         blocks: vec![
                             Block {
@@ -325,7 +324,7 @@ mod test {
             ),
             (
                 MyHash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
-                Sth {
+                FileRef {
                     file: File {
                         blocks: vec![
                             Block {
@@ -352,7 +351,7 @@ mod test {
             ),
             (
                 MyHash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
-                Sth {
+                FileRef {
                     file: File {
                         blocks: vec![
                             Block {
@@ -367,7 +366,7 @@ mod test {
             ),
             (
                 MyHash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
-                Sth {
+                FileRef {
                     file: File {
                         blocks: vec![
                             Block {
