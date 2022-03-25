@@ -2,7 +2,7 @@ use crate::hash;
 use crate::magic::Wizard;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
 
@@ -14,13 +14,13 @@ pub struct PlainIndex {
     map: HashMap<Vec<u8>, Sth>,
 }
 impl PlainIndex {
-    fn new<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> Self {
+    pub fn new<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> Self {
         Self {
             map: Self::build_index(dir),
         }
     }
 
-    fn build_index<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> HashMap<Vec<u8>, Sth> {
+    fn build_index<P: AsRef<Path> + std::fmt::Debug>(_dir: P) -> HashMap<Vec<u8>, Sth> {
         // Walkdir and all that ...
         HashMap::new()
     }
@@ -79,10 +79,8 @@ impl EncryptedBlockIndex {
         }
     }
 
-    pub fn add_chunk_location(&mut self, chunk_hash: &[u8], location: &ChunkFileLocation) -> Self {
-        Self {
-            map: HashMap::new(),
-        }
+    pub fn add_chunk_location(&mut self, chunk_hash: &[u8], location: &ChunkFileLocation) {
+        self.map.insert(chunk_hash.to_vec(), location.clone());
     }
 
     // returns the encrypted from disk, decrypt it yourself
@@ -162,7 +160,7 @@ impl File {
         let mut filetype: String = "".to_string();
 
         while let Ok(data) = reader.fill_buf() {
-            if data.len() == 0 {
+            if data.is_empty() {
                 break;
             }
             let actual_data = data.to_vec();
@@ -218,10 +216,7 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::{Block, File, MyHash, BLOCK_SIZE};
-    use std::fs::{self};
-    use std::io::Read;
-    use std::io::{BufRead, BufReader};
+    use super::{Block, File, MyHash};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";

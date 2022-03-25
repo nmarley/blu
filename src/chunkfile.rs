@@ -50,7 +50,7 @@ impl ChunkFile {
     }
 
     pub fn get_index_for_hash(&self, hash: &[u8]) -> Option<usize> {
-        self.positions.get(hash).map(|e| *e)
+        self.positions.get(hash).copied()
     }
 
     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -114,5 +114,3 @@ mod test {
         assert_eq!(cf, deser);
     }
 }
-
-fn main() {}
