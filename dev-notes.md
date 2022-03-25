@@ -1,6 +1,14 @@
-# TODO
+# dev notes
 
-- 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
+## TODO
+
+- [ ] promote MyHash to a 1st-class type, use that as the hash type everywhere for debug purposes. Tired of horse shit byte arrays cluttering up my screen.
+
+- [ ] rename crate::block::File to something that does NOT conflict with std::fs::File
+
+- [ ] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
+
+## Understand
 
 Uses <https://crates.io/crates/age> for encryption.
 
