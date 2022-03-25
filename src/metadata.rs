@@ -231,12 +231,13 @@ impl Index {
         // env::set_current_dir(&base_dir)?;
 
         let wiz = Wizard::new();
+        // let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
+        let bludir = base_dir.as_ref().join(".blu/");
 
         for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
-            let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
-            // skip special .blu dir
             // TODO: normalize path prefixes
-            if elem.path().starts_with(bludir) {
+            // skip special .blu dir
+            if elem.path().starts_with(&bludir) {
                 continue;
             }
 

@@ -5,24 +5,51 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
+use walkdir::WalkDir;
 
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
+    // file hash -> Sth{ file: File, paths: HashSet }
     map: HashMap<Vec<u8>, Sth>,
 }
 impl PlainIndex {
-    pub fn new<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> Self {
-        Self {
-            map: Self::build_index(dir),
-        }
+    pub fn new<P: AsRef<Path> + std::fmt::Debug>(
+        dir: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            map: Self::build_index(dir)?,
+        })
     }
 
-    fn build_index<P: AsRef<Path> + std::fmt::Debug>(_dir: P) -> HashMap<Vec<u8>, Sth> {
+    fn build_index<P: AsRef<Path> + std::fmt::Debug>(
+        dir: P,
+    ) -> Result<HashMap<Vec<u8>, Sth>, Box<dyn std::error::Error>> {
+        let mut map: HashMap<Vec<u8>, Sth> = HashMap::new();
         // Walkdir and all that ...
-        HashMap::new()
+        let bludir = dir.as_ref().join(".blu/");
+        for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
+            dbg!(&elem);
+            // skip special .blu dir
+            if elem.path().starts_with(&bludir) {
+                continue;
+            }
+            // TODO: allow symlinks?
+            if !elem.file_type().is_file() {
+                continue;
+            }
+
+            let file = File::read_from_disk(&elem.path())?;
+            let file_hash = file.hash();
+            let sth = map.entry(file_hash.to_bytes()).or_insert(Sth {
+                file,
+                paths: HashSet::new(),
+            });
+            sth.paths.insert(elem.into_path());
+        }
+        Ok(map)
     }
 }
 
@@ -216,7 +243,7 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::{Block, File, MyHash};
+    use super::{Block, File, MyHash, PlainIndex};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
@@ -269,5 +296,13 @@ mod test {
         assert_eq!(file3.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
         // should be equal super::File objects
         assert_eq!(file2, file3);
+    }
+
+    #[test]
+    fn block_index() {
+        let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
+        dbg!(&index);
+
+        assert_eq!(1, 0);
     }
 }
