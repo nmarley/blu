@@ -307,84 +307,84 @@ mod test {
         dbg!(&index);
 
         // TODO: build this index and compare
-        let mut map: HashMap<MyHash, Sth> = HashMap::new();
-        map.insert(
-            MyHash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
-            Sth {
-                file: File {
-                    blocks: vec![
-                        Block {
-                            hash: MyHash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
-                            size: 1024,
-                        },
-                    ],
-                    filetype: "ASCII text, with very long lines (1023)".into(),
+        let map: HashMap<MyHash, Sth> = HashMap::from([
+            (
+                MyHash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
+                Sth {
+                    file: File {
+                        blocks: vec![
+                            Block {
+                                hash: MyHash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                                size: 1024,
+                            },
+                        ],
+                        filetype: "ASCII text, with very long lines (1023)".into(),
+                    },
+                    paths: HashSet::from(["test/blocks/t1/file5.txt".into()])
                 },
-                paths: HashSet::from(["test/blocks/t1/file5.txt".into()]),
-            },
-        );
+            ),
+            (
+                MyHash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                Sth {
+                    file: File {
+                        blocks: vec![
+                            Block {
+                               hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                               size: 4096,
+                            },
+                            Block {
+                                hash: MyHash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                                size: 4096,
+                            },
+                            Block {
+                                hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                                size: 4096,
+                            },
+                            Block {
+                                hash: MyHash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                                size: 4096,
+                            },
+                        ],
+                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                    },
+                    paths: HashSet::from(["test/blocks/t1/file1.txt".into()])
+                },
+            ),
+            (
+                MyHash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
+                Sth {
+                    file: File {
+                        blocks: vec![
+                            Block {
+                               hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                               size: 4096,
+                            },
+                        ],
+                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                    },
+                    paths: HashSet::from(["test/blocks/t1/file4.txt".into()])
+                },
+            ),
+            (
+                MyHash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
+                Sth {
+                    file: File {
+                        blocks: vec![
+                            Block {
+                               hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                               size: 4096,
+                            },
+                        ],
+                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                    },
+                    paths: HashSet::from([
+                        "test/blocks/t1/file2.txt".into(),
+                        "test/blocks/t1/file3.txt".into(),
+                    ])
+                },
+            ),
+        ]);
 
-        // map: {
-        //     "13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64": Sth {
-        //         file: File {
-        //             blocks: [
-        //                 Block {
-        //                     hash: "1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726",
-        //                     size: 4096,
-        //                 },
-        //                 Block {
-        //                     hash: "134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5",
-        //                     size: 4096,
-        //                 },
-        //                 Block {
-        //                     hash: "13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829",
-        //                     size: 4096,
-        //                 },
-        //                 Block {
-        //                     hash: "1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549",
-        //                     size: 4096,
-        //                 },
-        //             ],
-        //             filetype: "ASCII text, with very long lines (1024), with no line terminators",
-        //         },
-        //         paths: {
-        //             "test/blocks/t1/file1.txt",
-        //         },
-        //     },
-        //     "134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d": Sth {
-        //         file: File {
-        //             blocks: [
-        //                 Block {
-        //                     hash: "13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829",
-        //                     size: 4096,
-        //                 },
-        //             ],
-        //             filetype: "ASCII text, with very long lines (1024), with no line terminators",
-        //         },
-        //         paths: {
-        //             "test/blocks/t1/file4.txt",
-        //         },
-        //     },
-        //     "1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5": Sth {
-        //         file: File {
-        //             blocks: [
-        //                 Block {
-        //                     hash: "1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726",
-        //                     size: 4096,
-        //                 },
-        //             ],
-        //             filetype: "ASCII text, with very long lines (1024), with no line terminators",
-        //         },
-        //         paths: {
-        //             "test/blocks/t1/file3.txt",
-        //             "test/blocks/t1/file2.txt",
-        //         },
-        //     },
-        // }
-
-        // assert_eq!(index, PlainIndex {
-        //     map,
-        // })
-        assert_eq!(1, 0);
+        assert_eq!(index, PlainIndex { map });
     }
 }
