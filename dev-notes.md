@@ -6,6 +6,8 @@
 
 - [ ] rename crate::block::File to something that does NOT conflict with std::fs::File
 
+- [ ] rename crate::block::Sth to something that makes sense
+
 - [ ] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
 
 ## Understand
