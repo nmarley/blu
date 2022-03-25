@@ -1,7 +1,7 @@
 use crate::hash;
 use crate::magic::Wizard;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
@@ -9,27 +9,32 @@ use std::{fmt, fs};
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
 
-// File ==> ... hash?
-// pub struct FSHandle {
-//     File
-// }
-// FSHandle => {
-//     label => PathBuf,
-//     file => &File,
-// } ... ??? Sth like this?
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct PlainIndex {
+    map: HashMap<Vec<u8>, Sth>,
+}
+impl PlainIndex {
+    fn new<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> Self {
+        Self {
+            map: Self::build_index(dir),
+        }
+    }
 
-// TODO: Walk the dir and try it that way ...
-// PlainIndex::new(dir)   // walk dir
-// pub struct PlainIndex {
-//     files_map: HashMap<Vec<u8>, File>
-//     labels_map ??? : HashMap<Vec<u8>, HashSet<PathBuf> ??
-// }
+    fn build_index<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> HashMap<Vec<u8>, Sth> {
+        // Walkdir and all that ...
+        HashMap::new()
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct Sth {
+    file: File,
+    paths: HashSet<PathBuf>,
+}
 
 #[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct Block {
-    // hash: Vec<u8>,
     hash: MyHash,
-    // data: Vec<u8>,
     size: usize,
 }
 
@@ -43,15 +48,14 @@ impl Block {
     }
 
     pub fn hash(&self) -> Vec<u8> {
-        self.hash.bytes()
+        self.hash.to_bytes()
     }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File {
     blocks: Vec<Block>,
-    // TODO: ref table?
-    filetype: String,
+    filetype: String, // TODO: ref table?
 }
 
 // == encrypted parts
@@ -100,6 +104,8 @@ impl EncryptedBlockIndex {
     }
 }
 
+// == end encrypted parts
+
 // all this to debug the Vec<u8> as a hex string instead of numbers
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash)]
 pub struct MyHash(Vec<u8>);
@@ -109,13 +115,23 @@ impl std::fmt::Debug for MyHash {
         Ok(())
     }
 }
-impl<'a> From<Vec<u8>> for MyHash {
+impl From<Vec<u8>> for MyHash {
     fn from(vec: Vec<u8>) -> Self {
         Self(vec)
     }
 }
+impl From<&[u8]> for MyHash {
+    fn from(slice: &[u8]) -> Self {
+        Self(slice.to_owned())
+    }
+}
+impl From<&str> for MyHash {
+    fn from(str_ref: &str) -> Self {
+        Self(hex::decode(str_ref).unwrap())
+    }
+}
 impl MyHash {
-    pub fn bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
     }
 }
@@ -202,64 +218,61 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::BLOCK_SIZE;
-    use std::fs::{self, File};
+    use super::{Block, File, MyHash, BLOCK_SIZE};
+    use std::fs::{self};
     use std::io::Read;
     use std::io::{BufRead, BufReader};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
+    // -rw-r--r-- 1 joshua staff 16384 Mar 22 15:32 file1.txt
+    // -rw-r--r-- 1 joshua staff  4096 Mar 22 15:32 file2.txt
+    // -rw-r--r-- 1 joshua staff  4096 Mar 22 15:32 file3.txt
+
     #[test]
     fn read_blocks() {
-        // TODO: duplicate this, but with the same buf every time ...
-        // ... and do sth w/block
-        //
-
-        // fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize>
-        //
-        // Read all bytes until EOF in this source, placing them into buf.
-        //
-        // All bytes read from this source will be appended to the specified
-        // buffer buf.
-        //
-        // This function will continuously call read() to append more data to
-        // buf until read() returns either Ok(0) or an error of
-        // non-ErrorKind::Interrupted kind.
-        //
-        // If successful, this function will return the total number of bytes
-        // read.
-        //
-        // Errors
-        //
-        // If this function encounters an error of the kind
-        // ErrorKind::Interrupted then the error is ignored and the operation
-        // will continue.
-        //
-        // If any other read error is encountered then this function immediately
-        // returns. Any bytes which have already been read will be appended to
-        // buf.
-
-        // see also BufReader
-        // https://doc.rust-lang.org/std/io/struct.BufReader.html#method.with_capacity
-
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
         let file1 = super::File::read_from_disk(file1_path).unwrap();
-        dbg!(&file1);
-        dbg!(&file1.hash());
+        assert_eq!(file1.hash().to_bytes(), hex::decode("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64").unwrap());
+        assert_eq!(file1, File {
+            blocks: vec![
+                Block {
+                    hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                    size: 4096,
+                },
+                Block {
+                    hash: MyHash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                    size: 4096,
+                },
+                Block {
+                    hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                    size: 4096,
+                },
+                Block {
+                    hash: MyHash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                    size: 4096,
+                },
+            ],
+            filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
+        });
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
         let file2 = super::File::read_from_disk(file2_path).unwrap();
-        dbg!(&file2);
-        dbg!(&file2.hash());
+        assert_eq!(file2.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
+        assert_eq!(file2, File {
+            blocks: vec![
+                Block {
+                    hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                    size: 4096,
+                },
+            ],
+            filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
+        });
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
         let file3 = super::File::read_from_disk(file3_path).unwrap();
-        dbg!(&file3);
-        dbg!(&file3.hash());
-
-        // -rw-r--r-- 1 nmarley staff 16384 Mar 22 15:32 file1.txt
-        // -rw-r--r-- 1 nmarley staff  4096 Mar 22 15:32 file2.txt
-        // -rw-r--r-- 1 nmarley staff  4096 Mar 22 15:32 file3.txt
-        assert_eq!(1, 0);
+        assert_eq!(file3.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
+        // should be equal super::File objects
+        assert_eq!(file2, file3);
     }
 }
