@@ -12,7 +12,7 @@ use crate::chunkfile::ChunkFile;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
-    // file hash -> Sth{ file: File, paths: HashSet }
+    // file hash -> FileRef { file: File, paths: HashSet }
     map: HashMap<MyHash, FileRef>,
 }
 impl PlainIndex {
