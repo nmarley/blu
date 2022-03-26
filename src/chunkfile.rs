@@ -1,14 +1,19 @@
-use crate::hash;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::hash::{self, Hash};
 
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFile {
+    // this is a vector of encryted data chunks -- NOT HASHES
     chunks: Vec<Vec<u8>>,
     capacity: usize,
-    positions: HashMap<Vec<u8>, usize>,
+
+    // this is the hash / index into the chunkfile, e.g. the hash of the
+    // encrypted data chunk can be found in `chunks` at index usize>
+    positions: HashMap<Hash, usize>,
 }
 
 impl ChunkFile {
@@ -29,8 +34,8 @@ impl ChunkFile {
         }
 
         let index = self.count();
-        let hash = hash::multihash(chunk);
-        self.positions.insert(hash.to_bytes(), index);
+        let hash = Hash::from(hash::multihash(chunk).to_bytes());
+        self.positions.insert(hash, index);
 
         self.chunks.push(chunk.to_vec());
         Ok(())
@@ -49,7 +54,7 @@ impl ChunkFile {
         Ok(self.chunks[index].to_vec())
     }
 
-    pub fn get_index_for_hash(&self, hash: &[u8]) -> Option<usize> {
+    pub fn get_index_for_hash(&self, hash: &Hash) -> Option<usize> {
         self.positions.get(hash).copied()
     }
 
@@ -70,8 +75,24 @@ impl ChunkFile {
 mod test {
     use super::*;
 
+    // helper func used in tests below
+    fn test_chunkfile() -> ChunkFile {
+        let vec: Vec<Vec<u8>> = vec![
+            vec![0x0b, 0x0a, 0x00],
+            vec![0xde, 0xad, 0xbe, 0xef],
+            vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
+        ];
+        let mut cf = ChunkFile::new();
+        // load w/some data
+        for v in vec.iter() {
+            cf.add_chunk(v).unwrap();
+        }
+        cf
+    }
+
     #[test]
     fn capacity() {
+        // NOTE: do not use `test_chunkfile()` here, as we are testing capacity
         let vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
@@ -80,7 +101,6 @@ mod test {
         let mut cf = ChunkFile::with_capacity(3);
         // load w/some data
         for v in vec.iter() {
-            // dbg!(&v);
             cf.add_chunk(v).unwrap();
         }
         // test get_chunk also
@@ -95,22 +115,24 @@ mod test {
 
     #[test]
     fn serde() {
-        let vec: Vec<Vec<u8>> = vec![
-            vec![0x0b, 0x0a, 0x00],
-            vec![0xde, 0xad, 0xbe, 0xef],
-            vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
-        ];
-        let mut cf = ChunkFile::new();
-        // load w/some data
-        for v in vec.iter() {
-            // dbg!(&v);
-            cf.add_chunk(v).unwrap();
-        }
-
+        let cf = test_chunkfile();
         let ser = cf.serialize().unwrap();
-        // dbg!(&hex::encode(&ser));
-
         let deser = ChunkFile::deserialize(&ser).unwrap();
         assert_eq!(cf, deser);
+    }
+
+    #[test]
+    fn index() {
+        let cf = test_chunkfile();
+        let hashes_expected = vec![
+            ("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76", Some(0)),
+            ("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f", Some(1)),
+            ("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c", Some(2)),
+            ("1340cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e", None),
+        ];
+        for tuple in hashes_expected.into_iter() {
+            let (hash, opt) = (Hash::from(tuple.0), tuple.1);
+            assert_eq!(cf.get_index_for_hash(&hash), opt);
+        }
     }
 }

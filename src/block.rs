@@ -29,10 +29,9 @@ impl PlainIndex {
         dir: P,
     ) -> Result<HashMap<Hash, FileRef>, Box<dyn std::error::Error>> {
         let mut map: HashMap<Hash, FileRef> = HashMap::new();
-        // Walkdir and all that ...
         let bludir = dir.as_ref().join(".blu/");
+        // TODO: normalize paths by removing `dir` prefix from each elem walked
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
-            // dbg!(&elem);
             // skip special .blu dir
             if elem.path().starts_with(&bludir) {
                 continue;
@@ -44,11 +43,11 @@ impl PlainIndex {
 
             let file = File::read_from_disk(&elem.path())?;
             let file_hash = file.hash();
-            let sth = map.entry(file_hash).or_insert(FileRef {
+            let fileref = map.entry(file_hash).or_insert(FileRef {
                 file,
                 paths: HashSet::new(),
             });
-            sth.paths.insert(elem.into_path());
+            fileref.paths.insert(elem.into_path());
         }
         Ok(map)
     }
@@ -107,9 +106,8 @@ impl ChunkFileIndex {
         }
     }
 
-    pub fn add_chunk_location(&mut self, chunk_hash: &[u8], location: &ChunkFileLocation) {
-        self.map
-            .insert(chunk_hash.to_vec().into(), location.clone());
+    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &ChunkFileLocation) {
+        self.map.insert(chunk_hash.clone(), location.clone());
     }
 
     // returns the encrypted from disk, decrypt it yourself
