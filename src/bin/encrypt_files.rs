@@ -5,7 +5,7 @@ const TEST_AGE_SECRET_KEY: &str =
 use blu::age::BlackBox;
 use blu::config;
 use blu::dir::Manager;
-use blu::hash;
+use blu::hash::{self, Hash};
 use blu::metadata::{EncryptedIndex, Index};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let enc_filedata = bbox.encrypt(&unenc_filedata)?;
 
         let enc_mh = hash::multihash(&enc_filedata);
-        let enc_hash = enc_mh.to_bytes();
+        let enc_hash = Hash::from(enc_mh.to_bytes());
         let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
         dbg!(&enc_path);
     }

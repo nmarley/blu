@@ -16,6 +16,7 @@ pub mod metadata;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
+use crate::hash::Hash;
 use crate::metadata::{Encrypted, EncryptedIndex, Index, INDEX_FILENAME};
 
 // also: consider an internal webserver which serves up the UI for blu
@@ -105,9 +106,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let unenc_filedata = entry.read_filedata()?;
         let enc_filedata = bbox.encrypt(&unenc_filedata)?;
 
-        let enc_mh = hash::multihash(&enc_filedata);
-        let enc_hash = enc_mh.to_bytes();
-        let size = enc_hash.len() as u64;
+        let enc_mh_bytes = hash::multihash(&enc_filedata).to_bytes();
+        let size = enc_mh_bytes.len();
+        let enc_hash = Hash::from(enc_mh_bytes);
         let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
 
         let entry_hash = entry.get_hash();

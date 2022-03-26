@@ -1,6 +1,8 @@
-use crate::metadata::Encrypted;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+use crate::hash::Hash;
+use crate::metadata::Encrypted;
 
 #[derive(Default, Debug)]
 pub struct Manager {
@@ -23,7 +25,7 @@ impl Manager {
 
     pub fn write_encrypted(
         &self,
-        hash: &[u8],
+        hash: &Hash,
         data: &[u8],
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = self.path_for(hash)?;
@@ -46,11 +48,11 @@ impl Manager {
     // ... would be stored in:
     // DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
     //
-    fn path_for(&self, hash: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    fn path_for(&self, hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
         // use multihash lib to properly separate multihash header code and size
         // (do not make assumptions about removing X number of bytes)
 
-        let mh = Multihash::from_bytes(hash)?;
+        let mh = Multihash::from_bytes(&hash.to_bytes())?;
         // dbg!(&mh.code());
         // dbg!(&mh.size());
         // dbg!(&mh.digest());
@@ -70,6 +72,7 @@ impl Manager {
 #[cfg(test)]
 mod test {
     use super::Manager;
+    use crate::hash::Hash;
     use std::path::PathBuf;
 
     // macro which tests several different hash algos
@@ -78,7 +81,7 @@ mod test {
             #[test]
             fn $name() {
                 let dir_mgr = Manager::new("/tmp");
-                let hash = hex::decode($hash).unwrap();
+                let hash = Hash::from($hash);
                 let path = dir_mgr.path_for(&hash).unwrap();
                 assert_eq!(path, PathBuf::from($path));
             }

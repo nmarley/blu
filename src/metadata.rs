@@ -4,7 +4,7 @@ use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::{
-    fmt, fs,
+    fs,
     io::{self, Read},
     path::{Path, PathBuf},
 };
@@ -13,36 +13,22 @@ use walkdir::WalkDir;
 use crate::age::BlackBox;
 use crate::config::KeyID;
 use crate::format::datetime_format;
-use crate::hash;
+use crate::hash::{self, Hash};
 use crate::magic::Wizard;
 
 pub const INDEX_FILENAME: &str = "index.dat";
 
-#[derive(PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Entry {
     paths: HashSet<PathBuf>,
     filetype: String,
 
-    hash: Vec<u8>,
+    hash: Hash,
     size: usize,
     enc: Option<Encrypted>,
 
     tags: Vec<String>,     // TODO: proper tagging, or... ?
     notes: Option<String>, // free-form text
-}
-
-impl fmt::Debug for Entry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Entry")
-            .field("paths", &self.paths)
-            .field("filetype", &self.filetype)
-            .field("hash", &hex::encode(&self.hash))
-            .field("size", &self.size)
-            .field("enc", &self.enc)
-            .field("tags", &self.tags)
-            .field("notes", &self.notes)
-            .finish()
-    }
 }
 
 impl Entry {
@@ -65,38 +51,27 @@ impl Entry {
         Ok(())
     }
 
-    pub fn get_hash(&self) -> Vec<u8> {
+    pub fn get_hash(&self) -> Hash {
         self.hash.clone()
     }
 }
 
-#[derive(PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub struct Encrypted {
     // in theory, there won't be multiple files in the encrypted datadir with
     // the same hash
     pub path: PathBuf,
-    pub hash: Vec<u8>,
-    pub size: u64,
+    pub hash: Hash,
+    pub size: usize,
     pub keys: Vec<KeyID>,
 }
 
-impl fmt::Debug for Encrypted {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Encrypted")
-            .field("path", &self.path)
-            .field("hash", &hex::encode(&self.hash))
-            .field("size", &self.size)
-            .field("keys", &self.keys)
-            .finish()
-    }
-}
-
 impl Encrypted {
-    pub fn get_hash(&self) -> Vec<u8> {
+    pub fn get_hash(&self) -> Hash {
         self.hash.clone()
     }
 
-    pub fn get_hash_ref(&self) -> &Vec<u8> {
+    pub fn get_hash_ref(&self) -> &Hash {
         &self.hash
     }
 }
@@ -120,7 +95,7 @@ fn deserialize_index(data: &[u8]) -> Result<Index, Box<dyn std::error::Error>> {
 // timestamps.
 #[derive(PartialEq, Serialize, Deserialize)]
 pub struct OldIndex {
-    map: HashMap<Vec<u8>, Entry>,
+    map: HashMap<Hash, Entry>,
     version: String,
 }
 impl OldIndex {
@@ -152,9 +127,9 @@ fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Index {
-    map: HashMap<Vec<u8>, Entry>,
+    map: HashMap<Hash, Entry>,
     version: String,
     #[serde(with = "datetime_format")]
     created_at: NaiveDateTime,
@@ -206,12 +181,12 @@ impl Index {
         Self::deserialize(&serialized)
     }
 
-    pub fn get_entry_ref(&self, hash: &[u8]) -> Result<&Entry, Box<dyn std::error::Error>> {
+    pub fn get_entry_ref(&self, hash: &Hash) -> Result<&Entry, Box<dyn std::error::Error>> {
         let e = self.map.get(hash).unwrap();
         Ok(e)
     }
 
-    pub fn get_mut_entry_ref(&mut self, hash: &[u8]) -> Option<&mut Entry> {
+    pub fn get_mut_entry_ref(&mut self, hash: &Hash) -> Option<&mut Entry> {
         self.map.get_mut(hash)
     }
 
@@ -219,23 +194,15 @@ impl Index {
     // ignore block/char specials, etc.
     fn build_index<P: AsRef<Path>>(
         base_dir: P,
-    ) -> Result<HashMap<Vec<u8>, Entry>, Box<dyn std::error::Error>> {
-        let mut map_files = HashMap::new();
-
-        // chdir into base before walking
-        //
-        // otherwise we get paths like "./test/file.txt" if we set the base dir to
-        // "./test"
-
-        // let current_dir = env::current_dir()?;
-        // env::set_current_dir(&base_dir)?;
+    ) -> Result<HashMap<Hash, Entry>, Box<dyn std::error::Error>> {
+        let mut map_files: HashMap<Hash, Entry> = HashMap::new();
 
         let wiz = Wizard::new();
-        // let bludir = Path::new(base_dir.as_ref().as_os_str()).join(".blu/");
         let bludir = base_dir.as_ref().join(".blu/");
 
+        // TODO: normalize paths by trimming basedir from each elem walked ...
         for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
-            // TODO: normalize path prefixes
+            // TODO: normalize path prefixes (see comment just above)
             // skip special .blu dir
             if elem.path().starts_with(&bludir) {
                 continue;
@@ -256,13 +223,14 @@ impl Index {
                 .get_filetype(&filedata, size)
                 .unwrap_or_else(|_| "other".into());
             let mh = hash::multihash(&filedata);
+            let hash = Hash::from(mh.to_bytes());
 
             // entry is a reference to the entry in the hashmap ...
-            let entry = map_files.entry(mh.to_bytes()).or_insert(Entry {
+            let entry = map_files.entry(hash.clone()).or_insert(Entry {
                 filetype,
                 paths: HashSet::new(),
                 size,
-                hash: mh.to_bytes(),
+                hash,
                 enc: None,
                 tags: vec![],
                 notes: None,
@@ -270,9 +238,6 @@ impl Index {
             // ... so when it gets modified here, it is updated in the hashmap
             entry.paths.insert(elem.into_path());
         }
-
-        // now go back to previous state
-        // env::set_current_dir(current_dir)?;
 
         Ok(map_files)
     }
@@ -306,15 +271,15 @@ impl Index {
     ) -> Result<Vec<Entry>, Box<dyn std::error::Error>> {
         let new_index = Self::new(base_dir)?;
 
-        let mut to_delete: HashSet<Vec<u8>> = HashSet::new();
-        let mut new_paths: HashMap<Vec<u8>, HashSet<PathBuf>> = HashMap::new();
+        let mut to_delete: HashSet<Hash> = HashSet::new();
+        let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
         let mut is_updated = false;
 
         for hash in self.map.keys() {
             if let Some(entry) = new_index.map.get(hash) {
-                new_paths.insert(hash.to_vec(), entry.paths.clone());
+                new_paths.insert(hash.clone(), entry.paths.clone());
             } else {
-                to_delete.insert(hash.to_vec());
+                to_delete.insert(hash.clone());
             }
         }
 
@@ -346,22 +311,6 @@ impl Index {
     }
 }
 
-impl fmt::Debug for Index {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // let _ = writeln!(f, "Index {{ version: {}, map: ", &self.version);
-        let _ = writeln!(f, "Index {{");
-        let _ = writeln!(f, "  version: {},", &self.version);
-        let _ = writeln!(f, "  created_at: {},", &self.created_at);
-        let _ = writeln!(f, "  updated_at: {},", &self.updated_at);
-        let _ = writeln!(f, "  map: ");
-        for (k, v) in self.map.iter() {
-            let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
-        }
-        let _ = write!(f, "}}");
-        Ok(())
-    }
-}
-
 fn now() -> chrono::NaiveDateTime {
     // returns a NaiveDateTime without milli/nano seconds
     NaiveDateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)
@@ -378,9 +327,9 @@ impl Default for Index {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct EncryptedIndex {
-    map: HashMap<Vec<u8>, Encrypted>,
+    map: HashMap<Hash, Encrypted>,
 }
 
 type PairVecEncRef<'a, Encrypted> = (Vec<&'a Encrypted>, Vec<&'a Encrypted>);
@@ -392,7 +341,7 @@ impl EncryptedIndex {
         })
     }
 
-    pub fn get_entry_ref(&self, hash: &[u8]) -> Option<&Encrypted> {
+    pub fn get_entry_ref(&self, hash: &Hash) -> Option<&Encrypted> {
         self.map.get(hash)
     }
 
@@ -400,10 +349,10 @@ impl EncryptedIndex {
     // ignore block/char specials, etc.
     pub fn build_index<P: AsRef<Path>>(
         data_dir: P,
-    ) -> Result<HashMap<Vec<u8>, Encrypted>, Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<Hash, Encrypted>, Box<dyn std::error::Error>> {
         // println!("data_dir: {:?}", data_dir.as_ref());
         let index_file = data_dir.as_ref().join(INDEX_FILENAME);
-        let mut map = HashMap::new();
+        let mut map: HashMap<Hash, Encrypted> = HashMap::new();
 
         for elem in WalkDir::new(&data_dir).into_iter().filter_map(|e| e.ok()) {
             // TODO: allow symlinks?
@@ -418,17 +367,18 @@ impl EncryptedIndex {
             }
 
             let metadata = fs::metadata(elem.path())?;
-            let size = metadata.len();
+            let size = metadata.len() as usize;
             // println!("{:?}: {:?} bytes", elem.path(), size);
 
             // TODO: streaming reads here? as some files could be GB in size...
             let filedata = fs::read(elem.path()).unwrap();
             let mh = hash::multihash(&filedata);
+            let hash = Hash::from(mh.to_bytes());
 
-            let _encrypted = map.entry(mh.to_bytes()).or_insert({
+            let _encrypted = map.entry(hash.clone()).or_insert({
                 Encrypted {
                     path: elem.into_path(),
-                    hash: mh.to_bytes(),
+                    hash,
                     size,
                     keys: vec![],
                 }
@@ -478,13 +428,13 @@ impl EncryptedIndex {
         opt_bbox: Option<&'c BlackBox>,
     ) -> Result<PairVecEncRef<'a, Encrypted>, Box<dyn std::error::Error>> {
         // list of Encrypted's not found in the Index
-        let mut not_found: HashSet<Vec<u8>> = HashSet::new();
+        let mut not_found: HashSet<Hash> = HashSet::new();
 
         // ensure doubly encrypted files are reported / can be cleaned up
         // plain_hash -> hashset(enc hash)
-        let mut map_plain_enc_set: HashMap<Vec<u8>, HashSet<Vec<u8>>> = HashMap::new();
+        let mut map_plain_enc_set: HashMap<Hash, HashSet<Hash>> = HashMap::new();
         // enc hash -> plain hash mapping
-        let mut idx_enchash_plainhash: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+        let mut idx_enchash_plainhash: HashMap<Hash, Hash> = HashMap::new();
         for entry in idx.map.values() {
             if let Some(enc) = &entry.enc {
                 // hashset (do not assume unique enc hashes in the index)
@@ -506,7 +456,7 @@ impl EncryptedIndex {
         // not_found is candidate for reconciliation or dangling
         for enchash in self.map.keys() {
             if !idx_enchash_plainhash.contains_key(enchash) {
-                not_found.insert(enchash.to_vec());
+                not_found.insert(enchash.clone());
             }
         }
 
@@ -527,9 +477,9 @@ impl EncryptedIndex {
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
-                let mh = hash::multihash(&filedata);
+                let h2 = Hash::from(hash::multihash(&filedata).to_bytes());
                 // reconciliation happens here
-                if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
+                if let Some(entry) = idx.get_mut_entry_ref(&h2) {
                     // hashset (do not assume unique enc hashes in the index)
                     let hs = map_plain_enc_set
                         .entry(entry.hash.clone())
@@ -592,24 +542,13 @@ impl EncryptedIndex {
     }
 }
 
-impl fmt::Debug for EncryptedIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = writeln!(f, "EncryptedIndex {{ map: ");
-        for (k, v) in self.map.iter() {
-            let _ = write!(f, "\n{}:\n{:?},\n", &hex::encode(k), v);
-        }
-        let _ = write!(f, "}}");
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::{
         compress, deserialize_index, serialize_index, Encrypted, EncryptedIndex, Entry, HashMap,
         Index,
     };
-    use crate::hash;
+    use crate::hash::{self, Hash};
     use std::collections::HashSet;
 
     const TEST_DIR_T0: &str = "test/t0/";
@@ -619,7 +558,7 @@ mod test {
     #[test]
     fn index() {
         let index = Index::new(TEST_DIR_T0).unwrap();
-        let art1_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
+        let art1_hash = Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6");
         let entry = index.get_entry_ref(&art1_hash).unwrap();
         let paths = HashSet::from([
             "test/t0/art1_dup_en.txt".into(),
@@ -642,12 +581,12 @@ mod test {
 
     fn test_entry(content: &str) -> Entry {
         let b = content.as_bytes();
-        let mh = hash::multihash(b);
+        let hash = Hash::from(hash::multihash(b).to_bytes());
         Entry {
             paths: HashSet::from(["testfile.txt".into()]),
             filetype: "ASCII text".to_string(),
             size: b.len(),
-            hash: mh.to_bytes(),
+            hash,
             enc: None,
             tags: vec![],
             notes: None,
@@ -702,22 +641,25 @@ mod test {
         };
         let deleted_entries = index.update(TEST_DIR_T3).unwrap();
 
-        assert_eq!(deleted_entries, vec![Entry {
-            paths: HashSet::from(["test/t3/article1_lu.txt".into()]),
-            filetype: "Unicode text, UTF-8 text".to_string(),
-            hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
-            size: 223,
-            enc: None,
-            tags: vec![],
-            notes: None,
-        }]);
+        assert_eq!(
+            deleted_entries,
+            vec![Entry {
+                paths: HashSet::from(["test/t3/article1_lu.txt".into()]),
+                filetype: "Unicode text, UTF-8 text".to_string(),
+                hash: Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b"),
+                size: 223,
+                enc: None,
+                tags: vec![],
+                notes: None,
+            }]
+        );
 
         let entries = index.get_all_entry_refs();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0], &Entry {
             paths: HashSet::from(["test/t3/article-one.txt".into()]),
             filetype: "ASCII text".to_string(),
-            hash: hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap(),
+            hash: Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"),
             size: 171,
             enc: None,
             tags: vec![],
@@ -748,17 +690,20 @@ mod test {
         let to_encrypt = index.difference_enc_idx(&enc_idx);
         // dbg!(&to_encrypt);
 
-        assert_eq!(to_encrypt, vec![
-            Entry {
-                paths: HashSet::from(["test/t4/article1_lu.txt".into()]),
-                filetype: "Unicode text, UTF-8 text".to_string(),
-                hash: hex::decode("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b").unwrap(),
-                size: 223,
-                enc: None,
-                tags: vec![],
-                notes: None,
-            }
-        ]);
+        assert_eq!(
+            to_encrypt,
+            vec![
+                Entry {
+                    paths: HashSet::from(["test/t4/article1_lu.txt".into()]),
+                    filetype: "Unicode text, UTF-8 text".to_string(),
+                    hash: Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b"),
+                    size: 223,
+                    enc: None,
+                    tags: vec![],
+                    notes: None,
+                }
+            ]
+        );
     }
 
     const TEST_DIR_T5: &str = "test/t5/";
@@ -785,14 +730,17 @@ mod test {
         let (dangling, _dup_enc_hashes) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
         // dbg!(&dangling);
 
-        assert_eq!(dangling, vec![
-            &Encrypted {
-                path: "test/t5/.blu/data/9/9b1/9b1d7/9b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed".into(),
-                hash: hex::decode("13409b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed").unwrap(),
-                size: 563,
-                keys: vec![],
-            },
-        ]);
+        assert_eq!(
+            dangling,
+            vec![
+                &Encrypted {
+                    path: "test/t5/.blu/data/9/9b1/9b1d7/9b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed".into(),
+                    hash: Hash::from("13409b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed"),
+                    size: 563,
+                    keys: vec![],
+                },
+            ]
+        );
     }
 
     // test multiple different Encrypted's that decrypt to the same file
@@ -809,22 +757,22 @@ mod test {
             .unwrap_or_else(|| Index::new(TEST_DIR_T6).unwrap());
 
         // ensure the index changes after reconciliation + convergence
-        let en_hash = hex::decode("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6").unwrap();
+        let en_hash = Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6");
         let entry_ref = index.get_entry_ref(&en_hash).unwrap();
         let enc = entry_ref.get_enc().unwrap();
         // initially this is the enc hash ...
-        assert_eq!(enc.hash, hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap());
+        assert_eq!(enc.hash, Hash::from("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3"));
 
         // walk enc datadir and index
         let enc_idx = EncryptedIndex::new(cfg.datadir()).unwrap();
         // reconciliation + convergence -- this modifies the index
         let (_dangling, dup_enc_entries) = enc_idx.difference_idx(&mut index, Some(&bbox)).unwrap();
-        assert_eq!(dup_enc_entries[0].hash, hex::decode("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3").unwrap());
+        assert_eq!(dup_enc_entries[0].hash, Hash::from("13402e3612c3ac8d4322d1345d4cdb798bf0fb280ffe77b8f3e19e1bb745b1ee80dd9a1ec07fed6b0876456ffc91f48b65fd79565189fe3447d31b2da42ba32528e3"));
 
         // ensure the index changes after reconciliation + convergence
         let entry_ref = index.get_entry_ref(&en_hash).unwrap();
         let enc = entry_ref.get_enc().unwrap();
         // ... enc hash changes to this after convergence
-        assert_eq!(enc.hash, hex::decode("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e").unwrap());
+        assert_eq!(enc.hash, Hash::from("13402d982fd888d1456987cc4fc88dce3e87aba1248b49c78c03d7933efbafebb77f6b2ae3d8ceb565e52feb168e39a10dafcf30c0087e451d5bec8fa2f1f3e8532e"));
     }
 }
