@@ -2,13 +2,14 @@ use crate::hash;
 use crate::magic::Wizard;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::{fmt, fs};
 use walkdir::WalkDir;
 
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
+use crate::hash::MyHash;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
@@ -130,36 +131,6 @@ impl EncryptedBlockIndex {
 }
 
 // == end encrypted parts
-
-// all this to debug the Vec<u8> as a hex string instead of numbers
-#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Ord, PartialOrd)]
-pub struct MyHash(Vec<u8>);
-impl std::fmt::Debug for MyHash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = write!(f, "{:?}", &hex::encode(&self.0));
-        Ok(())
-    }
-}
-impl From<Vec<u8>> for MyHash {
-    fn from(vec: Vec<u8>) -> Self {
-        Self(vec)
-    }
-}
-impl From<&[u8]> for MyHash {
-    fn from(slice: &[u8]) -> Self {
-        Self(slice.to_owned())
-    }
-}
-impl From<&str> for MyHash {
-    fn from(str_ref: &str) -> Self {
-        Self(hex::decode(str_ref).unwrap())
-    }
-}
-impl MyHash {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-}
 
 impl File {
     //                    Vec<u8> ... not sure about this... debugging Vec<u8>
