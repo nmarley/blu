@@ -9,12 +9,12 @@ use walkdir::WalkDir;
 
 const BLOCK_SIZE: usize = 4096;
 use crate::chunkfile::ChunkFile;
-use crate::hash::MyHash;
+use crate::hash::Hash;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
-    map: HashMap<MyHash, FileRef>,
+    map: HashMap<Hash, FileRef>,
 }
 impl PlainIndex {
     pub fn new<P: AsRef<Path> + std::fmt::Debug>(
@@ -27,8 +27,8 @@ impl PlainIndex {
 
     fn build_index<P: AsRef<Path> + std::fmt::Debug>(
         dir: P,
-    ) -> Result<HashMap<MyHash, FileRef>, Box<dyn std::error::Error>> {
-        let mut map: HashMap<MyHash, FileRef> = HashMap::new();
+    ) -> Result<HashMap<Hash, FileRef>, Box<dyn std::error::Error>> {
+        let mut map: HashMap<Hash, FileRef> = HashMap::new();
         // Walkdir and all that ...
         let bludir = dir.as_ref().join(".blu/");
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
@@ -62,7 +62,7 @@ pub struct FileRef {
 
 #[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
 pub struct Block {
-    hash: MyHash,
+    hash: Hash,
     size: usize,
 }
 
@@ -70,7 +70,7 @@ impl Block {
     pub fn new(data: &[u8]) -> Self {
         let mh = hash::multihash(data);
         Self {
-            hash: MyHash::from(mh.to_bytes()),
+            hash: Hash::from(mh.to_bytes()),
             size: data.len(),
         }
     }
@@ -135,14 +135,14 @@ impl EncryptedBlockIndex {
 impl File {
     //                    Vec<u8> ... not sure about this... debugging Vec<u8>
     //                    sucks
-    pub fn hash(&self) -> MyHash {
+    pub fn hash(&self) -> Hash {
         let mut all_hashes = vec![];
         for block in self.blocks.iter() {
             let mut block_hash = block.hash();
             all_hashes.append(&mut block_hash);
         }
 
-        MyHash::from(hash::multihash(&all_hashes).to_bytes())
+        Hash::from(hash::multihash(&all_hashes).to_bytes())
     }
 
     pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(
@@ -214,7 +214,7 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::{Block, File, MyHash, PlainIndex};
+    use super::{Block, File, Hash, PlainIndex};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
@@ -230,19 +230,19 @@ mod test {
         assert_eq!(file1, File {
             blocks: vec![
                 Block {
-                    hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                    hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                     size: 4096,
                 },
                 Block {
-                    hash: MyHash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                    hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
                     size: 4096,
                 },
                 Block {
-                    hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                    hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                     size: 4096,
                 },
                 Block {
-                    hash: MyHash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                    hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
                     size: 4096,
                 },
             ],
@@ -255,7 +255,7 @@ mod test {
         assert_eq!(file2, File {
             blocks: vec![
                 Block {
-                    hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                    hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                     size: 4096,
                 },
             ],
@@ -277,14 +277,14 @@ mod test {
         // build index and compare
         let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
 
-        let map: HashMap<MyHash, FileRef> = HashMap::from([
+        let map: HashMap<Hash, FileRef> = HashMap::from([
             (
-                MyHash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
+                Hash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
                 FileRef {
                     file: File {
                         blocks: vec![
                             Block {
-                                hash: MyHash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                                hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                                 size: 1024,
                             },
                         ],
@@ -294,24 +294,24 @@ mod test {
                 },
             ),
             (
-                MyHash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                 FileRef {
                     file: File {
                         blocks: vec![
                             Block {
-                               hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                               hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                                size: 4096,
                             },
                             Block {
-                                hash: MyHash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                                hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
                                 size: 4096,
                             },
                             Block {
-                                hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                                hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                                 size: 4096,
                             },
                             Block {
-                                hash: MyHash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                                hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
                                 size: 4096,
                             },
                         ],
@@ -321,12 +321,12 @@ mod test {
                 },
             ),
             (
-                MyHash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
+                Hash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
                 FileRef {
                     file: File {
                         blocks: vec![
                             Block {
-                               hash: MyHash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                               hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                                size: 4096,
                             },
                         ],
@@ -336,12 +336,12 @@ mod test {
                 },
             ),
             (
-                MyHash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
+                Hash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
                 FileRef {
                     file: File {
                         blocks: vec![
                             Block {
-                               hash: MyHash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                               hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                                size: 4096,
                             },
                         ],
