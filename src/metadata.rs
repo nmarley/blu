@@ -255,7 +255,7 @@ impl Index {
             let filetype = wiz
                 .get_filetype(&filedata, size)
                 .unwrap_or_else(|_| "other".into());
-            let mh = hash::hash(&filedata);
+            let mh = hash::multihash(&filedata);
 
             // entry is a reference to the entry in the hashmap ...
             let entry = map_files.entry(mh.to_bytes()).or_insert(Entry {
@@ -423,7 +423,7 @@ impl EncryptedIndex {
 
             // TODO: streaming reads here? as some files could be GB in size...
             let filedata = fs::read(elem.path()).unwrap();
-            let mh = hash::hash(&filedata);
+            let mh = hash::multihash(&filedata);
 
             let _encrypted = map.entry(mh.to_bytes()).or_insert({
                 Encrypted {
@@ -527,7 +527,7 @@ impl EncryptedIndex {
                 let enc = self.map.get(&hash).unwrap();
                 let enc_filedata = fs::read(&enc.path)?;
                 let filedata = bbox.decrypt(&enc_filedata)?;
-                let mh = hash::hash(&filedata);
+                let mh = hash::multihash(&filedata);
                 // reconciliation happens here
                 if let Some(entry) = idx.get_mut_entry_ref(&mh.to_bytes()) {
                     // hashset (do not assume unique enc hashes in the index)
@@ -642,7 +642,7 @@ mod test {
 
     fn test_entry(content: &str) -> Entry {
         let b = content.as_bytes();
-        let mh = hash::hash(b);
+        let mh = hash::multihash(b);
         Entry {
             paths: HashSet::from(["testfile.txt".into()]),
             filetype: "ASCII text".to_string(),

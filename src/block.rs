@@ -67,7 +67,7 @@ pub struct Block {
 
 impl Block {
     pub fn new(data: &[u8]) -> Self {
-        let mh = hash::hash(data);
+        let mh = hash::multihash(data);
         Self {
             hash: MyHash::from(mh.to_bytes()),
             size: data.len(),
@@ -171,7 +171,7 @@ impl File {
             all_hashes.append(&mut block_hash);
         }
 
-        MyHash::from(hash::hash(&all_hashes).to_bytes())
+        MyHash::from(hash::multihash(&all_hashes).to_bytes())
     }
 
     pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(

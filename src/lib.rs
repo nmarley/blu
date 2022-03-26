@@ -105,7 +105,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let unenc_filedata = entry.read_filedata()?;
         let enc_filedata = bbox.encrypt(&unenc_filedata)?;
 
-        let enc_mh = hash::hash(&enc_filedata);
+        let enc_mh = hash::multihash(&enc_filedata);
         let enc_hash = enc_mh.to_bytes();
         let size = enc_hash.len() as u64;
         let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;

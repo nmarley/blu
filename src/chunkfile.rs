@@ -29,7 +29,7 @@ impl ChunkFile {
         }
 
         let index = self.count();
-        let hash = hash::hash(chunk);
+        let hash = hash::multihash(chunk);
         self.positions.insert(hash.to_bytes(), index);
 
         self.chunks.push(chunk.to_vec());
