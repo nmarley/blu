@@ -95,12 +95,12 @@ pub struct ChunkFileLocation {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
-pub struct EncryptedBlockIndex {
+pub struct ChunkFileIndex {
     // map the encrypted hash to the location of the data on disk
-    map: HashMap<Vec<u8>, ChunkFileLocation>,
+    map: HashMap<Hash, ChunkFileLocation>,
 }
 
-impl EncryptedBlockIndex {
+impl ChunkFileIndex {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -108,7 +108,8 @@ impl EncryptedBlockIndex {
     }
 
     pub fn add_chunk_location(&mut self, chunk_hash: &[u8], location: &ChunkFileLocation) {
-        self.map.insert(chunk_hash.to_vec(), location.clone());
+        self.map
+            .insert(chunk_hash.to_vec().into(), location.clone());
     }
 
     // returns the encrypted from disk, decrypt it yourself
@@ -118,7 +119,7 @@ impl EncryptedBlockIndex {
     // reading the chunks? e.g. once this particular location is opened, we
     // don't close it, keep it open at least for X most recently accessed
     // files?
-    pub fn get_enc_block(&self, hash: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn get_enc_block(&self, hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let enc_location = self.map.get(hash).ok_or("location not found")?;
 
         let mut f = fs::File::open(&enc_location.path)?;
@@ -133,10 +134,8 @@ impl EncryptedBlockIndex {
 // == end encrypted parts
 
 impl File {
-    //                    Vec<u8> ... not sure about this... debugging Vec<u8>
-    //                    sucks
     pub fn hash(&self) -> Hash {
-        let mut all_hashes = vec![];
+        let mut all_hashes: Vec<u8> = vec![];
         for block in self.blocks.iter() {
             let mut block_hash = block.hash();
             all_hashes.append(&mut block_hash);
