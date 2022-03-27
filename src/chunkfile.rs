@@ -105,7 +105,7 @@ impl ChunkFile {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct ChunkFileLocation {
+pub struct EncChunkLocation {
     path: PathBuf,
     index: usize,
 }
@@ -113,7 +113,7 @@ pub struct ChunkFileLocation {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
 pub struct ChunkFileIndex {
     // map the encrypted hash to the location of the data on disk
-    map: HashMap<Hash, ChunkFileLocation>,
+    map: HashMap<Hash, EncChunkLocation>,
 }
 
 impl ChunkFileIndex {
@@ -123,7 +123,7 @@ impl ChunkFileIndex {
         }
     }
 
-    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &ChunkFileLocation) {
+    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
     }
 
