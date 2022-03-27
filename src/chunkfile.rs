@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use multihash::Hasher;
+
+use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
@@ -20,6 +23,13 @@ impl ChunkFileManager {
         Self {
             datadir: dir.as_ref().to_path_buf(),
         }
+    }
+
+    pub fn write_chunkfile(&self, cf: &ChunkFile) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = cf.serialize()?;
+        let dir_manager = Manager::new(&self.datadir);
+        let chunkfile_hash = cf.hash();
+        dir_manager.write_encrypted(&chunkfile_hash, &raw_bytes)
     }
 
     // given an enc chunk, ...
@@ -101,6 +111,16 @@ impl ChunkFile {
         // let decoded: ChunkFile = serde_cbor::from_slice(data)?;
         let decoded: ChunkFile = bincode::deserialize(data)?;
         Ok(decoded)
+    }
+
+    // hash all the chunks and get the result
+    pub fn hash(&self) -> Hash {
+        let mut h = multihash::Sha2_512::default();
+        for chunk_bytes in self.chunks.iter() {
+            h.update(chunk_bytes)
+        }
+        let digest = h.finalize();
+        Hash::from(digest)
     }
 }
 

@@ -11,7 +11,7 @@ pub struct Manager {
 use multihash::Multihash;
 
 impl Manager {
-    pub fn new<P: AsRef<Path> + std::fmt::Debug>(datadir: P) -> Self {
+    pub fn new<P: AsRef<Path>>(datadir: P) -> Self {
         Self {
             datadir: datadir.as_ref().to_path_buf(),
         }
