@@ -12,20 +12,20 @@ use crate::chunkfile::ChunkFile;
 use crate::hash::Hash;
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PlainIndex {
+pub struct PlainFileIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
     map: HashMap<Hash, FileRef>,
 }
-impl PlainIndex {
+impl PlainFileIndex {
     pub fn new<P: AsRef<Path> + std::fmt::Debug>(
         dir: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
-            map: Self::build_index(dir)?,
+            map: Self::build_file_index(dir)?,
         })
     }
 
-    fn build_index<P: AsRef<Path> + std::fmt::Debug>(
+    fn build_file_index<P: AsRef<Path> + std::fmt::Debug>(
         dir: P,
     ) -> Result<HashMap<Hash, FileRef>, Box<dyn std::error::Error>> {
         let mut map: HashMap<Hash, FileRef> = HashMap::new();
