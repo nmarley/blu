@@ -54,12 +54,55 @@ impl PlainFileIndex {
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct PlainBlockIndex {
+    // plain block hash -> BlockRef
+    map: HashMap<Hash, BlockRef>,
+}
+
+impl PlainBlockIndex {
+    pub fn new(file_index: &PlainFileIndex) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            map: Self::build_block_index(&file_index.map),
+        })
+    }
+
+    fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
+        let mut block_index = HashMap::<Hash, BlockRef>::new();
+        for (file_hash, fr) in file_index.iter() {
+            for block in fr.file.blocks.iter() {
+                let blockref = block_index.entry(block.hash.clone()).or_insert(BlockRef {
+                    referencing_file_hashes: HashSet::new(),
+                });
+                blockref.referencing_file_hashes.insert(file_hash.clone());
+            }
+        }
+        block_index
+    }
+
+    pub fn count_blocks(&self) -> usize {
+        self.map.len()
+    }
+}
+
+// blockref -> option<enc hash>
+//          -> set of referencing file hashes
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct BlockRef {
+    // TBD: this has to be integrated w/the ChunkFileIndex and encryptor
+    //
+    // encrypted_hash: Option<Hash>,
+
+    // hashes of the files which reference this block
+    referencing_file_hashes: HashSet<Hash>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct FileRef {
     file: File,
     paths: HashSet<PathBuf>,
 }
 
-#[derive(Debug, PartialEq, Clone, Hash, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, std::hash::Hash, Serialize, Deserialize, Eq, PartialOrd, Ord)]
 pub struct Block {
     hash: Hash,
     size: usize,
@@ -79,7 +122,7 @@ impl Block {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, std::hash::Hash, Eq, Ord, PartialOrd)]
 pub struct File {
     blocks: Vec<Block>,
     filetype: String, // TODO: ref table?
@@ -211,7 +254,8 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::{Block, File, Hash, PlainIndex};
+    use super::{Block, BlockRef, File, FileRef, Hash, PlainBlockIndex, PlainFileIndex};
+    use std::collections::{HashMap, HashSet};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
@@ -266,13 +310,10 @@ mod test {
         assert_eq!(file2, file3);
     }
 
-    use crate::block::FileRef;
-    use std::collections::{HashMap, HashSet};
-
     #[test]
-    fn block_index() {
+    fn file_index() {
         // build index and compare
-        let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
+        let index = PlainFileIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
 
         let map: HashMap<Hash, FileRef> = HashMap::from([
             (
@@ -352,6 +393,62 @@ mod test {
             ),
         ]);
 
-        assert_eq!(index, PlainIndex { map });
+        assert_eq!(index, PlainFileIndex { map });
+    }
+
+    #[test]
+    fn block_index() {
+        let file_index = PlainFileIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
+        let block_index = PlainBlockIndex::new(&file_index).unwrap();
+
+        // there should be 5 distinct chunks in test dir
+        assert_eq!(block_index.count_blocks(), 5);
+
+        let map: HashMap<Hash, BlockRef> = HashMap::from([
+            (
+                Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                BlockRef {
+                    referencing_file_hashes: HashSet::from([
+                        Hash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
+                    ]),
+                }
+            ),
+            (
+                Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                BlockRef {
+                    referencing_file_hashes: HashSet::from([
+                        Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                    ]),
+                },
+            ),
+            (
+                Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                BlockRef {
+                    referencing_file_hashes: HashSet::from([
+                        Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                        Hash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
+                    ]),
+                },
+            ),
+            (
+                Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                BlockRef {
+                    referencing_file_hashes: HashSet::from([
+                        Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                    ]),
+                },
+            ),
+            (
+                Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                BlockRef {
+                    referencing_file_hashes: HashSet::from([
+                        Hash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
+                        Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
+                    ]),
+                },
+            ),
+        ]);
+
+        assert_eq!(block_index, PlainBlockIndex { map });
     }
 }
