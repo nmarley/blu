@@ -101,7 +101,7 @@ pub mod test {
 
     #[test]
     fn asym_encrypt_decrypt() {
-        let bbox = BlackBox::new(&vec![TEST_AGE_SECRET_KEY]);
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
 
         let encrypted = bbox.encrypt(&data).unwrap();
