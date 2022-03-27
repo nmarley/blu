@@ -102,7 +102,7 @@ pub struct FileRef {
     paths: HashSet<PathBuf>,
 }
 
-#[derive(Debug, PartialEq, Clone, std::hash::Hash, Serialize, Deserialize, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Block {
     hash: Hash,
     size: usize,
@@ -122,7 +122,7 @@ impl Block {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, std::hash::Hash, Eq, Ord, PartialOrd)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File {
     blocks: Vec<Block>,
     filetype: String, // TODO: ref table?
