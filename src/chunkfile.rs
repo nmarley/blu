@@ -1,11 +1,42 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::hash::{self, Hash};
 
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
+
+// =============================================================================
+
+// this thing writes chunkfiles, re-indexes and re-orgs in case of many unused
+// chunks, etc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ChunkFileManager {
+    datadir: PathBuf,
+}
+impl ChunkFileManager {
+    pub fn new<P: AsRef<Path>>(dir: P) -> Self {
+        Self {
+            datadir: dir.as_ref().to_path_buf(),
+        }
+    }
+
+    // given an enc chunk, ...
+    // if !chunkfile.is_full() {
+    //     chunkfile.add_chunk(enc_chunk);
+    // } else {
+    //     chunkfile = Chunkfile::new();
+    // }
+    // write a new chunk
+}
+
+// Skeletor's cousin
+// use crate::age::*;
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+// pub struct Encryptor { }
+
+// =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFile {
