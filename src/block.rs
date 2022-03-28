@@ -117,6 +117,7 @@ impl FileRef {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct FileRefIterator {
     file: File,
     path: PathBuf,
@@ -139,26 +140,18 @@ impl std::iter::Iterator for FileRefIterator {
     fn next(&mut self) -> Option<Self::Item> {
         dbg!(&self.iterpos);
         dbg!(&self.offset);
+        dbg!(&self.path);
+        dbg!(self.file.blocks.len());
 
         if self.iterpos >= self.file.blocks.len() {
             return None;
         }
         let block = &self.file.blocks[self.iterpos];
-        // dbg!(&block);
-        dbg!(&self.path);
-
-        // read block.size bytes from self.iterhandle
-        let mut f = std::fs::File::open(&self.path).expect("wtf?");
-
-        // let f = std::fs::File::open(filepath).unwrap();
-        // let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
-        // let mut blocks: Vec<Block> = vec![];
-        // let mut count: usize = 0;
-        // let mut filetype: String = "".to_string();
-
-        // let mut buf = Vec::with_capacity(block.size);
-        let mut buf = Vec::new();
         dbg!(&block.size);
+
+        // read block.size bytes
+        let mut f = std::fs::File::open(&self.path).expect("wtf?");
+        let mut buf = Vec::with_capacity(block.size);
         dbg!(&buf.len());
         dbg!(&buf.capacity());
         let seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");

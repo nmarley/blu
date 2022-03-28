@@ -6,9 +6,9 @@ use blu::age::BlackBox;
 use blu::block::{PlainBlockIndex, PlainFileIndex};
 use blu::chunkfile::ChunkFileManager;
 use blu::config;
-use blu::dir::Manager;
-use blu::hash::{self, Hash};
-use blu::metadata::{EncryptedIndex, Index};
+// use blu::dir::Manager;
+// use blu::hash::{self, Hash};
+// use blu::metadata::{EncryptedIndex, Index};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args();
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let dir = &args.nth(1).unwrap();
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let _bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
     let cfg = config::read_config(dir)?;
     dbg!(&cfg);
@@ -32,20 +32,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
-    for (file_hash, fileref) in findex.map_ref().iter() {
+    for (_file_hash, fileref) in findex.map_ref().iter() {
         // dbg!(&file_hash);
         // dbg!(&fileref);
 
         // iterate over plain chunks in file ...
-        let mut fri = fileref.iter()?;
-        let mut count_chunk = 0;
-        for plain_data_chunk in fri {
+        let fri = fileref.iter()?;
+        for (count_chunk, plain_data_chunk) in fri.enumerate() {
             dbg!(&plain_data_chunk);
             println!(
                 "count_chunk = {} -------------------------------------------------------",
                 count_chunk
             );
-            count_chunk += 1;
         }
         println!("========================================================================");
     }
