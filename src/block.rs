@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -39,13 +40,14 @@ impl PlainFileIndex {
 
             let file = File::read_from_disk(&elem.path())?;
             let file_hash = file.hash();
-            let fileref = map.entry(file_hash).or_insert(FileRef {
-                file,
-                paths: HashSet::new(),
-            });
+            let fileref = map.entry(file_hash).or_insert_with(|| FileRef::new(file));
             fileref.paths.insert(elem.into_path());
         }
         Ok(map)
+    }
+
+    pub fn map_ref(&self) -> &HashMap<Hash, FileRef> {
+        &self.map
     }
 }
 
@@ -96,6 +98,67 @@ pub struct BlockRef {
 pub struct FileRef {
     file: File,
     paths: HashSet<PathBuf>,
+}
+
+impl FileRef {
+    pub fn new(f: File) -> Self {
+        Self {
+            file: f,
+            paths: HashSet::new(),
+        }
+    }
+
+    pub fn iter(&self) -> Result<FileRefIterator, Box<dyn std::error::Error>> {
+        if self.paths.is_empty() {
+            return Err("no path from which to read bytes".into());
+        }
+        let path = self.paths.iter().next().unwrap();
+        Ok(FileRefIterator::new(self.file.clone(), path.to_path_buf()))
+    }
+}
+
+pub struct FileRefIterator {
+    file: File,
+    path: PathBuf,
+    iterpos: usize,
+    offset: u64,
+}
+impl FileRefIterator {
+    pub fn new(f: File, path: PathBuf) -> Self {
+        Self {
+            file: f,
+            path,
+            iterpos: 0,
+            offset: 0,
+        }
+    }
+}
+
+impl std::iter::Iterator for FileRefIterator {
+    type Item = Vec<u8>;
+    fn next(&mut self) -> Option<Self::Item> {
+        dbg!(&self.iterpos);
+        dbg!(&self.offset);
+
+        if self.iterpos >= self.file.blocks.len() {
+            return None;
+        }
+        let block = &self.file.blocks[self.iterpos];
+        dbg!(&block);
+        dbg!(&self.path);
+
+        // read block.size bytes from self.iterhandle
+        let mut f = std::fs::File::open(&self.path).ok()?;
+        let mut buf = Vec::with_capacity(block.size);
+        let _ = f.seek(SeekFrom::Start(self.offset)).ok()?;
+        let _ = f.read_exact(&mut buf).ok()?;
+        dbg!(&buf);
+
+        self.offset += block.size as u64;
+
+        self.iterpos += 1;
+        Some(buf)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

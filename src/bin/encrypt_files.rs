@@ -3,6 +3,8 @@ use std::env;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
+use blu::block::{PlainBlockIndex, PlainFileIndex};
+use blu::chunkfile::ChunkFileManager;
 use blu::config;
 use blu::dir::Manager;
 use blu::hash::{self, Hash};
@@ -21,40 +23,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::read_config(dir)?;
     dbg!(&cfg);
 
-    let index = match cfg.load_index(&bbox)? {
-        None => Index::new(dir)?,
-        Some(idx) => idx,
-    };
-    // let mut index = Index::new(dir)?;
-    dbg!(&index);
+    let mut findex = PlainFileIndex::new(dir)?;
+    dbg!(&findex);
 
-    let enc_idx = EncryptedIndex::new(cfg.datadir())?;
-    dbg!(&enc_idx);
+    let mut bindex = PlainBlockIndex::new(&findex)?;
+    dbg!(&bindex);
 
-    let to_encrypt = index.difference_enc_idx(&enc_idx);
-    dbg!(&to_encrypt);
+    let mut cfm = ChunkFileManager::new(&cfg.datadir());
+    dbg!(&cfm);
 
-    let dir_manager = Manager::new(&cfg.datadir());
-    for entry in to_encrypt.iter() {
-        dbg!(&entry);
+    for (file_hash, fileref) in findex.map_ref().iter() {
+        dbg!(&file_hash);
+        dbg!(&fileref);
 
-        // if this is some, assume it's already encrypted and on-disk
-        if entry.get_enc().is_some() {
+        // iterate over plain chunks in file ...
+        let mut fri = fileref.iter()?;
+        let mut count_chunk = 0;
+        for plain_data_chunk in fri {
+            dbg!(&plain_data_chunk);
             println!(
-                "Skipping entry: {:?} ... because it's already encrypted.",
-                entry
+                "count_chunk = {} -------------------------------------------------------",
+                count_chunk
             );
-            continue;
+            count_chunk += 1;
         }
-
-        // read file data from entry and encrypt it . Need to read one of the paths
-        let unenc_filedata = entry.read_filedata()?;
-        let enc_filedata = bbox.encrypt(&unenc_filedata)?;
-
-        let enc_mh = hash::multihash(&enc_filedata);
-        let enc_hash = Hash::from(enc_mh.to_bytes());
-        let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
-        dbg!(&enc_path);
+        println!("========================================================================");
     }
 
     Ok(())
