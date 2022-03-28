@@ -12,6 +12,11 @@ const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
 // =============================================================================
 
+pub enum CFAddStatus {
+    WrittenToDisk(PathBuf),
+    AddedToMemory,
+}
+
 // this thing writes chunkfiles, re-indexes and re-orgs in case of many unused
 // chunks, etc.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -23,25 +28,34 @@ impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
         Self {
             datadir: dir.as_ref().to_path_buf(),
+            active_chunkfile: ChunkFile::new(),
         }
     }
 
-    fn write_chunkfile(&self, cf: &ChunkFile) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = cf.serialize()?;
+    fn write_chunkfile(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = &self.active_chunkfile.serialize()?;
         let dir_manager = Manager::new(&self.datadir);
-        let chunkfile_hash = cf.hash();
-        dir_manager.write_encrypted(&chunkfile_hash, &raw_bytes)
+        let chunkfile_hash = &self.active_chunkfile.hash();
+        dir_manager.write_encrypted(chunkfile_hash, raw_bytes)
     }
 
-    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    // TODO: not sure on retval here ... should it be sth that returns EITHER a
+    // CF::Written or a CF::Memory, or sth like that?
+    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
         if self.active_chunkfile.is_full() {
-            // TODO: add Paths from here to Index
-            self.write_chunkfile();
+            // TODO: caller should add Paths from here to Index
+            let path = self.write_chunkfile()?;
+            self.active_chunkfile = ChunkFile::new();
+            return Ok(CFAddStatus::WrittenToDisk(path));
         }
-        //     write_chunkfile
-        //     chunkfile = Chunkfile::new();
-        //     chunkfile.add_chunk(enc_chunk);
-        // write a new chunk
+        self.active_chunkfile.add_chunk(chunk)?;
+        Ok(CFAddStatus::AddedToMemory)
+    }
+
+    // Final chunkfile (in-memory) gets written to disk
+    pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
+        let path = self.write_chunkfile()?;
+        Ok(CFAddStatus::WrittenToDisk(path))
     }
 }
 
