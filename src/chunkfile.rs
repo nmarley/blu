@@ -17,6 +17,7 @@ const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFileManager {
     datadir: PathBuf,
+    active_chunkfile: ChunkFile,
 }
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
@@ -25,20 +26,23 @@ impl ChunkFileManager {
         }
     }
 
-    pub fn write_chunkfile(&self, cf: &ChunkFile) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    fn write_chunkfile(&self, cf: &ChunkFile) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let raw_bytes = cf.serialize()?;
         let dir_manager = Manager::new(&self.datadir);
         let chunkfile_hash = cf.hash();
         dir_manager.write_encrypted(&chunkfile_hash, &raw_bytes)
     }
 
-    // given an enc chunk, ...
-    // if !chunkfile.is_full() {
-    //     chunkfile.add_chunk(enc_chunk);
-    // } else {
-    //     chunkfile = Chunkfile::new();
-    // }
-    // write a new chunk
+    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        if self.active_chunkfile.is_full() {
+            // TODO: add Paths from here to Index
+            self.write_chunkfile();
+        }
+        //     write_chunkfile
+        //     chunkfile = Chunkfile::new();
+        //     chunkfile.add_chunk(enc_chunk);
+        // write a new chunk
+    }
 }
 
 // Skeletor's cousin
@@ -72,7 +76,7 @@ impl ChunkFile {
     }
 
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-        if self.count() >= self.capacity {
+        if self.is_full() {
             return Err("capacity has been reached".into());
         }
 
@@ -121,6 +125,10 @@ impl ChunkFile {
         }
         let digest = h.finalize();
         Hash::from(digest)
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.count() >= self.capacity
     }
 }
 
