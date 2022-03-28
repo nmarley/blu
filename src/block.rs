@@ -15,15 +15,13 @@ pub struct PlainFileIndex {
     map: HashMap<Hash, FileRef>,
 }
 impl PlainFileIndex {
-    pub fn new<P: AsRef<Path> + std::fmt::Debug>(
-        dir: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             map: Self::build_file_index(dir)?,
         })
     }
 
-    fn build_file_index<P: AsRef<Path> + std::fmt::Debug>(
+    fn build_file_index<P: AsRef<Path>>(
         dir: P,
     ) -> Result<HashMap<Hash, FileRef>, Box<dyn std::error::Error>> {
         let mut map: HashMap<Hash, FileRef> = HashMap::new();
@@ -137,9 +135,7 @@ impl File {
         Hash::from(hash::multihash(&all_hashes).to_bytes())
     }
 
-    pub fn read_from_disk<P: AsRef<Path> + std::fmt::Debug>(
-        filepath: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn read_from_disk<P: AsRef<Path>>(filepath: P) -> Result<Self, Box<dyn std::error::Error>> {
         // for file magic
         let wiz = Wizard::new();
 

@@ -64,9 +64,7 @@ pub struct Config {
     pub prune_dangling: bool,
 }
 
-pub fn read_config<P: AsRef<Path> + std::fmt::Debug>(
-    base_dir: P,
-) -> Result<Config, Box<dyn std::error::Error>> {
+pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
     let cfg_dir = base_dir.as_ref().join(".blu");
     let config_filename = cfg_dir.join("config.json");
 
