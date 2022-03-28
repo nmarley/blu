@@ -33,8 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&cfm);
 
     for (file_hash, fileref) in findex.map_ref().iter() {
-        dbg!(&file_hash);
-        dbg!(&fileref);
+        // dbg!(&file_hash);
+        // dbg!(&fileref);
 
         // iterate over plain chunks in file ...
         let mut fri = fileref.iter()?;

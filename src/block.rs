@@ -144,14 +144,26 @@ impl std::iter::Iterator for FileRefIterator {
             return None;
         }
         let block = &self.file.blocks[self.iterpos];
-        dbg!(&block);
+        // dbg!(&block);
         dbg!(&self.path);
 
         // read block.size bytes from self.iterhandle
-        let mut f = std::fs::File::open(&self.path).ok()?;
-        let mut buf = Vec::with_capacity(block.size);
-        let _ = f.seek(SeekFrom::Start(self.offset)).ok()?;
-        let _ = f.read_exact(&mut buf).ok()?;
+        let mut f = std::fs::File::open(&self.path).expect("wtf?");
+
+        // let f = std::fs::File::open(filepath).unwrap();
+        // let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
+        // let mut blocks: Vec<Block> = vec![];
+        // let mut count: usize = 0;
+        // let mut filetype: String = "".to_string();
+
+        // let mut buf = Vec::with_capacity(block.size);
+        let mut buf = Vec::new();
+        dbg!(&block.size);
+        dbg!(&buf.len());
+        dbg!(&buf.capacity());
+        let seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");
+        dbg!(&seeko);
+        let _ = f.read_exact(&mut buf).expect("wtf3");
         dbg!(&buf);
 
         self.offset += block.size as u64;
