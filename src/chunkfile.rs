@@ -59,13 +59,6 @@ impl ChunkFileManager {
     }
 }
 
-// Skeletor's cousin
-// use crate::age::*;
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-// pub struct Encryptor { }
-
-// =============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFile {
     // this is a vector of encryted data chunks -- NOT HASHES
