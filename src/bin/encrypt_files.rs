@@ -4,7 +4,7 @@ const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
 use blu::block::{PlainBlockIndex, PlainFileIndex};
-use blu::chunkfile::ChunkFileManager;
+use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager, EncChunkLocation};
 use blu::config;
 // use blu::dir::Manager;
 // use blu::hash::{self, Hash};
@@ -32,6 +32,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
+    // TODO: This should be read from disk, along w/the other indexes ...
+    let mut cfi = ChunkFileIndex::new();
+    dbg!(&cfi);
+
+    // enumerate the chunkfile ...?
+    // need to somehow loop thru each chunk upon creation of the chunkfile
+    //
+    // now we have path...
+    // for (enc hash, index) in chunkfile.positions {
+    //     cfi.add_chunk_location(&enc_hash, &EncChunkLocation{
+    //         path,
+    //         index,
+    //     });
+    // }
+    //
+    // cfi.add_chunk_location(&enc_hash, &EncChunkLocation{
+    //     path,
+    //     index,
+    // });
+    // pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
+    //     self.map.insert(chunk_hash.clone(), location.clone());
+    // }
+
+    // #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+    // pub struct EncChunkLocation {
+    //     path: PathBuf,
+    //     index: usize,
+    // }
+
     for (_file_hash, fileref) in findex.map_ref().iter() {
         // dbg!(&file_hash);
         // dbg!(&fileref);
@@ -39,7 +68,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // iterate over plain chunks in file ...
         let fri = fileref.iter()?;
         for (count_chunk, plain_data_chunk) in fri.enumerate() {
+            // 1. encrypt plain data chunk
+            // 2. use cfm to add ...
+            // 3. ... finalize cfm when done?
             dbg!(&plain_data_chunk);
+
+            // let enc_chunk = encrypt(plain_data_chunk);
+            // match cfm.add_chunk(enc_chunk) {
+            //     CFAddStatus::WrittenToDisk(path) => {
+            //         // update path here ...
+            //         bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
+            //     }
+            //     CFAddStatus::AddedToMemory => {
+            //         // do nothing ...
+            //     }
+            // };
             println!(
                 "count_chunk = {} -------------------------------------------------------",
                 count_chunk
@@ -47,6 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!("========================================================================");
     }
+    // TODO: update path in indexes
+    let path = cfm.finalize();
 
     Ok(())
 }

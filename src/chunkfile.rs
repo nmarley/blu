@@ -19,7 +19,7 @@ pub enum CFAddStatus {
 
 // this thing writes chunkfiles, re-indexes and re-orgs in case of many unused
 // chunks, etc.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFileManager {
     datadir: PathBuf,
     active_chunkfile: ChunkFile,

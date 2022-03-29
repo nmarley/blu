@@ -68,9 +68,9 @@ impl PlainBlockIndex {
         let mut block_index = HashMap::<Hash, BlockRef>::new();
         for (file_hash, fr) in file_index.iter() {
             for block in fr.file.blocks.iter() {
-                let blockref = block_index.entry(block.hash.clone()).or_insert(BlockRef {
-                    referencing_file_hashes: HashSet::new(),
-                });
+                let blockref = block_index
+                    .entry(block.hash.clone())
+                    .or_insert_with(|| BlockRef::new());
                 blockref.referencing_file_hashes.insert(file_hash.clone());
             }
         }
@@ -88,10 +88,24 @@ impl PlainBlockIndex {
 pub struct BlockRef {
     // TBD: this has to be integrated w/the ChunkFileIndex and encryptor
     //
-    // encrypted_hash: Option<Hash>,
+    encrypted_hash: Option<Hash>,
 
     // hashes of the files which reference this block
     referencing_file_hashes: HashSet<Hash>,
+}
+
+impl BlockRef {
+    fn new() -> Self {
+        Self {
+            encrypted_hash: None,
+            referencing_file_hashes: HashSet::new(),
+        }
+    }
+}
+impl Default for BlockRef {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -138,31 +152,27 @@ impl FileRefIterator {
 impl std::iter::Iterator for FileRefIterator {
     type Item = Vec<u8>;
     fn next(&mut self) -> Option<Self::Item> {
-        dbg!(&self.iterpos);
-        dbg!(&self.offset);
-        dbg!(&self.path);
-        dbg!(self.file.blocks.len());
+        // dbg!(&self.iterpos);
+        // dbg!(&self.offset);
+        // dbg!(&self.path);
+        // dbg!(self.file.blocks.len());
 
         if self.iterpos >= self.file.blocks.len() {
             return None;
         }
         let block = &self.file.blocks[self.iterpos];
-        dbg!(&block.size);
 
         // read block.size bytes
         let mut f = std::fs::File::open(&self.path).expect("wtf?");
-        let mut buf = Vec::with_capacity(block.size);
-        dbg!(&buf.len());
-        dbg!(&buf.capacity());
+        let mut buf: Vec<u8> = vec![0u8; block.size];
         let seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");
         dbg!(&seeko);
-        let _ = f.read_exact(&mut buf).expect("wtf3");
-        dbg!(&buf);
+        f.read_exact(&mut buf).expect("wtf3");
 
         self.offset += block.size as u64;
-
         self.iterpos += 1;
         Some(buf)
+        // None
     }
 }
 
@@ -427,6 +437,7 @@ mod test {
                     referencing_file_hashes: HashSet::from([
                         Hash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
                     ]),
+                    encrypted_hash: None,
                 }
             ),
             (
@@ -435,6 +446,7 @@ mod test {
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                     ]),
+                    encrypted_hash: None,
                 },
             ),
             (
@@ -444,6 +456,7 @@ mod test {
                         Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                         Hash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
                     ]),
+                    encrypted_hash: None,
                 },
             ),
             (
@@ -452,6 +465,7 @@ mod test {
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                     ]),
+                    encrypted_hash: None,
                 },
             ),
             (
@@ -461,6 +475,7 @@ mod test {
                         Hash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
                         Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                     ]),
+                    encrypted_hash: None,
                 },
             ),
         ]);
