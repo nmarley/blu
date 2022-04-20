@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let dir = &args.nth(1).unwrap();
 
-    let _bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
     let cfg = config::read_config(dir)?;
     dbg!(&cfg);
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (_file_hash, fileref) in findex.map_ref().iter() {
         // dbg!(&file_hash);
-        // dbg!(&fileref);
+        dbg!(&fileref);
 
         // iterate over plain chunks in file ...
         let fri = fileref.iter()?;
@@ -69,16 +69,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 3. ... finalize cfm when done?
             dbg!(&hex::encode(&plain_data_chunk));
 
-            // let enc_chunk = encrypt(plain_data_chunk);
-            // match cfm.add_chunk(enc_chunk) {
-            //     CFAddStatus::WrittenToDisk(path) => {
-            //         // update path here ...
-            //         bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
-            //     }
-            //     CFAddStatus::AddedToMemory => {
-            //         // do nothing ...
-            //     }
-            // };
+            let enc_chunk = bbox.encrypt(&plain_data_chunk)?;
+            match cfm.add_chunk(enc_chunk)? {
+                CFAddStatus::WrittenToDisk(path) => {
+                    // update path here ...
+                    bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
+                }
+                CFAddStatus::AddedToMemory => {
+                    // do nothing ...
+                }
+            };
             println!(
                 "count_chunk = {} -------------------------------------------------------",
                 count_chunk
