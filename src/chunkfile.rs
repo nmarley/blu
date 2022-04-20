@@ -179,13 +179,13 @@ pub struct ChunkFileIndex {
 }
 
 impl ChunkFileIndex {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             map: HashMap::new(),
         }
     }
 
-    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
+    fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
     }
 
@@ -204,7 +204,7 @@ impl ChunkFileIndex {
     // reading the chunks? e.g. once this particular location is opened, we
     // don't close it, keep it open at least for X most recently accessed
     // files?
-    pub fn get_enc_block(&self, hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    fn get_enc_block(&self, hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let enc_location = self.map.get(hash).ok_or("location not found")?;
 
         let mut f = std::fs::File::open(&enc_location.path)?;
