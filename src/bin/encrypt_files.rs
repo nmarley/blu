@@ -32,10 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
-    // TODO: This should be read from disk, along w/the other indexes ...
-    let mut cfi = ChunkFileIndex::new();
-    dbg!(&cfi);
-
     // enumerate the chunkfile ...?
     // need to somehow loop thru each chunk upon creation of the chunkfile
     //
@@ -71,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // 1. encrypt plain data chunk
             // 2. use cfm to add ...
             // 3. ... finalize cfm when done?
-            dbg!(&plain_data_chunk);
+            dbg!(&hex::encode(&plain_data_chunk));
 
             // let enc_chunk = encrypt(plain_data_chunk);
             // match cfm.add_chunk(enc_chunk) {

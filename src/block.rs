@@ -70,7 +70,7 @@ impl PlainBlockIndex {
             for block in fr.file.blocks.iter() {
                 let blockref = block_index
                     .entry(block.hash.clone())
-                    .or_insert_with(|| BlockRef::new());
+                    .or_insert_with(BlockRef::new);
                 blockref.referencing_file_hashes.insert(file_hash.clone());
             }
         }
@@ -165,8 +165,8 @@ impl std::iter::Iterator for FileRefIterator {
         // read block.size bytes
         let mut f = std::fs::File::open(&self.path).expect("wtf?");
         let mut buf: Vec<u8> = vec![0u8; block.size];
-        let seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");
-        dbg!(&seeko);
+        let _seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");
+        // dbg!(&seeko);
         f.read_exact(&mut buf).expect("wtf3");
 
         self.offset += block.size as u64;

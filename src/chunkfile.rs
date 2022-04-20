@@ -22,12 +22,33 @@ pub enum CFAddStatus {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFileManager {
     datadir: PathBuf,
+    chunkfile_index: ChunkFileIndex,
     active_chunkfile: ChunkFile,
+    // ChunkFileIndex
+    // encrypted hash -> location of the data on disk
+    // map: HashMap<Hash, EncChunkLocation>,
+
+    // EncChunkLocation
+    //     path: PathBuf,
+    //     index: usize,
+
+    // ChunkFile
+    //     // this is a vector of encryted data chunks -- NOT HASHES
+    //     chunks: Vec<Vec<u8>>,
+    //     capacity: usize,
+    //     // this is the hash / index into the chunkfile, e.g. the hash of the
+    //     // encrypted data chunk can be found in `chunks` at index usize>
+    //     positions: HashMap<Hash, usize>,
 }
+
+// TODO: Add CFI to this
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
+        let datadir = dir.as_ref().to_path_buf();
+        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref()).unwrap();
         Self {
-            datadir: dir.as_ref().to_path_buf(),
+            datadir,
+            chunkfile_index: cfi,
             active_chunkfile: ChunkFile::new(),
         }
     }
@@ -56,6 +77,12 @@ impl ChunkFileManager {
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
         let path = self.write_chunkfile()?;
         Ok(CFAddStatus::WrittenToDisk(path))
+    }
+}
+
+impl std::ops::Drop for ChunkFileManager {
+    fn drop(&mut self) {
+        let _ = self.finalize().unwrap();
     }
 }
 
@@ -160,6 +187,14 @@ impl ChunkFileIndex {
 
     pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
+    }
+
+    fn deserialize_from_disk<P: AsRef<Path>>(
+        datadir: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let data = std::fs::read(datadir)?;
+        let decoded: ChunkFileIndex = bincode::deserialize(&data)?;
+        Ok(decoded)
     }
 
     // returns the encrypted from disk, decrypt it yourself
