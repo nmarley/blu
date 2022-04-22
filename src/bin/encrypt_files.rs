@@ -70,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dbg!(&hex::encode(&plain_data_chunk));
 
             let enc_chunk = bbox.encrypt(&plain_data_chunk)?;
-            match cfm.add_chunk(enc_chunk)? {
+            match cfm.add_chunk(&enc_chunk)? {
                 CFAddStatus::WrittenToDisk(path) => {
                     // update path here ...
                     bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
