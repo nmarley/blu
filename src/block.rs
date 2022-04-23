@@ -10,11 +10,13 @@ use crate::magic::Wizard;
 
 const BLOCK_SIZE: usize = 4096;
 
+/// PlainFileIndex keeps a map of file data hash to a FileRef
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainFileIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
     map: HashMap<Hash, FileRef>,
 }
+
 impl PlainFileIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
@@ -108,6 +110,9 @@ impl Default for BlockRef {
     }
 }
 
+/// FileRef is a container encapsulating a VecChunkMeta object (collection of
+/// hashes of chunks read from a fs::File) and filesystem references to it
+/// (filenames)
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct FileRef {
     file: VecChunkMeta,
