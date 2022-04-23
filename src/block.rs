@@ -40,14 +40,11 @@ impl PlainFileIndex {
             }
 
             let chunkmetas = VecChunkMeta::read_from_disk(&elem.path())?;
-
-            // TODO: whole file hash instead of this hash-of-hash mess
-            // w/chunkmetas?  that would mean hashing
-            // std::fs::read(&elem.path())
-            let chunkmetas_hash = chunkmetas.hash();
+            let file_data = std::fs::read(&elem.path())?;
+            let file_hash = Hash::from(hash::multihash(&file_data).to_bytes());
 
             let fileref = map
-                .entry(chunkmetas_hash)
+                .entry(file_hash)
                 .or_insert_with(|| FileRef::new(chunkmetas));
             fileref.paths.insert(elem.into_path());
         }
@@ -209,24 +206,15 @@ impl ChunkMeta {
     }
 }
 
-/// VecChunkMeta is a collection of ChunkMeta
+/// VecChunkMeta is a collection of ChunkMeta. This will be removed ASAP, do not use.
+// TODO: eventually eliminate this struct and just use Vec<ChunkMeta> instead...
+// no need for this intermediate nonsense struct
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct VecChunkMeta {
     chunkmetas: Vec<ChunkMeta>,
 }
 
 impl VecChunkMeta {
-    pub fn hash(&self) -> Hash {
-        // not a huge fan of this "hash of hashes" thing
-        let mut all_hashes: Vec<u8> = vec![];
-        for cm in self.chunkmetas.iter() {
-            let mut chunk_hash_bytes = cm.to_bytes();
-            all_hashes.append(&mut chunk_hash_bytes);
-        }
-
-        Hash::from(hash::multihash(&all_hashes).to_bytes())
-    }
-
     pub fn read_from_disk<P: AsRef<Path>>(filepath: P) -> Result<Self, Box<dyn std::error::Error>> {
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
@@ -263,9 +251,8 @@ mod test {
     #[test]
     fn read_blocks() {
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
-        let file1 = super::VecChunkMeta::read_from_disk(file1_path).unwrap();
-        assert_eq!(file1.hash().to_bytes(), hex::decode("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64").unwrap());
-        assert_eq!(file1, VecChunkMeta {
+        let chunk_metas1 = super::VecChunkMeta::read_from_disk(file1_path).unwrap();
+        assert_eq!(chunk_metas1, VecChunkMeta {
             chunkmetas: vec![
                 ChunkMeta {
                     hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
@@ -287,9 +274,8 @@ mod test {
         });
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
-        let file2 = super::VecChunkMeta::read_from_disk(file2_path).unwrap();
-        assert_eq!(file2.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
-        assert_eq!(file2, VecChunkMeta {
+        let chunk_metas2 = super::VecChunkMeta::read_from_disk(file2_path).unwrap();
+        assert_eq!(chunk_metas2, VecChunkMeta {
             chunkmetas: vec![
                 ChunkMeta {
                     hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
@@ -299,10 +285,9 @@ mod test {
         });
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
-        let file3 = VecChunkMeta::read_from_disk(file3_path).unwrap();
-        assert_eq!(file3.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
+        let chunk_metas3 = VecChunkMeta::read_from_disk(file3_path).unwrap();
         // should be equal super::File objects
-        assert_eq!(file2, file3);
+        assert_eq!(chunk_metas2, chunk_metas3);
     }
 
     #[test]
