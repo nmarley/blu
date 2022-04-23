@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::hash::{self, Hash};
-use crate::magic::Wizard;
 
 const BLOCK_SIZE: usize = 4096;
 
@@ -206,7 +205,6 @@ impl ChunkMeta {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct VecChunkMeta {
     chunkmetas: Vec<ChunkMeta>,
-    // filetype: String, // TODO: ref table?
 }
 
 impl VecChunkMeta {
@@ -221,14 +219,10 @@ impl VecChunkMeta {
     }
 
     pub fn read_from_disk<P: AsRef<Path>>(filepath: P) -> Result<Self, Box<dyn std::error::Error>> {
-        // for file magic
-        // let wiz = Wizard::new();
-
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
         let mut count: usize = 0;
-        let mut filetype: String = "".to_string();
 
         while let Ok(data) = reader.fill_buf() {
             if data.is_empty() {
@@ -237,21 +231,10 @@ impl VecChunkMeta {
             let actual_data = data.to_vec();
             chunkmetas.push(ChunkMeta::new(&actual_data));
             reader.consume(actual_data.len());
-
-            // // TODO: this but better
-            // if count == 0 {
-            //     filetype = wiz
-            //         .get_filetype(&actual_data, actual_data.len())
-            //         .unwrap_or_else(|_| "other".into());
-            // }
-
             count += 1;
         }
 
-        Ok(Self {
-            chunkmetas,
-            // filetype,
-        })
+        Ok(Self { chunkmetas })
     }
 }
 
@@ -292,7 +275,6 @@ mod test {
                     size: 4096,
                 },
             ],
-            // filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
         });
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
@@ -305,7 +287,6 @@ mod test {
                     size: 4096,
                 },
             ],
-            // filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
         });
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
@@ -331,7 +312,6 @@ mod test {
                                 size: 1024,
                             },
                         ],
-                        // filetype: "ASCII text, with very long lines (1023)".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file5.txt".into()])
                 },
@@ -358,7 +338,6 @@ mod test {
                                 size: 4096,
                             },
                         ],
-                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file1.txt".into()])
                 },
@@ -373,7 +352,6 @@ mod test {
                                size: 4096,
                             },
                         ],
-                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file4.txt".into()])
                 },
@@ -388,7 +366,6 @@ mod test {
                                size: 4096,
                             },
                         ],
-                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from([
                         "test/blocks/t1/file2.txt".into(),
