@@ -255,39 +255,6 @@ impl VecChunkMeta {
     }
 }
 
-// pub struct BlockReader {
-// }
-// impl Iterator for BlockReader {
-//     type Item = Block;
-// }
-
-// fn read_blocks_f<sRef<dyn BufRead>>(reader: R) -> Vec<Vec<u8>> {
-//     let mut blocks: Vec<Vec<u8>> = vec![];
-//     let mut r = reader.as_ref();
-//     // mut dyn BufRead
-//     let mut size = 1;
-//     while size > 0 {
-//         let data = r.fill_buf().unwrap();
-//         size = data.len();
-//         r.consume(size);
-//         blocks.push(data.to_vec());
-//     }
-//     blocks
-//     // let mut reader = BufReader::with_capacity(BLOCK_SIZE, file);
-//     // dbg!(&BLOCK_SIZE);
-//     // let block_bytes = reader.fill_buf().unwrap();
-//     // dbg!(&block_bytes.len());
-// }
-
-// pub struct Entry {
-//     paths: HashSet<PathBuf>,
-//     hash: Vec<u8>,
-//     size: u64,
-//     enc: Option<Encrypted>,
-//     tags: Vec<String>,     // TODO: proper tagging, or... ?
-//     notes: Option<String>, // free-form text
-// }
-
 #[cfg(test)]
 mod test {
     use super::{
