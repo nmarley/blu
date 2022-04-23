@@ -197,7 +197,7 @@ impl ChunkMeta {
         }
     }
 
-    pub fn hash(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         self.hash.to_bytes()
     }
 }
