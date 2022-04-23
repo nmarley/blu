@@ -38,7 +38,7 @@ impl PlainFileIndex {
                 continue;
             }
 
-            let file = File::read_from_disk(&elem.path())?;
+            let file = VecChunkMeta::read_from_disk(&elem.path())?;
             let file_hash = file.hash();
             let fileref = map.entry(file_hash).or_insert_with(|| FileRef::new(file));
             fileref.paths.insert(elem.into_path());
@@ -67,7 +67,7 @@ impl PlainBlockIndex {
     fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
         let mut block_index = HashMap::<Hash, BlockRef>::new();
         for (file_hash, fr) in file_index.iter() {
-            for block in fr.file.blocks.iter() {
+            for block in fr.file.chunkmetas.iter() {
                 let blockref = block_index
                     .entry(block.hash.clone())
                     .or_insert_with(BlockRef::new);
@@ -110,12 +110,12 @@ impl Default for BlockRef {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct FileRef {
-    file: File,
+    file: VecChunkMeta,
     paths: HashSet<PathBuf>,
 }
 
 impl FileRef {
-    pub fn new(f: File) -> Self {
+    pub fn new(f: VecChunkMeta) -> Self {
         Self {
             file: f,
             paths: HashSet::new(),
@@ -133,13 +133,13 @@ impl FileRef {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileRefIterator {
-    file: File,
+    file: VecChunkMeta,
     path: PathBuf,
     iterpos: usize,
     offset: u64,
 }
 impl FileRefIterator {
-    pub fn new(f: File, path: PathBuf) -> Self {
+    pub fn new(f: VecChunkMeta, path: PathBuf) -> Self {
         Self {
             file: f,
             path,
@@ -155,12 +155,12 @@ impl std::iter::Iterator for FileRefIterator {
         // dbg!(&self.iterpos);
         // dbg!(&self.offset);
         // dbg!(&self.path);
-        // dbg!(self.file.blocks.len());
+        // dbg!(self.file.chunkmetas.len());
 
-        if self.iterpos >= self.file.blocks.len() {
+        if self.iterpos >= self.file.chunkmetas.len() {
             return None;
         }
-        let block = &self.file.blocks[self.iterpos];
+        let block = &self.file.chunkmetas[self.iterpos];
 
         // read block.size bytes
         let mut f = std::fs::File::open(&self.path).expect("wtf?");
@@ -176,13 +176,14 @@ impl std::iter::Iterator for FileRefIterator {
     }
 }
 
+// ChunkMeta is the hash of a chunk of data and the size of the data, before hashing
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct Block {
+pub struct ChunkMeta {
     hash: Hash,
     size: usize,
 }
 
-impl Block {
+impl ChunkMeta {
     pub fn new(data: &[u8]) -> Self {
         let mh = hash::multihash(data);
         Self {
@@ -196,18 +197,19 @@ impl Block {
     }
 }
 
+/// VecChunkMeta is a collection of ChunkMeta
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct File {
-    blocks: Vec<Block>,
+pub struct VecChunkMeta {
+    chunkmetas: Vec<ChunkMeta>,
     // filetype: String, // TODO: ref table?
 }
 
-impl File {
+impl VecChunkMeta {
     pub fn hash(&self) -> Hash {
         let mut all_hashes: Vec<u8> = vec![];
-        for block in self.blocks.iter() {
-            let mut block_hash = block.hash();
-            all_hashes.append(&mut block_hash);
+        for cm in self.chunkmetas.iter() {
+            let mut chunk_hash_bytes = cm.to_bytes();
+            all_hashes.append(&mut chunk_hash_bytes);
         }
 
         Hash::from(hash::multihash(&all_hashes).to_bytes())
@@ -219,7 +221,7 @@ impl File {
 
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
-        let mut blocks: Vec<Block> = vec![];
+        let mut chunkmetas: Vec<ChunkMeta> = vec![];
         let mut count: usize = 0;
         let mut filetype: String = "".to_string();
 
@@ -228,7 +230,7 @@ impl File {
                 break;
             }
             let actual_data = data.to_vec();
-            blocks.push(Block::new(&actual_data));
+            chunkmetas.push(ChunkMeta::new(&actual_data));
             reader.consume(actual_data.len());
 
             // // TODO: this but better
@@ -242,7 +244,7 @@ impl File {
         }
 
         Ok(Self {
-            blocks,
+            chunkmetas,
             // filetype,
         })
     }
@@ -283,7 +285,9 @@ impl File {
 
 #[cfg(test)]
 mod test {
-    use super::{Block, BlockRef, File, FileRef, Hash, PlainBlockIndex, PlainFileIndex};
+    use super::{
+        BlockRef, ChunkMeta, FileRef, Hash, PlainBlockIndex, PlainFileIndex, VecChunkMeta,
+    };
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
 
@@ -295,23 +299,23 @@ mod test {
     #[test]
     fn read_blocks() {
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
-        let file1 = super::File::read_from_disk(file1_path).unwrap();
+        let file1 = super::VecChunkMeta::read_from_disk(file1_path).unwrap();
         assert_eq!(file1.hash().to_bytes(), hex::decode("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64").unwrap());
-        assert_eq!(file1, File {
-            blocks: vec![
-                Block {
+        assert_eq!(file1, VecChunkMeta {
+            chunkmetas: vec![
+                ChunkMeta {
                     hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                     size: 4096,
                 },
-                Block {
+                ChunkMeta {
                     hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
                     size: 4096,
                 },
-                Block {
+                ChunkMeta {
                     hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                     size: 4096,
                 },
-                Block {
+                ChunkMeta {
                     hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
                     size: 4096,
                 },
@@ -320,11 +324,11 @@ mod test {
         });
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
-        let file2 = super::File::read_from_disk(file2_path).unwrap();
+        let file2 = super::VecChunkMeta::read_from_disk(file2_path).unwrap();
         assert_eq!(file2.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
-        assert_eq!(file2, File {
-            blocks: vec![
-                Block {
+        assert_eq!(file2, VecChunkMeta {
+            chunkmetas: vec![
+                ChunkMeta {
                     hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                     size: 4096,
                 },
@@ -333,7 +337,7 @@ mod test {
         });
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
-        let file3 = File::read_from_disk(file3_path).unwrap();
+        let file3 = VecChunkMeta::read_from_disk(file3_path).unwrap();
         assert_eq!(file3.hash().to_bytes(), hex::decode("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5").unwrap());
         // should be equal super::File objects
         assert_eq!(file2, file3);
@@ -348,9 +352,9 @@ mod test {
             (
                 Hash::from("1340b62f901a22f1e06883626f66af5660f8510ce6352115bf8511d648a99e8a69936277dc39afb1ae80154d923ab396bcd0d8dce7744b6df5d287e0566ace86b9f4"),
                 FileRef {
-                    file: File {
-                        blocks: vec![
-                            Block {
+                    file: VecChunkMeta {
+                        chunkmetas: vec![
+                            ChunkMeta {
                                 hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                                 size: 1024,
                             },
@@ -363,21 +367,21 @@ mod test {
             (
                 Hash::from("13407a025c8c4b81348ee26290ae55485822cd48bc29edfeaf6b762a7860758cb5f0317243a701f21558bfb3b81762d50d296020e559dda1a58f25f52204b430ab64"),
                 FileRef {
-                    file: File {
-                        blocks: vec![
-                            Block {
+                    file: VecChunkMeta {
+                        chunkmetas: vec![
+                            ChunkMeta {
                                hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                                size: 4096,
                             },
-                            Block {
+                            ChunkMeta {
                                 hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
                                 size: 4096,
                             },
-                            Block {
+                            ChunkMeta {
                                 hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                                 size: 4096,
                             },
-                            Block {
+                            ChunkMeta {
                                 hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
                                 size: 4096,
                             },
@@ -390,9 +394,9 @@ mod test {
             (
                 Hash::from("134086dd2fbbbfa83556d52a38b54107231b96cd6c6dcce2e12857e2eb75e6ddbee69b53c8f1aa5e48db57a1cb4eeaff7499d91a8daea7e4c11bc82808d9543dad5d"),
                 FileRef {
-                    file: File {
-                        blocks: vec![
-                            Block {
+                    file: VecChunkMeta {
+                        chunkmetas: vec![
+                            ChunkMeta {
                                hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                                size: 4096,
                             },
@@ -405,9 +409,9 @@ mod test {
             (
                 Hash::from("1340931e4b89c108f368b4070efc34c7e38b19b279e388f9fa4f96225ddb785bbaca7e2a38e2b81748100a7169aee58d82cc8df842cdc8f07785f0fc45c7fd567dd5"),
                 FileRef {
-                    file: File {
-                        blocks: vec![
-                            Block {
+                    file: VecChunkMeta {
+                        chunkmetas: vec![
+                            ChunkMeta {
                                hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                                size: 4096,
                             },
