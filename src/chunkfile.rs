@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Sender};
 
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
