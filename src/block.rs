@@ -199,7 +199,7 @@ impl Block {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct File {
     blocks: Vec<Block>,
-    filetype: String, // TODO: ref table?
+    // filetype: String, // TODO: ref table?
 }
 
 impl File {
@@ -215,7 +215,7 @@ impl File {
 
     pub fn read_from_disk<P: AsRef<Path>>(filepath: P) -> Result<Self, Box<dyn std::error::Error>> {
         // for file magic
-        let wiz = Wizard::new();
+        // let wiz = Wizard::new();
 
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
@@ -231,17 +231,20 @@ impl File {
             blocks.push(Block::new(&actual_data));
             reader.consume(actual_data.len());
 
-            // TODO: this but better
-            if count == 0 {
-                filetype = wiz
-                    .get_filetype(&actual_data, actual_data.len())
-                    .unwrap_or_else(|_| "other".into());
-            }
+            // // TODO: this but better
+            // if count == 0 {
+            //     filetype = wiz
+            //         .get_filetype(&actual_data, actual_data.len())
+            //         .unwrap_or_else(|_| "other".into());
+            // }
 
             count += 1;
         }
 
-        Ok(Self { blocks, filetype })
+        Ok(Self {
+            blocks,
+            // filetype,
+        })
     }
 }
 
@@ -313,7 +316,7 @@ mod test {
                     size: 4096,
                 },
             ],
-            filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
+            // filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
         });
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
@@ -326,7 +329,7 @@ mod test {
                     size: 4096,
                 },
             ],
-            filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
+            // filetype: "ASCII text, with very long lines (1024), with no line terminators".to_string(),
         });
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
@@ -352,7 +355,7 @@ mod test {
                                 size: 1024,
                             },
                         ],
-                        filetype: "ASCII text, with very long lines (1023)".into(),
+                        // filetype: "ASCII text, with very long lines (1023)".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file5.txt".into()])
                 },
@@ -379,7 +382,7 @@ mod test {
                                 size: 4096,
                             },
                         ],
-                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file1.txt".into()])
                 },
@@ -394,7 +397,7 @@ mod test {
                                size: 4096,
                             },
                         ],
-                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from(["test/blocks/t1/file4.txt".into()])
                 },
@@ -409,7 +412,7 @@ mod test {
                                size: 4096,
                             },
                         ],
-                        filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
+                        // filetype: "ASCII text, with very long lines (1024), with no line terminators".into(),
                     },
                     paths: HashSet::from([
                         "test/blocks/t1/file2.txt".into(),
