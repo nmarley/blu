@@ -1,14 +1,14 @@
+use multihash::Hasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use multihash::Hasher;
-
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
+const DEFAULT_CFI_NAME: &str = "cfi.dat";
 
 // =============================================================================
 
@@ -41,11 +41,11 @@ pub struct ChunkFileManager {
     //     positions: HashMap<Hash, usize>,
 }
 
-// TODO: Add CFI to this
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref()).unwrap();
+        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
+            .unwrap_or_else(|_| ChunkFileIndex::new());
         Self {
             datadir,
             chunkfile_index: cfi,
@@ -192,7 +192,7 @@ impl ChunkFileIndex {
     fn deserialize_from_disk<P: AsRef<Path>>(
         datadir: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read(datadir)?;
+        let data = std::fs::read(datadir.as_ref())?;
         let decoded: ChunkFileIndex = bincode::deserialize(&data)?;
         Ok(decoded)
     }
