@@ -36,6 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
+    // cfm.add_file()
+
     // enumerate the chunkfile ...?
     // need to somehow loop thru each chunk upon creation of the chunkfile
     //
@@ -77,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match cfm.add_chunk(&enc_chunk)? {
                 CFAddStatus::WrittenToDisk(path) => {
                     // update path here ...
-                    bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
+                    // bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
                 }
                 CFAddStatus::AddedToMemory => {
                     // do nothing ...
