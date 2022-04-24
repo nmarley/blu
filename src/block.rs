@@ -40,7 +40,7 @@ impl PlainFileIndex {
                 continue;
             }
 
-            let chunk_oh = Chunklifier::new(&elem.path());
+            let chunk_oh = Chunkerator::new(&elem.path());
             let mut chunkmetas: Vec<ChunkMeta> = vec![];
             let mut hasher = Sha2_512::default();
             for chunk in chunk_oh {
@@ -253,14 +253,15 @@ impl ChunkMeta {
 // let file_hash = Hash::from(hash::multihash(&file_data).to_bytes());
 
 #[derive(Default, Debug)]
-pub struct Chunklifier {
+pub struct Chunkerator {
     filepath: PathBuf,
     offset: u64,
     // buf: Vec<u8>,
 }
 
 // NGM
-impl Chunklifier {
+impl Chunkerator {
+    // TODO: Pass block size here, don't hard-code
     fn new<P: AsRef<Path>>(filepath: P) -> Self {
         Self {
             filepath: filepath.as_ref().to_path_buf(),
@@ -270,7 +271,7 @@ impl Chunklifier {
     }
 }
 
-impl std::iter::Iterator for Chunklifier {
+impl std::iter::Iterator for Chunkerator {
     type Item = Vec<u8>;
     fn next(&mut self) -> Option<Self::Item> {
         let mut f = match std::fs::File::open(&self.filepath) {
@@ -301,7 +302,7 @@ impl std::iter::Iterator for Chunklifier {
         Some(buf)
 
         // TODO: None case here ...
-        // while let Ok(data) = reader.fill_buf() {
+        // while let Ok(data) = reader.fill_buf()
         //     if data.is_empty() {
         //         break;
         //     }
@@ -314,7 +315,7 @@ impl std::iter::Iterator for Chunklifier {
 
 #[cfg(test)]
 mod test {
-    use super::{BlockRef, ChunkMeta, FileRef, Hash, PlainBlockIndex, PlainFileIndex};
+    use super::{BlockRef, ChunkMeta, Chunkerator, FileRef, Hash, PlainBlockIndex, PlainFileIndex};
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
 
@@ -490,5 +491,24 @@ mod test {
         ]);
 
         assert_eq!(block_index, PlainBlockIndex { map });
+    }
+
+    #[test]
+    fn chunkerator() {
+        // let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
+        let file5_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
+
+        // TODO: Pass block size here, don't hard-code
+        let chunker = Chunkerator::new(file5_path);
+        let mut iter = chunker.into_iter();
+        assert!(!iter.next().is_none());
+        // for chunk in chunker {
+        //     dbg!(&chunk);
+        //     assert!(chunk.len() > 99999);
+        // }
+        // let file_hash = Hash::from(Code::Sha2_512.wrap(&hasher.finalize()).unwrap().to_bytes());
+
+        // assert_eq!(block_index.count_blocks(), 5);
+        // assert_eq!(block_index, PlainBlockIndex { map });
     }
 }
