@@ -181,10 +181,12 @@ dependencies = [
  "filemagic",
  "flate2",
  "hex",
+ "log",
  "multihash",
  "serde",
  "serde_cbor",
  "serde_json",
+ "simplelog",
  "walkdir",
 ]
 
@@ -1174,6 +1176,17 @@ checksum = "881bf8156c87b6301fc5ca6b27f11eeb2761224c7081e69b409d5a1951a70c86"
 dependencies = [
  "digest 0.10.3",
  "keccak",
+]
+
+[[package]]
+name = "simplelog"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85d04ae642154220ef00ee82c36fb07853c10a4f2a0ca6719f9991211d2eb959"
+dependencies = [
+ "chrono",
+ "log",
+ "termcolor",
 ]
 
 [[package]]
