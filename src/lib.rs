@@ -2,6 +2,9 @@ use std::env;
 use std::fs;
 use std::io::Write;
 
+#[macro_use]
+extern crate log;
+
 pub mod age;
 pub mod block;
 pub mod chunkfile;
