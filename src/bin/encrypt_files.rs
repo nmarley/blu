@@ -1,3 +1,8 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_mut)]
+#![allow(unused_variables)]
+
 use std::env;
 
 const TEST_AGE_SECRET_KEY: &str =
