@@ -1,3 +1,4 @@
+use multihash::{Code, Hasher, Multihash, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -39,9 +40,15 @@ impl PlainFileIndex {
                 continue;
             }
 
-            let chunkmetas = ChunkMeta::read_from_disk(&elem.path())?;
-            let file_data = std::fs::read(&elem.path())?;
-            let file_hash = Hash::from(hash::multihash(&file_data).to_bytes());
+            let chunk_oh = Chunklifier::new(&elem.path());
+            let mut chunkmetas: Vec<ChunkMeta> = vec![];
+            let mut hasher = Sha2_512::default();
+            for chunk in chunk_oh {
+                dbg!(&hex::encode(&chunk));
+                chunkmetas.push(ChunkMeta::new(&chunk));
+                hasher.update(&chunk);
+            }
+            let file_hash = Hash::from(Code::Sha2_512.wrap(&hasher.finalize()).unwrap().to_bytes());
 
             let fileref = map
                 .entry(file_hash)
@@ -207,7 +214,6 @@ impl ChunkMeta {
         let f = std::fs::File::open(filepath).unwrap();
         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
         let mut chunkmetas: Vec<Self> = vec![];
-        let mut count: usize = 0;
 
         while let Ok(data) = reader.fill_buf() {
             if data.is_empty() {
@@ -216,10 +222,93 @@ impl ChunkMeta {
             let actual_data = data.to_vec();
             chunkmetas.push(Self::new(&actual_data));
             reader.consume(actual_data.len());
-            count += 1;
         }
 
         Ok(chunkmetas)
+    }
+}
+
+// (Hash, ChunkMetas)
+// pub fn hash_and_chunk<P: AsRef<Path>>(
+//     filepath: P,
+// ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
+//         let f = std::fs::File::open(filepath).unwrap();
+//         let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
+//         let mut chunkmetas: Vec<Self> = vec![];
+//         let mut count: usize = 0;
+//         while let Ok(data) = reader.fill_buf() {
+//             if data.is_empty() {
+//                 break;
+//             }
+//             let actual_data = data.to_vec();
+//             chunkmetas.push(Self::new(&actual_data));
+//             reader.consume(actual_data.len());
+//             count += 1;
+//         }
+//         Ok(chunkmetas)
+//     }
+//
+// let file_data = std::fs::read(&elem.path())?;
+// let chunkmetas = ChunkMeta::read_from_disk(&elem.path())?;
+// let file_hash = Hash::from(hash::multihash(&file_data).to_bytes());
+
+#[derive(Default, Debug)]
+pub struct Chunklifier {
+    filepath: PathBuf,
+    offset: u64,
+    // buf: Vec<u8>,
+}
+
+// NGM
+impl Chunklifier {
+    fn new<P: AsRef<Path>>(filepath: P) -> Self {
+        Self {
+            filepath: filepath.as_ref().to_path_buf(),
+            offset: 0,
+            // buf: vec![0; BLOCK_SIZE],
+        }
+    }
+}
+
+impl std::iter::Iterator for Chunklifier {
+    type Item = Vec<u8>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut f = match std::fs::File::open(&self.filepath) {
+            Err(e) => {
+                error!("reading file in Chunklifier: {}", e);
+                return None;
+            }
+            Ok(f) => f,
+        };
+
+        // let mut reader = BufReader::with_capacity(BLOCK_SIZE, &f);
+        let mut buf: Vec<u8> = vec![0; BLOCK_SIZE];
+
+        let _seek_offset = match f.seek(SeekFrom::Start(self.offset)) {
+            Err(e) => {
+                error!("error in seek in Chunklifier: {}", e);
+                return None;
+            }
+            Ok(offset) => offset,
+        };
+        if let Err(e) = f.read_exact(&mut buf) {
+            error!("error reading bytes in Chunklifier: {}", e);
+            return None;
+        };
+        self.offset += buf.len() as u64;
+        info!("offset (AFTER UPDATING in Chunklifier): {}", self.offset);
+
+        Some(buf)
+
+        // TODO: None case here ...
+        // while let Ok(data) = reader.fill_buf() {
+        //     if data.is_empty() {
+        //         break;
+        //     }
+        //     let actual_data = data.to_vec();
+        //     chunkmetas.push(Self::new(&actual_data));
+        //     reader.consume(actual_data.len());
+        // Ok(chunkmetas)
     }
 }
 
