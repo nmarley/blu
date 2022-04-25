@@ -211,19 +211,8 @@ impl ChunkMeta {
     pub fn read_from_disk<P: AsRef<Path>>(
         filepath: P,
     ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
-        let f = std::fs::File::open(filepath).unwrap();
-        let mut reader = BufReader::with_capacity(BLOCK_SIZE, f);
-        let mut chunkmetas: Vec<Self> = vec![];
-
-        while let Ok(data) = reader.fill_buf() {
-            if data.is_empty() {
-                break;
-            }
-            let actual_data = data.to_vec();
-            chunkmetas.push(Self::new(&actual_data));
-            reader.consume(actual_data.len());
-        }
-
+        let chunker = Chunkerator::new(filepath, BLOCK_SIZE)?;
+        let chunkmetas: Vec<Self> = chunker.into_iter().map(|e| Self::new(&e)).collect();
         Ok(chunkmetas)
     }
 }
