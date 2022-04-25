@@ -67,6 +67,7 @@ impl PlainFileIndex {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainBlockIndex {
     // plain block hash -> BlockRef
+    // TODO: inline BlockRef data and remove intermediate type?
     map: HashMap<Hash, BlockRef>,
 }
 
@@ -97,6 +98,7 @@ impl PlainBlockIndex {
 
 // blockref -> option<enc hash>
 //          -> set of referencing file hashes
+/// BlockRef has a collection of file hashes which reference a particular block.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BlockRef {
     // TBD: this has to be integrated w/the ChunkFileIndex and encryptor
@@ -143,6 +145,8 @@ impl FileRef {
     }
 }
 
+/// FileRefIterator basically does what Chunkerator does... might be able to
+/// replace or remove this entirely.
 #[derive(Debug, PartialEq, Clone)]
 pub struct FileRefIterator {
     chunkmetas: Vec<ChunkMeta>,
@@ -150,6 +154,7 @@ pub struct FileRefIterator {
     iterpos: usize,
     offset: u64,
 }
+
 impl FileRefIterator {
     pub fn new(f: &[ChunkMeta], path: PathBuf) -> Self {
         Self {
@@ -164,27 +169,20 @@ impl FileRefIterator {
 impl std::iter::Iterator for FileRefIterator {
     type Item = Vec<u8>;
     fn next(&mut self) -> Option<Self::Item> {
-        // dbg!(&self.iterpos);
-        // dbg!(&self.offset);
-        // dbg!(&self.path);
-        // dbg!(self.chunkmetas.chunkmetas.len());
-
         if self.iterpos >= self.chunkmetas.len() {
             return None;
         }
         let block = &self.chunkmetas[self.iterpos];
 
         // read block.size bytes
-        let mut f = std::fs::File::open(&self.path).expect("wtf?");
+        let mut f = std::fs::File::open(&self.path).unwrap();
         let mut buf: Vec<u8> = vec![0u8; block.size];
-        let _seeko = f.seek(SeekFrom::Start(self.offset)).expect("wtf2?");
-        // dbg!(&seeko);
-        f.read_exact(&mut buf).expect("wtf3");
+        let _seeko = f.seek(SeekFrom::Start(self.offset)).unwrap();
+        f.read_exact(&mut buf).unwrap();
 
         self.offset += block.size as u64;
         self.iterpos += 1;
         Some(buf)
-        // None
     }
 }
 
@@ -208,6 +206,7 @@ impl ChunkMeta {
         self.hash.to_bytes()
     }
 
+    // TODO: consider removing this if not used
     pub fn read_from_disk<P: AsRef<Path>>(
         filepath: P,
     ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
