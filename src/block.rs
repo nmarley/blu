@@ -139,14 +139,15 @@ impl FileRef {
             return Err("no path from which to read bytes".into());
         }
         let path = self.paths.iter().next().unwrap();
-        Ok(FileRefIterator::new(&self.chunkmetas, path.to_path_buf()))
+        Ok(FileRefIterator::new(&self.chunkmetas, path))
     }
 }
 
 /// FileRefIterator basically does what Chunkerator does... might be able to
 /// replace or remove this entirely.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug)]
 pub struct FileRefIterator {
+    file: std::fs::File,
     chunkmetas: Vec<ChunkMeta>,
     path: PathBuf,
     iterpos: usize,
@@ -154,10 +155,13 @@ pub struct FileRefIterator {
 }
 
 impl FileRefIterator {
-    pub fn new(f: &[ChunkMeta], path: PathBuf) -> Self {
+    // TODO: Result b/c err now possible
+    pub fn new<P: AsRef<Path>>(cm: &[ChunkMeta], path: P) -> Self {
+        let fh = std::fs::File::open(path.as_ref()).unwrap();
         Self {
-            chunkmetas: f.to_vec(),
-            path,
+            file: fh,
+            chunkmetas: cm.to_vec(),
+            path: path.as_ref().to_path_buf(),
             iterpos: 0,
             offset: 0,
         }
@@ -173,10 +177,9 @@ impl std::iter::Iterator for FileRefIterator {
         let block = &self.chunkmetas[self.iterpos];
 
         // read block.size bytes
-        let mut f = std::fs::File::open(&self.path).unwrap();
         let mut buf: Vec<u8> = vec![0u8; block.size];
-        let _seeko = f.seek(SeekFrom::Start(self.offset)).unwrap();
-        f.read_exact(&mut buf).unwrap();
+        let _seeko = self.file.seek(SeekFrom::Start(self.offset)).unwrap();
+        self.file.read_exact(&mut buf).unwrap();
 
         self.offset += block.size as u64;
         self.iterpos += 1;
