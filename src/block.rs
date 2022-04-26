@@ -79,16 +79,14 @@ impl PlainBlockIndex {
     }
 
     fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
-        let mut block_index = HashMap::<Hash, BlockRef>::new();
+        let mut map = HashMap::<Hash, BlockRef>::new();
         for (file_hash, fr) in file_index.iter() {
             for cm in fr.chunkmetas.iter() {
-                let blockref = block_index
-                    .entry(cm.hash.clone())
-                    .or_insert_with(BlockRef::new);
+                let blockref = map.entry(cm.hash.clone()).or_insert_with(BlockRef::new);
                 blockref.referencing_file_hashes.insert(file_hash.clone());
             }
         }
-        block_index
+        map
     }
 
     pub fn count_blocks(&self) -> usize {
