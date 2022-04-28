@@ -5,7 +5,8 @@ pub fn multihash(data: &[u8]) -> Multihash {
     Code::Sha2_512.digest(data)
 }
 
-// all this to debug the Vec<u8> as a hex string instead of numbers
+/// Hash is a Vec<u8> type alias with syntactic sugar to allow easier debugging
+/// as a hex string.
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Ord, PartialOrd)]
 pub struct Hash(Vec<u8>);
 impl std::fmt::Debug for Hash {

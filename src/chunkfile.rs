@@ -19,8 +19,8 @@ pub enum CFAddStatus {
     NothingToDo,
 }
 
-// this thing writes chunkfiles, re-indexes and re-orgs in case of many unused
-// chunks, etc.
+/// ChunkFileManager writes chunkfiles, re-indexes and re-orgs in case of many
+/// unused chunks, etc.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct ChunkFileManager {
     datadir: PathBuf,
