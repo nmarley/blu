@@ -82,9 +82,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 CFAddStatus::WrittenToDisk(path) => {
                     // update path here ...
                     // index.update_encrypted(plain_chunk_hash, encrypted_hash);
+                    println!("Wrote chunkfile to disk at {}", path.display());
                 }
                 CFAddStatus::AddedToMemory => {
                     // do nothing ...
+                    println!("Added to memory in active chunkfile");
+                }
+                CFAddStatus::NothingToDo => {
+                    // do nothing ...
+                    println!("Nothing to do");
                 }
             };
             println!(

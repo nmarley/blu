@@ -16,6 +16,7 @@ const DEFAULT_CFI_NAME: &str = "cfi.dat";
 pub enum CFAddStatus {
     WrittenToDisk(PathBuf),
     AddedToMemory,
+    NothingToDo,
 }
 
 // this thing writes chunkfiles, re-indexes and re-orgs in case of many unused
@@ -76,6 +77,10 @@ impl ChunkFileManager {
 
     // Final chunkfile (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
+        if self.active_chunkfile.is_empty() {
+            // println!("is empty!!");
+            return Ok(CFAddStatus::NothingToDo);
+        }
         let path = self.write_chunkfile()?;
         Ok(CFAddStatus::WrittenToDisk(path))
     }
@@ -164,6 +169,10 @@ impl ChunkFile {
 
     pub fn is_full(&self) -> bool {
         self.count() >= self.capacity
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count() == 0
     }
 }
 
