@@ -1,4 +1,4 @@
-use multihash::Hasher;
+use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -159,12 +159,13 @@ impl ChunkFile {
 
     // hash all the chunks and get the result
     pub fn hash(&self) -> Hash {
-        let mut h = multihash::Sha2_512::default();
+        let mut h = Sha2_512::default();
         for chunk_bytes in self.chunks.iter() {
             h.update(chunk_bytes)
         }
         let digest = h.finalize();
-        Hash::from(digest)
+        let multihash = Code::Sha2_512.wrap(digest).unwrap();
+        Hash::from(multihash.to_bytes())
     }
 
     pub fn is_full(&self) -> bool {
