@@ -10,17 +10,26 @@ use crate::hash::{self, Hash};
 
 const BLOCK_SIZE: usize = 4096;
 
-/// PlainFileIndex keeps a map of file data hash to a FileRef
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PlainFileIndex {
+/// PlainIndex ...
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct PlainIndex {
+    /// PlainFileIndex keeps a map of file data hash to a FileRef
     // file hash -> FileRef { file: File, paths: HashSet }
-    map: HashMap<Hash, FileRef>,
+    files: HashMap<Hash, FileRef>,
+
+    /// PlainBlockIndex contains a map of "plain" (non-encrypted) chunk hash to BlockRef.
+    // plain block hash -> BlockRef
+    // TODO: inline BlockRef data and remove intermediate type?
+    blocks: HashMap<Hash, BlockRef>,
 }
 
-impl PlainFileIndex {
+impl PlainIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let file_index = Self::build_file_index(dir)?;
+        let block_index = Self::build_block_index(&file_index);
         Ok(Self {
-            map: Self::build_file_index(dir)?,
+            files: file_index,
+            blocks: block_index,
         })
     }
 
@@ -58,26 +67,6 @@ impl PlainFileIndex {
         Ok(map)
     }
 
-    pub fn map_ref(&self) -> &HashMap<Hash, FileRef> {
-        &self.map
-    }
-}
-
-/// PlainBlockIndex contains a map of "plain" (non-encrypted) chunk hash to BlockRef.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct PlainBlockIndex {
-    // plain block hash -> BlockRef
-    // TODO: inline BlockRef data and remove intermediate type?
-    map: HashMap<Hash, BlockRef>,
-}
-
-impl PlainBlockIndex {
-    pub fn new(file_index: &PlainFileIndex) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
-            map: Self::build_block_index(&file_index.map),
-        })
-    }
-
     fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
         let mut map = HashMap::<Hash, BlockRef>::new();
         for (file_hash, fr) in file_index.iter() {
@@ -90,7 +79,11 @@ impl PlainBlockIndex {
     }
 
     pub fn count_blocks(&self) -> usize {
-        self.map.len()
+        self.blocks.len()
+    }
+
+    pub fn files_map_ref(&self) -> &HashMap<Hash, FileRef> {
+        &self.files
     }
 }
 
@@ -262,10 +255,7 @@ impl std::iter::Iterator for Chunkerator {
 
 #[cfg(test)]
 mod test {
-    use super::{
-        BlockRef, ChunkMeta, Chunkerator, FileRef, Hash, PlainBlockIndex, PlainFileIndex,
-        BLOCK_SIZE,
-    };
+    use super::{BlockRef, ChunkMeta, Chunkerator, FileRef, Hash, PlainIndex, BLOCK_SIZE};
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
 
@@ -313,12 +303,8 @@ mod test {
         assert_eq!(chunk_metas2, chunk_metas3);
     }
 
-    #[test]
-    fn file_index() {
-        // build index and compare
-        let index = PlainFileIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
-
-        let map: HashMap<Hash, FileRef> = HashMap::from([
+    fn helper_files_map() -> HashMap<Hash, FileRef> {
+        HashMap::from([
             (
                 Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                 FileRef {
@@ -382,20 +368,11 @@ mod test {
                     ])
                 },
             ),
-        ]);
-
-        assert_eq!(index, PlainFileIndex { map });
+        ])
     }
 
-    #[test]
-    fn block_index() {
-        let file_index = PlainFileIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
-        let block_index = PlainBlockIndex::new(&file_index).unwrap();
-
-        // there should be 5 distinct chunks in test dir
-        assert_eq!(block_index.count_blocks(), 5);
-
-        let map: HashMap<Hash, BlockRef> = HashMap::from([
+    fn helper_blocks_map() -> HashMap<Hash, BlockRef> {
+        HashMap::from([
             (
                 Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                 BlockRef {
@@ -438,9 +415,14 @@ mod test {
                     ]),
                 },
             ),
-        ]);
+        ])
+    }
 
-        assert_eq!(block_index, PlainBlockIndex { map });
+    #[test]
+    fn indexes() {
+        let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
+        assert_eq!(index.files, helper_files_map());
+        assert_eq!(index.blocks, helper_blocks_map());
     }
 
     #[test]

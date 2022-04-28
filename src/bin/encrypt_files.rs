@@ -8,7 +8,7 @@ use std::env;
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
-use blu::block::{PlainBlockIndex, PlainFileIndex};
+use blu::block::PlainIndex;
 use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager, EncChunkLocation};
 use blu::config;
 // use blu::dir::Manager;
@@ -32,11 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     dbg!(&cfg);
 
-    let mut findex = PlainFileIndex::new(dir)?;
-    dbg!(&findex);
-
-    let mut bindex = PlainBlockIndex::new(&findex)?;
-    dbg!(&bindex);
+    let mut index = PlainIndex::new(dir)?;
+    dbg!(&index);
 
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
@@ -68,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     index: usize,
     // }
 
-    for (_file_hash, fileref) in findex.map_ref().iter() {
+    for (_file_hash, fileref) in index.files_map_ref().iter() {
         // dbg!(&file_hash);
         dbg!(&fileref);
 
@@ -84,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match cfm.add_chunk(&enc_chunk)? {
                 CFAddStatus::WrittenToDisk(path) => {
                     // update path here ...
-                    // bindex.update_encrypted(plain_chunk_hash, encrypted_hash);
+                    // index.update_encrypted(plain_chunk_hash, encrypted_hash);
                 }
                 CFAddStatus::AddedToMemory => {
                     // do nothing ...
