@@ -78,7 +78,6 @@ impl ChunkFileManager {
     // Final chunkfile (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
         if self.active_chunkfile.is_empty() {
-            // println!("is empty!!");
             return Ok(CFAddStatus::NothingToDo);
         }
         let path = self.write_chunkfile()?;
