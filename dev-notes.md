@@ -15,6 +15,7 @@ See also: [https://rust-cli.github.io/book/index.html](Command line apps in Rust
 Clap: <https://docs.rs/clap/latest/clap/>
 
 Multihash for hashing <https://github.com/multiformats/rust-multihash>
+- All hashes used within the project should be multihashes.
 
 Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
 
