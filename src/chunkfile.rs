@@ -182,11 +182,11 @@ impl ChunkFile {
         let mut data: Vec<u8> = vec![];
         let mut positions: HashMap<Hash, Position> = HashMap::new();
         for chunk in self.chunks.iter_mut() {
-            data.append(chunk);
             let hash = Hash::from(hash::multihash(chunk).to_bytes());
             let size = chunk.len();
             positions.insert(hash, Position { offset, size });
             offset += size;
+            data.append(chunk);
         }
         FlatBlob { data, positions }
     }
@@ -322,5 +322,33 @@ mod test {
             let (hash, opt) = (Hash::from(tuple.0), tuple.1);
             assert_eq!(cf.get_index_for_hash(&hash), opt);
         }
+    }
+
+    #[test]
+    fn flatblob() {
+        let mut cf = test_chunkfile();
+        let fb = cf.flatten();
+        assert_eq!(
+            fb.data,
+            vec![
+                0x0b, 0x0a, 0x00, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e,
+                0xad
+            ]
+        );
+        let positions: HashMap<Hash, Position> = HashMap::from([
+            (
+                Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"),
+                Position { offset: 0, size: 3 }
+            ),
+            (
+                Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"),
+                Position { offset: 3, size: 4 },
+            ),
+            (
+                Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"),
+                Position { offset: 7, size: 8 },
+            ),
+        ]);
+        assert_eq!(fb.positions, positions);
     }
 }
