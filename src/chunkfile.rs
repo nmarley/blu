@@ -174,6 +174,39 @@ impl ChunkFile {
     pub fn is_empty(&self) -> bool {
         self.count() == 0
     }
+
+    // chunks: Vec<Vec<u8>>,
+    // positions: HashMap<Hash, usize>,
+    pub fn flatten(&mut self) -> FlatBlob {
+        let mut offset: usize = 0;
+        let mut data: Vec<u8> = vec![];
+        let mut positions: HashMap<Hash, Position> = HashMap::new();
+        for chunk in self.chunks.iter_mut() {
+            data.append(chunk);
+            let hash = Hash::from(hash::multihash(chunk).to_bytes());
+            let size = chunk.len();
+            positions.insert(hash, Position { offset, size });
+            offset += size;
+        }
+        FlatBlob { data, positions }
+    }
+}
+
+/// FlatBlob is a "flattened" version of the ChunkFile above. The Vec<Vec<u8>>
+/// is flattened into a single Vec<u8>, and the positions is converted from a
+/// usize index, into an offset and number of bytes.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct FlatBlob {
+    data: Vec<u8>,
+    positions: HashMap<Hash, Position>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+struct Position {
+    // where to start reading
+    offset: usize,
+    // how many bytes to read
+    size: usize,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
