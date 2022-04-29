@@ -12,6 +12,7 @@ pub mod age;
 pub mod block;
 pub mod chunkfile;
 pub mod clap;
+pub mod compression;
 pub mod config;
 pub mod dir;
 pub mod format;
