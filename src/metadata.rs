@@ -1,6 +1,4 @@
 use chrono::NaiveDateTime;
-use flate2::bufread::{GzDecoder, GzEncoder};
-use flate2::Compression;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::{
@@ -11,6 +9,7 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
+use crate::compression::{compress, decompress};
 use crate::config::KeyID;
 use crate::format::datetime_format;
 use crate::hash::{self, Hash};
@@ -111,20 +110,6 @@ impl OldIndex {
             ..Default::default()
         }
     }
-}
-
-fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut gz = GzEncoder::new(data, Compression::fast());
-    let mut buf = Vec::new();
-    gz.read_to_end(&mut buf)?;
-    Ok(buf)
-}
-
-fn decompress(data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut gz = GzDecoder::new(data);
-    let mut buf = Vec::new();
-    gz.read_to_end(&mut buf)?;
-    Ok(buf)
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
