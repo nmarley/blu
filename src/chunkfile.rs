@@ -175,8 +175,6 @@ impl ChunkFile {
         self.count() == 0
     }
 
-    // chunks: Vec<Vec<u8>>,
-    // positions: HashMap<Hash, usize>,
     pub fn flatten(&mut self) -> FlatBlob {
         let mut offset: usize = 0;
         let mut data: Vec<u8> = vec![];
@@ -200,6 +198,8 @@ pub struct FlatBlob {
     data: Vec<u8>,
     positions: HashMap<Hash, Position>,
 }
+// impl FlatBlob {
+// }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 struct Position {

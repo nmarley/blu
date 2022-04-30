@@ -11,9 +11,6 @@ use blu::age::BlackBox;
 use blu::block::PlainIndex;
 use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager, EncChunkLocation};
 use blu::config;
-// use blu::dir::Manager;
-// use blu::hash::{self, Hash};
-// use blu::metadata::{EncryptedIndex, Index};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args();
@@ -64,6 +61,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     path: PathBuf,
     //     index: usize,
     // }
+
+
+    // How to know if encryption is needed or not? It's possible the chunk is
+    // already encrypted ...
 
     for (_file_hash, fileref) in index.files_map_ref().iter() {
         // dbg!(&file_hash);
