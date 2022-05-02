@@ -13,11 +13,9 @@ const BLOCK_SIZE: usize = 4096;
 /// PlainIndex ...
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct PlainIndex {
-    /// PlainFileIndex keeps a map of file data hash to a FileRef
     // file hash -> FileRef { file: File, paths: HashSet }
     files: HashMap<Hash, FileRef>,
 
-    /// PlainBlockIndex contains a map of "plain" (non-encrypted) chunk hash to BlockRef.
     // plain block hash -> BlockRef
     blocks: HashMap<Hash, BlockRef>,
 }
@@ -27,13 +25,8 @@ type BlockIndex = HashMap<Hash, BlockRef>;
 
 impl PlainIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
-        // let file_index = Self::build_file_index(dir)?;
-        // let block_index = Self::build_block_index(&file_index);
-        let (file_index, block_index) = Self::build_index(dir)?;
-        Ok(Self {
-            files: file_index,
-            blocks: block_index,
-        })
+        let (files, blocks) = Self::build_index(dir)?;
+        Ok(Self { files, blocks })
     }
 
     fn build_index<P: AsRef<Path>>(
@@ -54,6 +47,7 @@ impl PlainIndex {
                 continue;
             }
 
+            // chunking, full file hashing
             let mut chunkmetas: Vec<ChunkMeta> = vec![];
             let mut hasher = Sha2_512::default();
             let chunker = Chunkerator::new(&elem.path(), BLOCK_SIZE)?;
@@ -64,6 +58,7 @@ impl PlainIndex {
             let file_mh = Code::Sha2_512.wrap(hasher.finalize())?;
             let file_hash = Hash::from(file_mh.to_bytes());
 
+            // block index
             let mut offset = 0;
             for cm_ref in chunkmetas.iter() {
                 let blockref = blocks
@@ -78,23 +73,13 @@ impl PlainIndex {
                 offset += cm_ref.size;
             }
 
+            // file index
             let fileref = files
                 .entry(file_hash)
                 .or_insert_with(|| FileRef::new(&chunkmetas));
             fileref.paths.insert(elem.into_path());
         }
         Ok((files, blocks))
-    }
-
-    fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
-        let mut map = HashMap::<Hash, BlockRef>::new();
-        for (file_hash, fr) in file_index.iter() {
-            for cm in fr.chunkmetas.iter() {
-                let blockref = map.entry(cm.hash.clone()).or_insert_with(BlockRef::new);
-                blockref.referencing_file_hashes.insert(file_hash.clone());
-            }
-        }
-        map
     }
 
     pub fn count_blocks(&self) -> usize {
@@ -107,7 +92,7 @@ impl PlainIndex {
 }
 
 // blockref -> option<enc hash>
-//          -> set of referencing file hashes
+//          -> set of references to chunk on disk
 /// BlockRef has a collection of file hashes which reference a particular block.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BlockRef {
