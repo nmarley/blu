@@ -89,6 +89,22 @@ impl PlainIndex {
     pub fn files_map_ref(&self) -> &HashMap<Hash, FileRef> {
         &self.files
     }
+
+    pub fn blocks_map_ref(&self) -> &HashMap<Hash, BlockRef> {
+        &self.blocks
+    }
+
+    pub fn get_fileref_ref(&self, file_hash: &Hash) -> Option<&FileRef> {
+        self.files.get(file_hash)
+    }
+
+    // pub fn get_entry_ref(&self, hash: &Hash) -> Result<&Entry, Box<dyn std::error::Error>> {
+    //     let e = self.map.get(hash).unwrap();
+    //     Ok(e)
+    // }
+    // pub fn get_mut_entry_ref(&mut self, hash: &Hash) -> Option<&mut Entry> {
+    //     self.map.get_mut(hash)
+    // }
 }
 
 // blockref -> option<enc hash>
@@ -98,21 +114,21 @@ impl PlainIndex {
 pub struct BlockRef {
     // Has the block been encrypted? If so, hash is here.
     // It can be looked up in the chunkfile (blob) index.
-    encrypted_hash: Option<Hash>,
+    pub encrypted_hash: Option<Hash>,
 
     // hashes of the files which reference this block
     // this field is now entirely redundant b/c of references below.
     // can be removed any time.
-    referencing_file_hashes: HashSet<Hash>,
+    pub referencing_file_hashes: HashSet<Hash>,
     // on-disk locations where this block can be read if necessary
-    references: HashSet<DiskLocation>,
+    pub references: HashSet<DiskLocation>,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
 pub struct DiskLocation {
-    file_hash: Hash,
-    offset: usize,
-    size: usize,
+    pub file_hash: Hash,
+    pub offset: usize,
+    pub size: usize,
 }
 
 impl BlockRef {
