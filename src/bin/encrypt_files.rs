@@ -62,7 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     index: usize,
     // }
 
-
     // How to know if encryption is needed or not? It's possible the chunk is
     // already encrypted ...
 
