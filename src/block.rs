@@ -22,20 +22,26 @@ pub struct PlainIndex {
     blocks: HashMap<Hash, BlockRef>,
 }
 
+type FileIndex = HashMap<Hash, FileRef>;
+type BlockIndex = HashMap<Hash, BlockRef>;
+
 impl PlainIndex {
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let file_index = Self::build_file_index(dir)?;
-        let block_index = Self::build_block_index(&file_index);
+        // let file_index = Self::build_file_index(dir)?;
+        // let block_index = Self::build_block_index(&file_index);
+        let (file_index, block_index) = Self::build_index(dir)?;
         Ok(Self {
             files: file_index,
             blocks: block_index,
         })
     }
 
-    fn build_file_index<P: AsRef<Path>>(
+    fn build_index<P: AsRef<Path>>(
         dir: P,
-    ) -> Result<HashMap<Hash, FileRef>, Box<dyn std::error::Error>> {
-        let mut map: HashMap<Hash, FileRef> = HashMap::new();
+    ) -> Result<(FileIndex, BlockIndex), Box<dyn std::error::Error>> {
+        let mut files = HashMap::<Hash, FileRef>::new();
+        let mut blocks = HashMap::<Hash, BlockRef>::new();
+
         let bludir = dir.as_ref().join(".blu/");
         // TODO: normalize paths by removing `dir` prefix from each elem walked
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
@@ -47,9 +53,6 @@ impl PlainIndex {
             if !elem.file_type().is_file() {
                 continue;
             }
-
-            // block index
-            let mut blocks = HashMap::<Hash, BlockRef>::new();
 
             let mut chunkmetas: Vec<ChunkMeta> = vec![];
             let mut hasher = Sha2_512::default();
@@ -75,12 +78,12 @@ impl PlainIndex {
                 offset += cm_ref.size;
             }
 
-            let fileref = map
+            let fileref = files
                 .entry(file_hash)
                 .or_insert_with(|| FileRef::new(&chunkmetas));
             fileref.paths.insert(elem.into_path());
         }
-        Ok(map)
+        Ok((files, blocks))
     }
 
     fn build_block_index(file_index: &HashMap<Hash, FileRef>) -> HashMap<Hash, BlockRef> {
