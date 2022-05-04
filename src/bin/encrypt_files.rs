@@ -72,7 +72,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let file_hash = &disk_location.file_hash;
             let fileref_ref = index.get_fileref_ref(file_hash);
             println!("fileref: {:?}", fileref_ref);
-            cfm.add_chunk_location(&block_hash, &disk_location);
+            if let Some(fr) = fileref_ref {
+                let file_path = fr.get_a_path();
+                println!("file_path: {:?}", file_path);
+            } else {
+                println!("error! can't find fileref in index");
+            }
+
+            // cfm.add_chunk_location(&block_hash, &disk_location);
         }
     }
 

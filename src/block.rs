@@ -178,6 +178,10 @@ impl FileRef {
         let path = self.paths.iter().next().unwrap();
         Ok(FileRefIterator::new(&self.chunkmetas, path))
     }
+
+    pub fn get_a_path(&self) -> PathBuf {
+        self.paths.iter().next().unwrap().to_path_buf()
+    }
 }
 
 /// FileRefIterator basically does what Chunkerator does... might be able to
