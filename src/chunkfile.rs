@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 
+use crate::block::DiskLocation;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
@@ -21,11 +22,13 @@ pub enum CFAddStatus {
 
 /// ChunkFileManager writes chunkfiles, re-indexes and re-orgs in case of many
 /// unused chunks, etc.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
-pub struct ChunkFileManager {
+#[derive(Debug, Default)]
+pub struct ChunkFileManager<'a> {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
     active_chunkfile: ChunkFile,
+
+    plain_chunk_locations: Vec<(&'a Hash, &'a DiskLocation)>,
     // ChunkFileIndex
     // encrypted hash -> location of the data on disk
     // map: HashMap<Hash, EncChunkLocation>,
@@ -43,7 +46,7 @@ pub struct ChunkFileManager {
     //     positions: HashMap<Hash, usize>,
 }
 
-impl ChunkFileManager {
+impl<'a> ChunkFileManager<'a> {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
@@ -52,27 +55,53 @@ impl ChunkFileManager {
             datadir,
             chunkfile_index: cfi,
             active_chunkfile: ChunkFile::new(),
+            plain_chunk_locations: vec![],
         }
     }
 
     fn write_chunkfile(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = &self.active_chunkfile.serialize()?;
+        let cf = &self.active_chunkfile;
+        let raw_bytes = cf.serialize()?;
+        let chunkfile_hash = cf.hash();
         let dir_manager = Manager::new(&self.datadir);
-        let chunkfile_hash = &self.active_chunkfile.hash();
-        dir_manager.write_encrypted(chunkfile_hash, raw_bytes)
+        dir_manager.write_encrypted(&chunkfile_hash, &raw_bytes)
     }
 
-    // TODO: not sure on retval here ... should it be sth that returns EITHER a
-    // CF::Written or a CF::Memory, or sth like that?
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
+        self.active_chunkfile.add_chunk(chunk)?;
         if self.active_chunkfile.is_full() {
-            // TODO: caller should add Paths from here to Index
             let path = self.write_chunkfile()?;
+
+            // TODO: fix this shit
+            // add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation)
+            // self.chunkfile_index.add_chunk_location(chunk_hash, chunk);
+
             self.active_chunkfile = ChunkFile::new();
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
-        self.active_chunkfile.add_chunk(chunk)?;
+
         Ok(CFAddStatus::AddedToMemory)
+    }
+
+    pub fn add_chunk_location(
+        &mut self,
+        chunk_hash: &'a Hash,
+        disk_location: &'a DiskLocation,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.plain_chunk_locations.push((chunk_hash, disk_location));
+
+        // write blob file and update CFI
+        if self.plain_chunk_locations.len() >= DEFAULT_CHUNKFILE_CAPACITY {
+            let mut offset: usize = 0;
+            for item in self.plain_chunk_locations.iter() {}
+        }
+
+        // TODO: fix this shit
+        // add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation)
+        // self.chunkfile_index.add_chunk_location(chunk_hash, chunk);
+
+        // self.active_chunkfile = ChunkFile::new();
+        return Ok(());
     }
 
     // Final chunkfile (in-memory) gets written to disk
@@ -85,9 +114,10 @@ impl ChunkFileManager {
     }
 }
 
-impl std::ops::Drop for ChunkFileManager {
+impl std::ops::Drop for ChunkFileManager<'_> {
     fn drop(&mut self) {
         let _ = self.finalize().unwrap();
+        // TODO: update CFI and write to disk
     }
 }
 
@@ -198,8 +228,6 @@ pub struct FlatBlob {
     data: Vec<u8>,
     positions: HashMap<Hash, Position>,
 }
-// impl FlatBlob {
-// }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 struct Position {

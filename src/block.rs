@@ -131,6 +131,18 @@ pub struct DiskLocation {
     pub size: usize,
 }
 
+// TODO: NGM
+// impl DiskLocation {
+//     pub fn read_chunk(&self) -> Vec<u8> {
+//         // path?
+//         let f = std::fs::File::open(path.as_ref()).unwrap();
+//         let mut buf: Vec<u8> = vec![0; self.size];
+//         let _seekptr = f.seek(SeekFrom::Start(self.offset as u64)).unwrap();
+//         f.read_exact(&mut buf).unwrap();
+//         buf
+//     }
+// }
+
 impl BlockRef {
     fn new() -> Self {
         Self {

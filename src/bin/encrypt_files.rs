@@ -35,11 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
-    // cfm.add_file()
-
-    // enumerate the chunkfile ...?
-    // need to somehow loop thru each chunk upon creation of the chunkfile
-    //
     // now we have path...
     // for (enc hash, index) in chunkfile.positions {
     //     cfi.add_chunk_location(&enc_hash, &EncChunkLocation{
@@ -55,7 +50,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
     //     self.map.insert(chunk_hash.clone(), location.clone());
     // }
-
     // #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
     // pub struct EncChunkLocation {
     //     path: PathBuf,
@@ -74,10 +68,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // encrypt
             println!("encrypt this chunk!!");
-            let disk_location = &block_ref.references.iter().next().unwrap();
+            let disk_location = block_ref.references.iter().next().unwrap();
             let file_hash = &disk_location.file_hash;
             let fileref_ref = index.get_fileref_ref(file_hash);
             println!("fileref: {:?}", fileref_ref);
+            cfm.add_chunk_location(&block_hash, &disk_location);
         }
     }
 
