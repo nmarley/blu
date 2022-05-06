@@ -5,12 +5,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 
+use crate::age::BlackBox;
 use crate::block::DiskLocationIndex;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
-const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
+const DEFAULT_BLI_NAME: &str = "blob_location_index.dat";
 const DEFAULT_CFI_NAME: &str = "cfi.dat";
+const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
 // =============================================================================
 
@@ -26,19 +28,24 @@ pub enum CFAddStatus {
 pub struct ChunkFileManager {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
+    blobfile_index: BlobLocationIndex,
     plain_chunk_locations: Vec<(Hash, DiskLocationIndex)>,
     // TODO: remove
     active_chunkfile: ChunkFile,
 }
 
 impl ChunkFileManager {
-    pub fn new<P: AsRef<Path>>(dir: P) -> Self {
+    pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
         let datadir = dir.as_ref().to_path_buf();
+        let blobfile_index =
+            BlobLocationIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLI_NAME))
+                .unwrap_or_else(|_| BlobLocationIndex::new());
         let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
             .unwrap_or_else(|_| ChunkFileIndex::new());
         Self {
             datadir,
             chunkfile_index: cfi,
+            blobfile_index,
             active_chunkfile: ChunkFile::new(),
             plain_chunk_locations: vec![],
         }
@@ -67,12 +74,15 @@ impl ChunkFileManager {
         chunk_hash: Hash,
         disk_location: DiskLocationIndex,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.plain_chunk_locations.push((chunk_hash, disk_location));
+        self.plain_chunk_locations
+            .push((chunk_hash.clone(), disk_location));
 
         // write blob file and update CFI
+        // self.chunkfile_index.add_chunk_location
         if self.plain_chunk_locations.len() >= DEFAULT_CHUNKFILE_CAPACITY {
             let blob = self.make_blob();
-            self.write_blob(&blob);
+            let path = self.write_blobfile(&blob)?;
+            self.blobfile_index.add_chunk_location(&chunk_hash, &path);
             self.plain_chunk_locations = vec![];
         }
 
@@ -93,7 +103,12 @@ impl ChunkFileManager {
         FlatBlob { data, positions }
     }
 
-    pub fn write_blob(&self, blob: &FlatBlob) {}
+    pub fn write_blobfile(&self, blob: &FlatBlob) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = blob.serialize()?;
+        let blobfile_hash = blob.hash();
+        let dir_manager = Manager::new(&self.datadir);
+        dir_manager.write_encrypted(&blobfile_hash, &raw_bytes)
+    }
 
     // Final chunkfile (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
@@ -217,7 +232,39 @@ impl ChunkFile {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct FlatBlob {
     data: Vec<u8>,
+    // block hash, position in data
     positions: HashMap<Hash, Position>,
+}
+
+impl FlatBlob {
+    // pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    //     if index >= self.capacity {
+    //         return Err(
+    //             format!("index {} greater than capacity of {}", index, self.capacity).into(),
+    //         );
+    //     }
+    //     Ok(self.chunks[index].to_vec())
+    // }
+
+    // pub fn get_index_for_hash(&self, hash: &Hash) -> Option<usize> {
+    //     self.positions.get(hash).copied()
+    // }
+
+    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let encoded: Vec<u8> = bincode::serialize(self)?;
+        // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
+        Ok(encoded)
+    }
+
+    pub fn deserialize(data: &[u8]) -> Result<FlatBlob, Box<dyn std::error::Error>> {
+        // let decoded: FlatBlob = serde_cbor::from_slice(data)?;
+        let decoded: FlatBlob = bincode::deserialize(data)?;
+        Ok(decoded)
+    }
+
+    pub fn hash(&self) -> Hash {
+        Hash::from(hash::multihash(&self.data).to_bytes())
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -232,6 +279,32 @@ struct Position {
 pub struct EncChunkLocation {
     path: PathBuf,
     index: usize,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
+pub struct BlobLocationIndex {
+    // map chunk Hash -> Blob File name
+    map: HashMap<Hash, PathBuf>,
+}
+
+impl BlobLocationIndex {
+    fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    fn add_chunk_location(&mut self, chunk_hash: &Hash, path: &Path) {
+        self.map.insert(chunk_hash.clone(), path.to_path_buf());
+    }
+
+    fn deserialize_from_disk<P: AsRef<Path>>(
+        datadir: P,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let data = std::fs::read(datadir.as_ref())?;
+        let decoded: BlobLocationIndex = bincode::deserialize(&data)?;
+        Ok(decoded)
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
