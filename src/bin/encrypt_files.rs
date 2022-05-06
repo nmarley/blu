@@ -35,27 +35,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cfm = ChunkFileManager::new(&cfg.datadir());
     dbg!(&cfm);
 
-    // now we have path...
-    // for (enc hash, index) in chunkfile.positions {
-    //     cfi.add_chunk_location(&enc_hash, &EncChunkLocation{
-    //         path,
-    //         index,
-    //     });
-    // }
-    //
-    // cfi.add_chunk_location(&enc_hash, &EncChunkLocation{
-    //     path,
-    //     index,
-    // });
-    // pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
-    //     self.map.insert(chunk_hash.clone(), location.clone());
-    // }
-    // #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-    // pub struct EncChunkLocation {
-    //     path: PathBuf,
-    //     index: usize,
-    // }
-
     // How to know if encryption is needed or not? It's possible the chunk is
     // already encrypted ...
     for (block_hash, block_ref) in index.blocks_map_ref().iter() {
