@@ -65,7 +65,7 @@ impl PlainIndex {
                     .entry(cm_ref.hash.clone())
                     .or_insert_with(BlockRef::new);
                 blockref.referencing_file_hashes.insert(file_hash.clone());
-                blockref.references.insert(DiskLocation {
+                blockref.references.insert(FileRefLocationIndex {
                     size: cm_ref.size,
                     file_hash: file_hash.clone(),
                     offset,
@@ -98,13 +98,17 @@ impl PlainIndex {
         self.files.get(file_hash)
     }
 
-    // pub fn get_entry_ref(&self, hash: &Hash) -> Result<&Entry, Box<dyn std::error::Error>> {
-    //     let e = self.map.get(hash).unwrap();
-    //     Ok(e)
-    // }
-    // pub fn get_mut_entry_ref(&mut self, hash: &Hash) -> Option<&mut Entry> {
-    //     self.map.get_mut(hash)
-    // }
+    pub fn get_disk_location_index_for_blockref(&self, blockref: &BlockRef) -> DiskLocationIndex {
+        let frli = blockref.references.iter().next().unwrap();
+        let fr_ref = self.get_fileref_ref(&frli.file_hash).unwrap();
+        let filename = fr_ref.get_a_path();
+
+        DiskLocationIndex {
+            filename,
+            size: frli.size,
+            offset: frli.offset,
+        }
+    }
 }
 
 // blockref -> option<enc hash>
@@ -112,6 +116,12 @@ impl PlainIndex {
 /// BlockRef has a collection of file hashes which reference a particular block.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BlockRef {
+    // TODO (2022-05-06): not sure if this should be here, or just in the CFI instead.
+    //
+    // Maybe we ONLY keep it in the CFI... but then, CFM would need to pass it
+    // thru somehow, or we pass ALL blocks to the CFM for encryption and let the
+    // CFM sort it.
+    //
     // Has the block been encrypted? If so, hash is here.
     // It can be looked up in the chunkfile (blob) index.
     pub encrypted_hash: Option<Hash>,
@@ -121,27 +131,32 @@ pub struct BlockRef {
     // can be removed any time.
     pub referencing_file_hashes: HashSet<Hash>,
     // on-disk locations where this block can be read if necessary
-    pub references: HashSet<DiskLocation>,
+    pub references: HashSet<FileRefLocationIndex>,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
-pub struct DiskLocation {
+pub struct FileRefLocationIndex {
     pub file_hash: Hash,
     pub offset: usize,
     pub size: usize,
 }
 
-// TODO: NGM
-// impl DiskLocation {
-//     pub fn read_chunk(&self) -> Vec<u8> {
-//         // path?
-//         let f = std::fs::File::open(path.as_ref()).unwrap();
-//         let mut buf: Vec<u8> = vec![0; self.size];
-//         let _seekptr = f.seek(SeekFrom::Start(self.offset as u64)).unwrap();
-//         f.read_exact(&mut buf).unwrap();
-//         buf
-//     }
-// }
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
+pub struct DiskLocationIndex {
+    pub filename: PathBuf,
+    pub offset: usize,
+    pub size: usize,
+}
+
+impl DiskLocationIndex {
+    pub fn read_chunk(&self) -> Vec<u8> {
+        let mut f = std::fs::File::open(&self.filename).unwrap();
+        let mut buf: Vec<u8> = vec![0; self.size];
+        let _seekptr = f.seek(SeekFrom::Start(self.offset as u64)).unwrap();
+        f.read_exact(&mut buf).unwrap();
+        buf
+    }
+}
 
 impl BlockRef {
     fn new() -> Self {
@@ -304,7 +319,8 @@ impl std::iter::Iterator for Chunkerator {
 #[cfg(test)]
 mod test {
     use super::{
-        BlockRef, ChunkMeta, Chunkerator, DiskLocation, FileRef, Hash, PlainIndex, BLOCK_SIZE,
+        BlockRef, ChunkMeta, Chunkerator, FileRef, FileRefLocationIndex, Hash, PlainIndex,
+        BLOCK_SIZE,
     };
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
@@ -431,7 +447,7 @@ mod test {
                         Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                     ]),
                     references: HashSet::from([
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                             offset: 0,
                             size: 1024,
@@ -447,7 +463,7 @@ mod test {
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                     ]),
                     references: HashSet::from([
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                             offset: 4096,
                             size: 4096,
@@ -464,12 +480,12 @@ mod test {
                         Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                     ]),
                     references: HashSet::from([
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                             offset: 0,
                             size: 4096,
                         },
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                             offset: 0,
                             size: 4096,
@@ -485,7 +501,7 @@ mod test {
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                     ]),
                     references: HashSet::from([
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                             offset: 12288,
                             size: 4096,
@@ -502,12 +518,12 @@ mod test {
                         Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                     ]),
                     references: HashSet::from([
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                             offset: 8192,
                             size: 4096,
                         },
-                        DiskLocation {
+                        FileRefLocationIndex {
                             file_hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                             offset: 0,
                             size: 4096,

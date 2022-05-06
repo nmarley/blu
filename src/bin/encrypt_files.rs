@@ -68,18 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // encrypt
             println!("encrypt this chunk!!");
-            let disk_location = block_ref.references.iter().next().unwrap();
-            let file_hash = &disk_location.file_hash;
-            let fileref_ref = index.get_fileref_ref(file_hash);
-            println!("fileref: {:?}", fileref_ref);
-            if let Some(fr) = fileref_ref {
-                let file_path = fr.get_a_path();
-                println!("file_path: {:?}", file_path);
-            } else {
-                println!("error! can't find fileref in index");
-            }
-
-            // cfm.add_chunk_location(&block_hash, &disk_location);
+            let dli = index.get_disk_location_index_for_blockref(&block_ref);
+            cfm.add_chunk_location(block_hash.clone(), dli);
         }
     }
 

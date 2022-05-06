@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 
-use crate::block::DiskLocation;
+use crate::block::DiskLocationIndex;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
@@ -23,30 +23,15 @@ pub enum CFAddStatus {
 /// ChunkFileManager writes chunkfiles, re-indexes and re-orgs in case of many
 /// unused chunks, etc.
 #[derive(Debug, Default)]
-pub struct ChunkFileManager<'a> {
+pub struct ChunkFileManager {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
+    plain_chunk_locations: Vec<(Hash, DiskLocationIndex)>,
+    // TODO: remove
     active_chunkfile: ChunkFile,
-
-    plain_chunk_locations: Vec<(&'a Hash, &'a DiskLocation)>,
-    // ChunkFileIndex
-    // encrypted hash -> location of the data on disk
-    // map: HashMap<Hash, EncChunkLocation>,
-
-    // EncChunkLocation
-    //     path: PathBuf,
-    //     index: usize,
-
-    // ChunkFile
-    //     // this is a vector of encryted data chunks -- NOT HASHES
-    //     chunks: Vec<Vec<u8>>,
-    //     capacity: usize,
-    //     // this is the hash / index into the chunkfile, e.g. the hash of the
-    //     // encrypted data chunk can be found in `chunks` at index usize>
-    //     positions: HashMap<Hash, usize>,
 }
 
-impl<'a> ChunkFileManager<'a> {
+impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
@@ -71,38 +56,44 @@ impl<'a> ChunkFileManager<'a> {
         self.active_chunkfile.add_chunk(chunk)?;
         if self.active_chunkfile.is_full() {
             let path = self.write_chunkfile()?;
-
-            // TODO: fix this shit
-            // add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation)
-            // self.chunkfile_index.add_chunk_location(chunk_hash, chunk);
-
             self.active_chunkfile = ChunkFile::new();
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
-
         Ok(CFAddStatus::AddedToMemory)
     }
 
     pub fn add_chunk_location(
         &mut self,
-        chunk_hash: &'a Hash,
-        disk_location: &'a DiskLocation,
+        chunk_hash: Hash,
+        disk_location: DiskLocationIndex,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.plain_chunk_locations.push((chunk_hash, disk_location));
 
         // write blob file and update CFI
         if self.plain_chunk_locations.len() >= DEFAULT_CHUNKFILE_CAPACITY {
-            let mut offset: usize = 0;
-            for item in self.plain_chunk_locations.iter() {}
+            let blob = self.make_blob();
+            self.write_blob(&blob);
+            self.plain_chunk_locations = vec![];
         }
 
-        // TODO: fix this shit
-        // add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation)
-        // self.chunkfile_index.add_chunk_location(chunk_hash, chunk);
-
-        // self.active_chunkfile = ChunkFile::new();
-        return Ok(());
+        Ok(())
     }
+
+    pub fn make_blob(&mut self) -> FlatBlob {
+        let mut offset: usize = 0;
+        let mut data: Vec<u8> = vec![];
+        let mut positions: HashMap<Hash, Position> = HashMap::new();
+        for (hash, dli) in self.plain_chunk_locations.iter_mut() {
+            let mut chunk = dli.read_chunk();
+            let size = chunk.len();
+            positions.insert(hash.clone(), Position { offset, size });
+            offset += size;
+            data.append(&mut chunk);
+        }
+        FlatBlob { data, positions }
+    }
+
+    pub fn write_blob(&self, blob: &FlatBlob) {}
 
     // Final chunkfile (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
@@ -114,7 +105,7 @@ impl<'a> ChunkFileManager<'a> {
     }
 }
 
-impl std::ops::Drop for ChunkFileManager<'_> {
+impl std::ops::Drop for ChunkFileManager {
     fn drop(&mut self) {
         let _ = self.finalize().unwrap();
         // TODO: update CFI and write to disk
