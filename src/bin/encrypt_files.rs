@@ -47,8 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // encrypt
             println!("encrypt this chunk!!");
-            let dli = index.get_disk_location_index_for_blockref(block_ref);
-            cfm.add_chunk_location(block_hash.clone(), dli)?;
+            let chunk_bytes = index.get_chunk_bytes(block_ref);
+            cfm.add_chunk(block_hash.clone(), chunk_bytes)?;
         }
     }
 
