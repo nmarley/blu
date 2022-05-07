@@ -182,6 +182,8 @@ impl ChunkFile {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct FlatBlob {
     data: Vec<u8>,
+
+    // TODO: move into CFI, keep only data in here and index elsewhere
     // block hash, position in data
     positions: HashMap<Hash, Position>,
 }
