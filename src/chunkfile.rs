@@ -70,7 +70,7 @@ impl BlobManager {
                 );
                 offset += size;
                 // TODO: this
-                // self.blob_index.write_flush();
+                self.blob_index.write_flush();
             }
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
@@ -203,6 +203,10 @@ impl BlobIndex {
         let decoded: BlobIndex = bincode::deserialize(&data)?;
         Ok(decoded)
     }
+
+    // TODO: Opposite of deserialize_from_disk above
+    // START HERE 2022-05-07
+    fn write_flush(&mut self) {}
 }
 
 #[cfg(test)]
