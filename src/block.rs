@@ -98,16 +98,16 @@ impl PlainIndex {
         self.files.get(file_hash)
     }
 
-    pub fn get_disk_location_index_for_blockref(&self, blockref: &BlockRef) -> DiskLocationIndex {
-        let frli = blockref.references.iter().next().unwrap();
-        let fr_ref = self.get_fileref_ref(&frli.file_hash).unwrap();
-        let filename = fr_ref.get_a_path();
+    pub fn get_chunk_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
+        let disk_index = blockref.references.iter().next().unwrap();
+        let fileref = self.get_fileref_ref(&disk_index.file_hash).unwrap();
+        let filename = fileref.get_a_path();
 
-        DiskLocationIndex {
-            filename,
-            size: frli.size,
-            offset: frli.offset,
-        }
+        let mut f = std::fs::File::open(filename).unwrap();
+        let mut buf: Vec<u8> = vec![0; disk_index.size];
+        let _seekptr = f.seek(SeekFrom::Start(disk_index.offset as u64)).unwrap();
+        f.read_exact(&mut buf).unwrap();
+        buf
     }
 }
 
@@ -134,28 +134,14 @@ pub struct BlockRef {
     pub references: HashSet<FileRefLocationIndex>,
 }
 
+/// FileRefLocationIndex gives the location of a chunk within a FileRef
+/// (identified by file hash), with a byte offset and number of bytes to be
+/// read.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
 pub struct FileRefLocationIndex {
     pub file_hash: Hash,
     pub offset: usize,
     pub size: usize,
-}
-
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
-pub struct DiskLocationIndex {
-    pub filename: PathBuf,
-    pub offset: usize,
-    pub size: usize,
-}
-
-impl DiskLocationIndex {
-    pub fn read_chunk(&self) -> Vec<u8> {
-        let mut f = std::fs::File::open(&self.filename).unwrap();
-        let mut buf: Vec<u8> = vec![0; self.size];
-        let _seekptr = f.seek(SeekFrom::Start(self.offset as u64)).unwrap();
-        f.read_exact(&mut buf).unwrap();
-        buf
-    }
 }
 
 impl BlockRef {

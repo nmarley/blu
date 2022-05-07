@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Sender};
 
 use crate::age::BlackBox;
-use crate::block::DiskLocationIndex;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
