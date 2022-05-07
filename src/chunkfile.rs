@@ -28,26 +28,18 @@ pub enum CFAddStatus {
 pub struct ChunkFileManager {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
-    blobfile_index: BlobLocationIndex,
-    plain_chunk_locations: Vec<(Hash, DiskLocationIndex)>,
-    // TODO: remove
     active_chunkfile: ChunkFile,
 }
 
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let blobfile_index =
-            BlobLocationIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLI_NAME))
-                .unwrap_or_else(|_| BlobLocationIndex::new());
         let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
             .unwrap_or_else(|_| ChunkFileIndex::new());
         Self {
             datadir,
             chunkfile_index: cfi,
-            blobfile_index,
             active_chunkfile: ChunkFile::new(),
-            plain_chunk_locations: vec![],
         }
     }
 
@@ -67,47 +59,6 @@ impl ChunkFileManager {
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
         Ok(CFAddStatus::AddedToMemory)
-    }
-
-    pub fn add_chunk_location(
-        &mut self,
-        chunk_hash: Hash,
-        disk_location: DiskLocationIndex,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.plain_chunk_locations
-            .push((chunk_hash.clone(), disk_location));
-
-        // write blob file and update CFI
-        // self.chunkfile_index.add_chunk_location
-        if self.plain_chunk_locations.len() >= DEFAULT_CHUNKFILE_CAPACITY {
-            let blob = self.make_blob();
-            let path = self.write_blobfile(&blob)?;
-            self.blobfile_index.add_chunk_location(&chunk_hash, &path);
-            self.plain_chunk_locations = vec![];
-        }
-
-        Ok(())
-    }
-
-    pub fn make_blob(&mut self) -> FlatBlob {
-        let mut offset: usize = 0;
-        let mut data: Vec<u8> = vec![];
-        let mut positions: HashMap<Hash, Position> = HashMap::new();
-        for (hash, dli) in self.plain_chunk_locations.iter_mut() {
-            let mut chunk = dli.read_chunk();
-            let size = chunk.len();
-            positions.insert(hash.clone(), Position { offset, size });
-            offset += size;
-            data.append(&mut chunk);
-        }
-        FlatBlob { data, positions }
-    }
-
-    pub fn write_blobfile(&self, blob: &FlatBlob) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = blob.serialize()?;
-        let blobfile_hash = blob.hash();
-        let dir_manager = Manager::new(&self.datadir);
-        dir_manager.write_encrypted(&blobfile_hash, &raw_bytes)
     }
 
     // Final chunkfile (in-memory) gets written to disk
@@ -237,19 +188,6 @@ pub struct FlatBlob {
 }
 
 impl FlatBlob {
-    // pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    //     if index >= self.capacity {
-    //         return Err(
-    //             format!("index {} greater than capacity of {}", index, self.capacity).into(),
-    //         );
-    //     }
-    //     Ok(self.chunks[index].to_vec())
-    // }
-
-    // pub fn get_index_for_hash(&self, hash: &Hash) -> Option<usize> {
-    //     self.positions.get(hash).copied()
-    // }
-
     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let encoded: Vec<u8> = bincode::serialize(self)?;
         // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
