@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::{
     fs,
-    io::{self, Read},
+    io::{self},
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;

@@ -1,15 +1,13 @@
 use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Sender};
 
 use crate::age::BlackBox;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
-const DEFAULT_BLI_NAME: &str = "blob_location_index.dat";
+// const DEFAULT_BLI_NAME: &str = "blob_location_index.dat";
 const DEFAULT_CFI_NAME: &str = "cfi.dat";
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
@@ -217,15 +215,15 @@ struct Position {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct EncChunkLocation {
+pub struct BlobChunkLocation {
     path: PathBuf,
-    index: usize,
+    position: Position,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
 pub struct ChunkFileIndex {
     // map the encrypted hash to the location of the data on disk
-    map: HashMap<Hash, EncChunkLocation>,
+    map: HashMap<Hash, BlobChunkLocation>,
 }
 
 impl ChunkFileIndex {
@@ -235,7 +233,7 @@ impl ChunkFileIndex {
         }
     }
 
-    fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &EncChunkLocation) {
+    fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
     }
 
@@ -245,24 +243,6 @@ impl ChunkFileIndex {
         let data = std::fs::read(datadir.as_ref())?;
         let decoded: ChunkFileIndex = bincode::deserialize(&data)?;
         Ok(decoded)
-    }
-
-    // returns the encrypted from disk, decrypt it yourself
-    //
-    // TODO: seems REALLY weird to just open a new ChunkFile on disk every time
-    // to read a single block ... should we maintain a map of open files for
-    // reading the chunks? e.g. once this particular location is opened, we
-    // don't close it, keep it open at least for X most recently accessed
-    // files?
-    fn get_enc_block(&self, hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let enc_location = self.map.get(hash).ok_or("location not found")?;
-
-        let mut f = std::fs::File::open(&enc_location.path)?;
-        let mut chunkdata = Vec::new();
-        let _bytes_read = f.read(&mut chunkdata)?;
-        let chunkfile = ChunkFile::deserialize(&chunkdata)?;
-
-        chunkfile.get_chunk(enc_location.index)
     }
 }
 

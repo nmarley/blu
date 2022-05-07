@@ -9,7 +9,7 @@ const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
 use blu::block::PlainIndex;
-use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager, EncChunkLocation};
+use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager};
 use blu::config;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

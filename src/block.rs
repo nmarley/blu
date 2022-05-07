@@ -1,4 +1,4 @@
-use multihash::{Code, Hasher, Multihash, MultihashDigest, Sha2_512};
+use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -210,7 +210,6 @@ impl ChunkMeta {
 /// iterator.
 #[derive(Debug)]
 pub struct Chunkerator {
-    filepath: PathBuf,
     buf_reader: BufReader<std::fs::File>,
 }
 
@@ -221,10 +220,7 @@ impl Chunkerator {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let f = std::fs::File::open(filepath.as_ref()).unwrap();
         let reader = BufReader::with_capacity(chunk_size, f);
-        Ok(Self {
-            filepath: filepath.as_ref().to_path_buf(),
-            buf_reader: reader,
-        })
+        Ok(Self { buf_reader: reader })
     }
 }
 
