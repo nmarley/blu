@@ -7,7 +7,7 @@ use std::env;
 
 use blu::age::BlackBox;
 use blu::block::PlainIndex;
-use blu::chunkfile::ChunkFileManager;
+use blu::chunkfile::BlobManager;
 use blu::config;
 
 const TEST_AGE_SECRET_KEY: &str =
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let index = PlainIndex::new(dir)?;
     dbg!(&index);
 
-    let mut cfm = ChunkFileManager::new(&cfg.datadir(), &bbox);
+    let mut cfm = BlobManager::new(&cfg.datadir(), &bbox);
     dbg!(&cfm);
 
     // How to know if encryption is needed or not? It's possible the chunk is

@@ -116,14 +116,14 @@ impl PlainIndex {
 /// BlockRef has a collection of file hashes which reference a particular block.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BlockRef {
-    // TODO (2022-05-06): not sure if this should be here, or just in the CFI instead.
+    // TODO (2022-05-06): not sure if this should be here, or just in the BI instead.
     //
-    // Maybe we ONLY keep it in the CFI... but then, CFM would need to pass it
-    // thru somehow, or we pass ALL blocks to the CFM for encryption and let the
-    // CFM sort it.
+    // Maybe we ONLY keep it in the BI... but then, BM would need to pass it
+    // thru somehow, or we pass ALL blocks to the BM for encryption and let the
+    // BM sort it.
     //
     // Has the block been encrypted? If so, hash is here.
-    // It can be looked up in the chunkfile (blob) index.
+    // It can be looked up in the blob index.
     pub encrypted_hash: Option<Hash>,
 
     // hashes of the files which reference this block

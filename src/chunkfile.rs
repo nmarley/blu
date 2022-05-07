@@ -7,8 +7,8 @@ use crate::age::BlackBox;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
-const DEFAULT_CFI_FILENAME: &str = "blob_index.dat";
-const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
+const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
+const DEFAULT_BLOB_CAPACITY_CHUNKS: usize = 1024;
 
 // =============================================================================
 
@@ -18,29 +18,29 @@ pub enum CFAddStatus {
     NothingToDo,
 }
 
-/// ChunkFileManager writes chunkfiles, re-indexes and re-orgs in case of many
-/// unused chunks, etc.
+/// BlobManager writes blob files, re-indexes and re-orgs in case of many
+/// chunks (or unused chunks), etc.
 #[derive(Debug, Default)]
-pub struct ChunkFileManager {
+pub struct BlobManager {
     datadir: PathBuf,
-    chunkfile_index: ChunkFileIndex,
+    blob_index: BlobIndex,
 
-    //
+    // transient
     chunks: Vec<Vec<u8>>,
     chunk_capacity: usize,
 }
 
-impl ChunkFileManager {
+impl BlobManager {
     pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let chunkfile_index =
-            ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_FILENAME))
-                .unwrap_or_else(|_| ChunkFileIndex::new());
+        let blob_index =
+            BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
+                .unwrap_or_else(|_| BlobIndex::new());
         Self {
             datadir,
-            chunkfile_index,
+            blob_index,
             chunks: vec![],
-            chunk_capacity: DEFAULT_CHUNKFILE_CAPACITY,
+            chunk_capacity: DEFAULT_BLOB_CAPACITY_CHUNKS,
         }
     }
 
@@ -56,12 +56,12 @@ impl ChunkFileManager {
         if self.chunks_full() {
             let blob = self.make_blob();
             let path = self.write_blob(blob)?;
-            // CFI updates for each chunk
+            // BI updates for each chunk
             let mut offset = 0;
             for chunk in self.chunks.iter() {
                 let chunk_hash = Hash::from(hash::multihash(&chunk.clone()).to_bytes());
                 let size = chunk.len();
-                self.chunkfile_index.add_chunk_location(
+                self.blob_index.add_chunk_location(
                     &chunk_hash,
                     &BlobChunkLocation {
                         path: path.clone(),
@@ -70,7 +70,7 @@ impl ChunkFileManager {
                 );
                 offset += size;
                 // TODO: this
-                // self.chunkfile_index.write_flush();
+                // self.blob_index.write_flush();
             }
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
@@ -85,14 +85,14 @@ impl ChunkFileManager {
         blob
     }
 
-    // Final chunkfile (in-memory) gets written to disk
+    // Final blob (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
         if self.chunks_empty() {
             return Ok(CFAddStatus::NothingToDo);
         }
         let blob = self.make_blob();
         let path = self.write_blob(blob)?;
-        // TODO: CFI updates
+        // TODO: BI updates
         Ok(CFAddStatus::WrittenToDisk(path))
     }
 
@@ -107,128 +107,19 @@ impl ChunkFileManager {
     }
 }
 
-impl std::ops::Drop for ChunkFileManager {
+impl std::ops::Drop for BlobManager {
     fn drop(&mut self) {
         let _ = self.finalize().unwrap();
-        // TODO: update CFI and write to disk
+        // TODO: update BI and write to disk
     }
 }
 
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-// pub struct ChunkFile {
-//     // this is a vector of encryted data chunks -- NOT HASHES
-//     chunks: Vec<Vec<u8>>,
-//     capacity: usize,
-//     // this is the hash / index into the chunkfile, e.g. the hash of the
-//     // encrypted data chunk can be found in `chunks` at index usize>
-//     positions: HashMap<Hash, usize>,
-// }
-
-// impl ChunkFile {
-//     pub fn new() -> Self {
-//         Self::with_capacity(DEFAULT_CHUNKFILE_CAPACITY)
-//     }
-//     pub fn with_capacity(capacity: usize) -> Self {
-//         Self {
-//             capacity,
-//             chunks: Vec::with_capacity(capacity),
-//             positions: HashMap::new(),
-//         }
-//     }
-
-//     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<Hash, Box<dyn std::error::Error>> {
-//         if self.is_full() {
-//             return Err("capacity has been reached".into());
-//         }
-
-//         let index = self.count();
-//         let hash = Hash::from(hash::multihash(chunk).to_bytes());
-//         self.positions.insert(hash.clone(), index);
-
-//         self.chunks.push(chunk.to_vec());
-//         Ok(hash)
-//     }
-
-//     pub fn count(&self) -> usize {
-//         self.chunks.len()
-//     }
-
-//     pub fn get_chunk(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-//         if index >= self.capacity {
-//             return Err(
-//                 format!("index {} greater than capacity of {}", index, self.capacity).into(),
-//             );
-//         }
-//         Ok(self.chunks[index].to_vec())
-//     }
-
-//     pub fn get_index_for_hash(&self, hash: &Hash) -> Option<usize> {
-//         self.positions.get(hash).copied()
-//     }
-
-//     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-//         let encoded: Vec<u8> = bincode::serialize(self)?;
-//         // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
-//         Ok(encoded)
-//     }
-
-//     pub fn deserialize(data: &[u8]) -> Result<ChunkFile, Box<dyn std::error::Error>> {
-//         // let decoded: ChunkFile = serde_cbor::from_slice(data)?;
-//         let decoded: ChunkFile = bincode::deserialize(data)?;
-//         Ok(decoded)
-//     }
-
-//     // hash all the chunks and get the result
-//     pub fn hash(&self) -> Hash {
-//         let mut h = Sha2_512::default();
-//         for chunk_bytes in self.chunks.iter() {
-//             h.update(chunk_bytes)
-//         }
-//         let digest = h.finalize();
-//         let multihash = Code::Sha2_512.wrap(digest).unwrap();
-//         Hash::from(multihash.to_bytes())
-//     }
-
-//     pub fn is_full(&self) -> bool {
-//         self.count() >= self.capacity
-//     }
-
-//     pub fn is_empty(&self) -> bool {
-//         self.count() == 0
-//     }
-
-//     pub fn flatten(&mut self) -> Blob {
-//         let mut offset: usize = 0;
-//         let mut data: Vec<u8> = vec![];
-//         let mut positions: HashMap<Hash, Position> = HashMap::new();
-//         for chunk in self.chunks.iter_mut() {
-//             let hash = Hash::from(hash::multihash(chunk).to_bytes());
-//             let size = chunk.len();
-//             positions.insert(hash, Position { offset, size });
-//             offset += size;
-//             data.append(chunk);
-//         }
-//         Blob { data, positions }
-//     }
-// }
-
-// impl From<&Vec<Vec<u8>>> for ChunkFile {
-//     fn from(chunks: &Vec<Vec<u8>>) -> Self {
-//         let mut cf = Self::new();
-//         cf.chunks = chunks.to_vec();
-//         cf.capacity = DEFAULT_CHUNKFILE_CAPACITY;
-//         cf
-//     }
-// }
-
-/// Blob is a "flattened" version of the ChunkFile above. The Vec<Vec<u8>>
-/// is flattened into a single Vec<u8>, and the positions is converted from a
-/// usize index, into an offset and number of bytes.
+/// Blob is a single Vec<u8>, with an index of a chunk into the data.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Blob {
     data: Vec<u8>,
 
-    // TODO: move into CFI, keep only data in here and index elsewhere
+    // TODO: move into BI, keep only data in here and index elsewhere
     // block hash, position in data
     positions: HashMap<Hash, Position>,
 }
@@ -253,6 +144,8 @@ impl Blob {
     }
 }
 
+// TODO: Remove this and create index, positions at a higher level. Then add to
+// BlobIndex but never to the blob directly.
 impl From<&Vec<Vec<u8>>> for Blob {
     fn from(chunks: &Vec<Vec<u8>>) -> Self {
         let mut buf = vec![];
@@ -287,12 +180,12 @@ pub struct BlobChunkLocation {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
-pub struct ChunkFileIndex {
+pub struct BlobIndex {
     // map the encrypted hash to the location of the data on disk
     map: HashMap<Hash, BlobChunkLocation>,
 }
 
-impl ChunkFileIndex {
+impl BlobIndex {
     fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -307,7 +200,7 @@ impl ChunkFileIndex {
         datadir: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let data = std::fs::read(datadir.as_ref())?;
-        let decoded: ChunkFileIndex = bincode::deserialize(&data)?;
+        let decoded: BlobIndex = bincode::deserialize(&data)?;
         Ok(decoded)
     }
 }
