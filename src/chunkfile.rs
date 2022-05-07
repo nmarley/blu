@@ -46,9 +46,7 @@ impl ChunkFileManager {
 
     fn write_chunkfile(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
         // TEMP (2022-05-07): placeholder, remove all this later.
-
-        // let cf = &self.active_chunkfile;
-        // ChunkFile::from()
+        let cf = ChunkFile::from(&self.chunks);
 
         let raw_bytes = cf.serialize()?;
         let chunkfile_hash = cf.hash();
@@ -87,7 +85,7 @@ impl ChunkFileManager {
         self.chunks.len() >= self.chunk_capacity
     }
     fn chunks_empty(&self) -> bool {
-        self.chunks.len() == 0
+        self.chunks.is_empty()
     }
     fn reset_chunk_stage(&mut self) {
         self.chunks = vec![];
@@ -131,7 +129,7 @@ impl ChunkFile {
 
         let index = self.count();
         let hash = Hash::from(hash::multihash(chunk).to_bytes());
-        self.positions.insert(hash, index);
+        self.positions.insert(hash.clone(), index);
 
         self.chunks.push(chunk.to_vec());
         Ok(hash)
@@ -200,9 +198,12 @@ impl ChunkFile {
     }
 }
 
-impl From<Vec<Vec<u8>>> for ChunkFile {
-    fn from(chunks: Vec<Vec<u8>>) -> Self {
-        Self::new()
+impl From<&Vec<Vec<u8>>> for ChunkFile {
+    fn from(chunks: &Vec<Vec<u8>>) -> Self {
+        let mut cf = Self::new();
+        cf.chunks = chunks.to_vec();
+        cf.capacity = DEFAULT_CHUNKFILE_CAPACITY;
+        cf
     }
 }
 
