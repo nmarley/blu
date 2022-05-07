@@ -45,7 +45,7 @@ impl ChunkFileManager {
     }
 
     fn write_blob(&self, blob: FlatBlob) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = blob.serialize()?;
+        let raw_bytes = blob.serialize_data()?;
         let blobfile_hash = blob.hash();
         let dir_manager = Manager::new(&self.datadir);
         dir_manager.write_data(&blobfile_hash, &raw_bytes)
@@ -237,7 +237,7 @@ pub struct FlatBlob {
 }
 
 impl FlatBlob {
-    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn serialize_data(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let encoded: Vec<u8> = bincode::serialize(&self.data)?;
         Ok(encoded)
     }
