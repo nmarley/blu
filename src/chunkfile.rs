@@ -64,12 +64,13 @@ impl ChunkFileManager {
                 self.chunkfile_index.add_chunk_location(
                     &chunk_hash,
                     &BlobChunkLocation {
-                        path,
+                        path: path.clone(),
                         position: Position { offset, size },
                     },
                 );
                 offset += size;
-                self.chunkfile_index.write_flush();
+                // TODO: this
+                // self.chunkfile_index.write_flush();
             }
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
@@ -246,8 +247,8 @@ impl FlatBlob {
     //     Ok(decoded)
     // }
 
-    pub fn indexes(&self) -> HashMap<Hash, Position> {
-        self.positions
+    pub fn indexes(&self) -> &HashMap<Hash, Position> {
+        &self.positions
     }
 
     pub fn hash(&self) -> Hash {
@@ -258,17 +259,24 @@ impl FlatBlob {
 impl From<&Vec<Vec<u8>>> for FlatBlob {
     fn from(chunks: &Vec<Vec<u8>>) -> Self {
         let mut buf = vec![];
-        for chunk in chunks.iter_mut() {
+        let mut positions: HashMap<Hash, Position> = HashMap::new();
+        let mut offset: usize = 0;
+        for chunk in chunks.to_vec().iter_mut() {
+            let size = chunk.len();
+            let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
             buf.append(chunk);
+            positions.insert(chunk_hash, Position { offset, size });
+            offset += size;
         }
-        // TODO: indexes (positions)
-        let positions = ???;
-        FlatBlob { data: buf, positions }
+        FlatBlob {
+            data: buf,
+            positions,
+        }
     }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-struct Position {
+pub struct Position {
     // where to start reading
     offset: usize,
     // how many bytes to read
