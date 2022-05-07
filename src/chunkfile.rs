@@ -44,14 +44,11 @@ impl ChunkFileManager {
         }
     }
 
-    fn write_chunkfile(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        // TEMP (2022-05-07): placeholder, remove all this later.
-        let cf = ChunkFile::from(&self.chunks);
-
-        let raw_bytes = cf.serialize()?;
-        let chunkfile_hash = cf.hash();
+    fn write_blob(&self, blob: FlatBlob) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = blob.serialize()?;
+        let blobfile_hash = blob.hash();
         let dir_manager = Manager::new(&self.datadir);
-        dir_manager.write_encrypted(&chunkfile_hash, &raw_bytes)
+        dir_manager.write_data(&blobfile_hash, &raw_bytes)
     }
 
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
@@ -59,7 +56,21 @@ impl ChunkFileManager {
         if self.chunks_full() {
             let blob = self.make_blob();
             let path = self.write_blob(blob)?;
-            // TODO: CFI updates
+            // CFI updates for each chunk
+            let mut offset = 0;
+            for chunk in self.chunks.iter() {
+                let chunk_hash = Hash::from(hash::multihash(&chunk.clone()).to_bytes());
+                let size = chunk.len();
+                self.chunkfile_index.add_chunk_location(
+                    &chunk_hash,
+                    &BlobChunkLocation {
+                        path,
+                        position: Position { offset, size },
+                    },
+                );
+                offset += size;
+                self.chunkfile_index.write_flush();
+            }
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
         Ok(CFAddStatus::AddedToMemory)
@@ -247,11 +258,12 @@ impl FlatBlob {
 impl From<&Vec<Vec<u8>>> for FlatBlob {
     fn from(chunks: &Vec<Vec<u8>>) -> Self {
         let mut buf = vec![];
-        for chunk in chunks {
+        for chunk in chunks.iter_mut() {
             buf.append(chunk);
         }
         // TODO: indexes (positions)
-        buf
+        let positions = ???;
+        FlatBlob { data: buf, positions }
     }
 }
 

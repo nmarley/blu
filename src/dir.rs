@@ -23,7 +23,7 @@ impl Manager {
         Ok(())
     }
 
-    pub fn write_encrypted(
+    pub fn write_data(
         &self,
         hash: &Hash,
         data: &[u8],

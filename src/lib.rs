@@ -116,7 +116,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let enc_mh_bytes = hash::multihash(&enc_filedata).to_bytes();
         let size = enc_mh_bytes.len();
         let enc_hash = Hash::from(enc_mh_bytes);
-        let enc_path = dir_manager.write_encrypted(&enc_hash, &enc_filedata)?;
+        let enc_path = dir_manager.write_data(&enc_hash, &enc_filedata)?;
 
         let entry_hash = entry.get_hash();
 
