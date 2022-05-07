@@ -221,32 +221,6 @@ pub struct EncChunkLocation {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
-pub struct BlobLocationIndex {
-    // map chunk Hash -> Blob File name
-    map: HashMap<Hash, PathBuf>,
-}
-
-impl BlobLocationIndex {
-    fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-
-    fn add_chunk_location(&mut self, chunk_hash: &Hash, path: &Path) {
-        self.map.insert(chunk_hash.clone(), path.to_path_buf());
-    }
-
-    fn deserialize_from_disk<P: AsRef<Path>>(
-        datadir: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read(datadir.as_ref())?;
-        let decoded: BlobLocationIndex = bincode::deserialize(&data)?;
-        Ok(decoded)
-    }
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
 pub struct ChunkFileIndex {
     // map the encrypted hash to the location of the data on disk
     map: HashMap<Hash, EncChunkLocation>,
