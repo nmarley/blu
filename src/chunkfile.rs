@@ -24,24 +24,32 @@ pub enum CFAddStatus {
 pub struct ChunkFileManager {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
-    active_chunkfile: ChunkFile,
-    // chunks: Vec<Vec<u8>>,
+
+    //
+    chunks: Vec<Vec<u8>>,
+    chunk_capacity: usize,
 }
 
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_FILENAME))
-            .unwrap_or_else(|_| ChunkFileIndex::new());
+        let chunkfile_index =
+            ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_FILENAME))
+                .unwrap_or_else(|_| ChunkFileIndex::new());
         Self {
             datadir,
-            chunkfile_index: cfi,
-            active_chunkfile: ChunkFile::new(),
+            chunkfile_index,
+            chunks: vec![],
+            chunk_capacity: DEFAULT_CHUNKFILE_CAPACITY,
         }
     }
 
     fn write_chunkfile(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let cf = &self.active_chunkfile;
+        // TEMP (2022-05-07): placeholder, remove all this later.
+
+        // let cf = &self.active_chunkfile;
+        // ChunkFile::from()
+
         let raw_bytes = cf.serialize()?;
         let chunkfile_hash = cf.hash();
         let dir_manager = Manager::new(&self.datadir);
@@ -49,11 +57,18 @@ impl ChunkFileManager {
     }
 
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        self.active_chunkfile.add_chunk(chunk)?;
-        if self.active_chunkfile.is_full() {
+        let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
+        self.chunks.push(chunk.to_vec());
+
+        if self.chunks_full() {
             let path = self.write_chunkfile()?;
-            self.active_chunkfile = ChunkFile::new();
-            // self.chunkfile_index.add_chunk_location();
+            // self.chunkfile_index.add_chunk_location(chunk_hash, &BlobChunkLocation {
+            //     path,
+            //     // position: Position { offset: , size: () }
+            // });
+
+            // self.active_chunkfile = ChunkFile::new();
+            self.reset_chunk_stage();
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
         Ok(CFAddStatus::AddedToMemory)
@@ -61,11 +76,21 @@ impl ChunkFileManager {
 
     // Final chunkfile (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        if self.active_chunkfile.is_empty() {
+        if self.chunks_empty() {
             return Ok(CFAddStatus::NothingToDo);
         }
         let path = self.write_chunkfile()?;
         Ok(CFAddStatus::WrittenToDisk(path))
+    }
+
+    fn chunks_full(&self) -> bool {
+        self.chunks.len() >= self.chunk_capacity
+    }
+    fn chunks_empty(&self) -> bool {
+        self.chunks.len() == 0
+    }
+    fn reset_chunk_stage(&mut self) {
+        self.chunks = vec![];
     }
 }
 
@@ -99,7 +124,7 @@ impl ChunkFile {
         }
     }
 
-    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<Hash, Box<dyn std::error::Error>> {
         if self.is_full() {
             return Err("capacity has been reached".into());
         }
@@ -109,7 +134,7 @@ impl ChunkFile {
         self.positions.insert(hash, index);
 
         self.chunks.push(chunk.to_vec());
-        Ok(())
+        Ok(hash)
     }
 
     pub fn count(&self) -> usize {
@@ -172,6 +197,12 @@ impl ChunkFile {
             data.append(chunk);
         }
         FlatBlob { data, positions }
+    }
+}
+
+impl From<Vec<Vec<u8>>> for ChunkFile {
+    fn from(chunks: Vec<Vec<u8>>) -> Self {
+        Self::new()
     }
 }
 
