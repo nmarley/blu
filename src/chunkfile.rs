@@ -44,7 +44,7 @@ impl ChunkFileManager {
         }
     }
 
-    fn write_blob(&self, blob: FlatBlob) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    fn write_blob(&self, blob: Blob) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let raw_bytes = blob.serialize_data()?;
         let blobfile_hash = blob.hash();
         let dir_manager = Manager::new(&self.datadir);
@@ -79,8 +79,8 @@ impl ChunkFileManager {
 
     /// make_blob creates a Blob from all the accumulated chunks, and returns
     /// it. Then resets the chunk accumulator.
-    pub fn make_blob(&mut self) -> FlatBlob {
-        let blob = FlatBlob::from(&self.chunks);
+    pub fn make_blob(&mut self) -> Blob {
+        let blob = Blob::from(&self.chunks);
         self.reset_chunk_stage();
         blob
     }
@@ -198,7 +198,7 @@ impl ChunkFile {
         self.count() == 0
     }
 
-    pub fn flatten(&mut self) -> FlatBlob {
+    pub fn flatten(&mut self) -> Blob {
         let mut offset: usize = 0;
         let mut data: Vec<u8> = vec![];
         let mut positions: HashMap<Hash, Position> = HashMap::new();
@@ -209,7 +209,7 @@ impl ChunkFile {
             offset += size;
             data.append(chunk);
         }
-        FlatBlob { data, positions }
+        Blob { data, positions }
     }
 }
 
@@ -222,13 +222,11 @@ impl From<&Vec<Vec<u8>>> for ChunkFile {
     }
 }
 
-// TODO: Rename this to Blob
-//
-/// FlatBlob is a "flattened" version of the ChunkFile above. The Vec<Vec<u8>>
+/// Blob is a "flattened" version of the ChunkFile above. The Vec<Vec<u8>>
 /// is flattened into a single Vec<u8>, and the positions is converted from a
 /// usize index, into an offset and number of bytes.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct FlatBlob {
+pub struct Blob {
     data: Vec<u8>,
 
     // TODO: move into CFI, keep only data in here and index elsewhere
@@ -236,14 +234,14 @@ pub struct FlatBlob {
     positions: HashMap<Hash, Position>,
 }
 
-impl FlatBlob {
+impl Blob {
     pub fn serialize_data(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let encoded: Vec<u8> = bincode::serialize(&self.data)?;
         Ok(encoded)
     }
 
-    // pub fn deserialize(data: &[u8]) -> Result<FlatBlob, Box<dyn std::error::Error>> {
-    //     let decoded: FlatBlob = bincode::deserialize(data)?;
+    // pub fn deserialize(data: &[u8]) -> Result<Blob, Box<dyn std::error::Error>> {
+    //     let decoded: Blob = bincode::deserialize(data)?;
     //     Ok(decoded)
     // }
 
@@ -256,7 +254,7 @@ impl FlatBlob {
     }
 }
 
-impl From<&Vec<Vec<u8>>> for FlatBlob {
+impl From<&Vec<Vec<u8>>> for Blob {
     fn from(chunks: &Vec<Vec<u8>>) -> Self {
         let mut buf = vec![];
         let mut positions: HashMap<Hash, Position> = HashMap::new();
@@ -268,7 +266,7 @@ impl From<&Vec<Vec<u8>>> for FlatBlob {
             positions.insert(chunk_hash, Position { offset, size });
             offset += size;
         }
-        FlatBlob {
+        Blob {
             data: buf,
             positions,
         }
@@ -381,7 +379,7 @@ mod test {
     }
 
     #[test]
-    fn flatblob() {
+    fn blob() {
         let mut cf = test_chunkfile();
         let fb = cf.flatten();
         assert_eq!(
