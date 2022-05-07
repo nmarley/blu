@@ -55,20 +55,22 @@ impl ChunkFileManager {
     }
 
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
         self.chunks.push(chunk.to_vec());
-
         if self.chunks_full() {
-            let path = self.write_chunkfile()?;
-            // self.chunkfile_index.add_chunk_location(chunk_hash, &BlobChunkLocation {
-            //     path,
-            //     // position: Position { offset: , size: () }
-            // });
-
-            self.reset_chunk_stage();
+            let blob = self.make_blob();
+            let path = self.write_blob(blob)?;
+            // TODO: CFI updates
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
         Ok(CFAddStatus::AddedToMemory)
+    }
+
+    /// make_blob creates a Blob from all the accumulated chunks, and returns
+    /// it. Then resets the chunk accumulator.
+    pub fn make_blob(&mut self) -> FlatBlob {
+        let blob = FlatBlob::from(&self.chunks);
+        self.reset_chunk_stage();
+        blob
     }
 
     // Final chunkfile (in-memory) gets written to disk
@@ -76,7 +78,9 @@ impl ChunkFileManager {
         if self.chunks_empty() {
             return Ok(CFAddStatus::NothingToDo);
         }
-        let path = self.write_chunkfile()?;
+        let blob = self.make_blob();
+        let path = self.write_blob(blob)?;
+        // TODO: CFI updates
         Ok(CFAddStatus::WrittenToDisk(path))
     }
 
@@ -206,6 +210,8 @@ impl From<&Vec<Vec<u8>>> for ChunkFile {
     }
 }
 
+// TODO: Rename this to Blob
+//
 /// FlatBlob is a "flattened" version of the ChunkFile above. The Vec<Vec<u8>>
 /// is flattened into a single Vec<u8>, and the positions is converted from a
 /// usize index, into an offset and number of bytes.
@@ -220,19 +226,32 @@ pub struct FlatBlob {
 
 impl FlatBlob {
     pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let encoded: Vec<u8> = bincode::serialize(self)?;
-        // let encoded: Vec<u8> = serde_cbor::to_vec(self)?;
+        let encoded: Vec<u8> = bincode::serialize(&self.data)?;
         Ok(encoded)
     }
 
-    pub fn deserialize(data: &[u8]) -> Result<FlatBlob, Box<dyn std::error::Error>> {
-        // let decoded: FlatBlob = serde_cbor::from_slice(data)?;
-        let decoded: FlatBlob = bincode::deserialize(data)?;
-        Ok(decoded)
+    // pub fn deserialize(data: &[u8]) -> Result<FlatBlob, Box<dyn std::error::Error>> {
+    //     let decoded: FlatBlob = bincode::deserialize(data)?;
+    //     Ok(decoded)
+    // }
+
+    pub fn indexes(&self) -> HashMap<Hash, Position> {
+        self.positions
     }
 
     pub fn hash(&self) -> Hash {
         Hash::from(hash::multihash(&self.data).to_bytes())
+    }
+}
+
+impl From<&Vec<Vec<u8>>> for FlatBlob {
+    fn from(chunks: &Vec<Vec<u8>>) -> Self {
+        let mut buf = vec![];
+        for chunk in chunks {
+            buf.append(chunk);
+        }
+        // TODO: indexes (positions)
+        buf
     }
 }
 
