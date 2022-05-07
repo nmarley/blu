@@ -1,16 +1,17 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_mut)]
-#![allow(unused_variables)]
+// #![allow(dead_code)]
+// #![allow(unused_imports)]
+// #![allow(unused_mut)]
+// #![allow(unused_variables)]
 
 use std::env;
 
-const TEST_AGE_SECRET_KEY: &str =
-    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
 use blu::block::PlainIndex;
-use blu::chunkfile::{CFAddStatus, ChunkFileIndex, ChunkFileManager};
+use blu::chunkfile::ChunkFileManager;
 use blu::config;
+
+const TEST_AGE_SECRET_KEY: &str =
+    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args();
@@ -29,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     dbg!(&cfg);
 
-    let mut index = PlainIndex::new(dir)?;
+    let index = PlainIndex::new(dir)?;
     dbg!(&index);
 
     let mut cfm = ChunkFileManager::new(&cfg.datadir(), &bbox);
