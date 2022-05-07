@@ -65,7 +65,6 @@ impl ChunkFileManager {
             //     // position: Position { offset: , size: () }
             // });
 
-            // self.active_chunkfile = ChunkFile::new();
             self.reset_chunk_stage();
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
