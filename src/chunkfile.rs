@@ -7,8 +7,7 @@ use crate::age::BlackBox;
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
-// const DEFAULT_BLI_NAME: &str = "blob_location_index.dat";
-const DEFAULT_CFI_NAME: &str = "cfi.dat";
+const DEFAULT_CFI_FILENAME: &str = "blob_index.dat";
 const DEFAULT_CHUNKFILE_CAPACITY: usize = 1024;
 
 // =============================================================================
@@ -32,7 +31,7 @@ pub struct ChunkFileManager {
 impl ChunkFileManager {
     pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_NAME))
+        let cfi = ChunkFileIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_CFI_FILENAME))
             .unwrap_or_else(|_| ChunkFileIndex::new());
         Self {
             datadir,
