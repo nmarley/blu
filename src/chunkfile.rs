@@ -28,6 +28,7 @@ pub struct ChunkFileManager {
     datadir: PathBuf,
     chunkfile_index: ChunkFileIndex,
     active_chunkfile: ChunkFile,
+    // chunks: Vec<Vec<u8>>,
 }
 
 impl ChunkFileManager {
@@ -55,6 +56,7 @@ impl ChunkFileManager {
         if self.active_chunkfile.is_full() {
             let path = self.write_chunkfile()?;
             self.active_chunkfile = ChunkFile::new();
+            // self.chunkfile_index.add_chunk_location();
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
         Ok(CFAddStatus::AddedToMemory)
