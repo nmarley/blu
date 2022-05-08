@@ -2,9 +2,16 @@
 
 ## TODO
 
-- [ ] rename crate::block::File to something that does NOT conflict with std::fs::File
+- [x] rename crate::block::File to something that does NOT conflict with std::fs::File
 
-- [ ] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
+- [/] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
+  - [x] 2022-05-07: This is mostly done, blob index and manager are finished. Just need to...
+  - [ ] 2022-05-07: Add encryption (and possibly compression) to the blob before hashing/writing.
+  - [ ] 2022-05-07: Add tests for BlobManager. Lots of tests.
+
+- [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
+
+- [ ] Tags / notes on files (on the FileRef portion of the files index). Probably in a later release.
 
 ## Understand
 
