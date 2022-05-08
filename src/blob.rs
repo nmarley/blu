@@ -202,7 +202,7 @@ mod test {
 
     // helper func used in tests below
     fn test_blobmgr() -> BlobManager {
-        let vec: Vec<Vec<u8>> = vec![
+        let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
@@ -260,7 +260,7 @@ mod test {
     //     }
     // }
 
-    // #[test]
+    #[test]
     fn blob() {
         let mut blob_mgr = test_blobmgr();
         let (data, positions) = blob_mgr.eject_blob();
@@ -285,6 +285,10 @@ mod test {
                 Position { offset: 7, size: 8 },
             ),
         ]);
+        let positions: HashMap<Hash, Position> = positions
+            .into_iter()
+            .map(|(k, v)| (k, v.position))
+            .collect();
         assert_eq!(positions, expected_positions);
     }
 }
