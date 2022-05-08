@@ -9,14 +9,6 @@ use crate::hash::{self, Hash};
 const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
 
-// =============================================================================
-
-pub enum CFAddStatus {
-    WrittenToDisk,
-    AddedToMemory,
-    NothingToDo,
-}
-
 /// BlobManager writes blob files, re-indexes and re-orgs in case of many
 /// chunks (or unused chunks), etc.
 #[derive(Debug, Default)]
@@ -54,17 +46,14 @@ impl BlobManager {
         dir_manager.write_data(&blobfile_hash, raw_bytes)
     }
 
-    pub fn add_chunk(
-        &mut self,
-        chunk: &mut [u8],
-    ) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
+    pub fn add_chunk(&mut self, chunk: &mut [u8]) -> Result<(), Box<dyn std::error::Error>> {
         let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
         if self.blob_index.has_chunk(&chunk_hash) {
             println!(
                 "Already found chunk {:?} in blob index, nothing to add",
                 &chunk_hash
             );
-            return Ok(CFAddStatus::NothingToDo);
+            return Ok(());
         }
 
         let mut chunk_copy = chunk.to_vec();
@@ -84,21 +73,23 @@ impl BlobManager {
         self.offset += size;
 
         if self.blob_full() {
-            self.roll_new_blob()?;
-            return Ok(CFAddStatus::WrittenToDisk);
+            let path = self.roll_new_blob()?;
+            println!("Rolled new blob at {:?}!", path);
+            return Ok(());
         }
 
-        Ok(CFAddStatus::AddedToMemory)
+        println!("Added chunk to memory!");
+        Ok(())
     }
 
-    fn roll_new_blob(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn roll_new_blob(&mut self) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = self.write_blob(&self.data)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
             location.path = path.clone();
             self.blob_index.add_chunk_location(chunk_hash, location);
         }
         self.reset_chunk_stage();
-        Ok(())
+        Ok(path)
     }
 
     // Final blob (in-memory) gets written to disk
