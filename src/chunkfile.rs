@@ -1,4 +1,3 @@
-use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -52,7 +51,7 @@ impl BlobManager {
         let raw_bytes = data;
         let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
         let dir_manager = Manager::new(&self.datadir);
-        dir_manager.write_data(&blobfile_hash, &raw_bytes)
+        dir_manager.write_data(&blobfile_hash, raw_bytes)
     }
 
     pub fn add_chunk(
@@ -124,7 +123,6 @@ impl BlobManager {
 impl std::ops::Drop for BlobManager {
     fn drop(&mut self) {
         let _ = self.finalize().unwrap();
-        // TODO: update BI and write to disk
     }
 }
 
@@ -183,6 +181,9 @@ impl BlobIndex {
 
 #[cfg(test)]
 mod test {
+    // TODO: Test BlobManager
+    // START HERE: 2022-05-08
+
     // use super::*;
 
     // helper func used in tests below
