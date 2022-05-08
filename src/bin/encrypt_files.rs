@@ -6,8 +6,8 @@
 use std::env;
 
 use blu::age::BlackBox;
+use blu::blob::BlobManager;
 use blu::block::PlainIndex;
-use blu::chunkfile::BlobManager;
 use blu::config;
 
 const TEST_AGE_SECRET_KEY: &str =

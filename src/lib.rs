@@ -9,8 +9,8 @@ use std::io::Write;
 extern crate log;
 
 pub mod age;
+pub mod blob;
 pub mod block;
-pub mod chunkfile;
 pub mod clap;
 pub mod compression;
 pub mod config;
