@@ -149,17 +149,22 @@ pub struct BlobChunkLocation {
 pub struct BlobIndex {
     // map the encrypted hash to the location of the data on disk
     map: HashMap<Hash, BlobChunkLocation>,
+    // Do not re-serialize to disk if the blob index wasn't modified.
+    #[serde(skip)]
+    modified: bool,
 }
 
 impl BlobIndex {
     fn new() -> Self {
         Self {
             map: HashMap::new(),
+            modified: false,
         }
     }
 
     fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
+        self.modified = true;
     }
 
     fn has_chunk(&self, chunk_hash: &Hash) -> bool {
@@ -178,8 +183,10 @@ impl BlobIndex {
         &self,
         index_file_path: impl AsRef<Path>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let encoded = bincode::serialize(&self)?;
-        std::fs::write(index_file_path, encoded)?;
+        if self.modified {
+            let encoded = bincode::serialize(&self)?;
+            std::fs::write(index_file_path, encoded)?;
+        }
         Ok(())
     }
 }
