@@ -127,57 +127,6 @@ impl std::ops::Drop for BlobManager {
     }
 }
 
-/// Blob is a single Vec<u8>, with an index of a chunk into the data.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub struct Blob {
-    data: Vec<u8>,
-
-    // TODO: move into BI, keep only data in here and index elsewhere
-    // block hash, position in data
-    positions: HashMap<Hash, Position>,
-}
-
-impl Blob {
-    pub fn serialize_data(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let encoded: Vec<u8> = bincode::serialize(&self.data)?;
-        Ok(encoded)
-    }
-
-    // pub fn deserialize(data: &[u8]) -> Result<Blob, Box<dyn std::error::Error>> {
-    //     let decoded: Blob = bincode::deserialize(data)?;
-    //     Ok(decoded)
-    // }
-
-    pub fn indexes(&self) -> &HashMap<Hash, Position> {
-        &self.positions
-    }
-
-    pub fn hash(&self) -> Hash {
-        Hash::from(hash::multihash(&self.data).to_bytes())
-    }
-}
-
-// TODO: Remove this and create index, positions at a higher level. Then add to
-// BlobIndex but never to the blob directly.
-impl From<&Vec<Vec<u8>>> for Blob {
-    fn from(chunks: &Vec<Vec<u8>>) -> Self {
-        let mut buf = vec![];
-        let mut positions: HashMap<Hash, Position> = HashMap::new();
-        let mut offset: usize = 0;
-        for chunk in chunks.to_vec().iter_mut() {
-            let size = chunk.len();
-            let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
-            buf.append(chunk);
-            positions.insert(chunk_hash, Position { offset, size });
-            offset += size;
-        }
-        Blob {
-            data: buf,
-            positions,
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Position {
     // where to start reading
