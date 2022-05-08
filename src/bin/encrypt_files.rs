@@ -48,8 +48,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             // encrypt
             println!("encrypt this chunk!!");
-            let chunk_bytes = index.get_chunk_bytes(block_ref);
-            cfm.add_chunk(&chunk_bytes)?;
+            let mut chunk_bytes = index.get_chunk_bytes(block_ref);
+            cfm.add_chunk(&mut chunk_bytes)?;
         }
     }
 

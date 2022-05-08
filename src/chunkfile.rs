@@ -8,12 +8,12 @@ use crate::dir::Manager;
 use crate::hash::{self, Hash};
 
 const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
-const DEFAULT_BLOB_CAPACITY_CHUNKS: usize = 1024;
+const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
 
 // =============================================================================
 
 pub enum CFAddStatus {
-    WrittenToDisk(PathBuf),
+    WrittenToDisk,
     AddedToMemory,
     NothingToDo,
 }
@@ -26,8 +26,10 @@ pub struct BlobManager {
     blob_index: BlobIndex,
 
     // transient
-    chunks: Vec<Vec<u8>>,
-    chunk_capacity: usize,
+    data: Vec<u8>,
+    blob_capacity: usize,
+    offset: usize,
+    positions: HashMap<Hash, BlobChunkLocation>,
 }
 
 impl BlobManager {
@@ -39,71 +41,82 @@ impl BlobManager {
         Self {
             datadir,
             blob_index,
-            chunks: vec![],
-            chunk_capacity: DEFAULT_BLOB_CAPACITY_CHUNKS,
+            data: vec![],
+            blob_capacity: DEFAULT_BLOB_CAPACITY_BYTES,
+            offset: 0,
+            positions: HashMap::new(),
         }
     }
 
-    fn write_blob(&self, blob: Blob) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = blob.serialize_data()?;
-        let blobfile_hash = blob.hash();
+    fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = data;
+        let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
         let dir_manager = Manager::new(&self.datadir);
         dir_manager.write_data(&blobfile_hash, &raw_bytes)
     }
 
-    pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        self.chunks.push(chunk.to_vec());
-        if self.chunks_full() {
-            let blob = self.make_blob();
-            let path = self.write_blob(blob)?;
-            // BI updates for each chunk
-            let mut offset = 0;
-            for chunk in self.chunks.iter() {
-                let chunk_hash = Hash::from(hash::multihash(&chunk.clone()).to_bytes());
-                let size = chunk.len();
-                self.blob_index.add_chunk_location(
-                    &chunk_hash,
-                    &BlobChunkLocation {
-                        path: path.clone(),
-                        position: Position { offset, size },
-                    },
-                );
-                offset += size;
-                self.blob_index
-                    .serialize_to_disk(self.datadir.as_path().join(DEFAULT_BLOB_INDEX_FILENAME))?;
-            }
-            return Ok(CFAddStatus::WrittenToDisk(path));
+    pub fn add_chunk(
+        &mut self,
+        chunk: &mut [u8],
+    ) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
+        let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
+        if self.blob_index.has_chunk(&chunk_hash) {
+            return Ok(CFAddStatus::NothingToDo);
         }
+
+        let mut chunk_copy = chunk.to_vec();
+        self.data.append(&mut chunk_copy);
+        let size = chunk.len();
+        // remap the path after writing and then add to the blob_index
+        self.positions.insert(
+            chunk_hash,
+            BlobChunkLocation {
+                path: "".into(),
+                position: Position {
+                    offset: self.offset,
+                    size,
+                },
+            },
+        );
+        self.offset += size;
+
+        if self.blob_full() {
+            self.roll_new_blob()?;
+            return Ok(CFAddStatus::WrittenToDisk);
+        }
+
         Ok(CFAddStatus::AddedToMemory)
     }
 
-    /// make_blob creates a Blob from all the accumulated chunks, and returns
-    /// it. Then resets the chunk accumulator.
-    pub fn make_blob(&mut self) -> Blob {
-        let blob = Blob::from(&self.chunks);
+    fn roll_new_blob(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let path = self.write_blob(&self.data)?;
+        for (chunk_hash, location) in self.positions.iter_mut() {
+            location.path = path.clone();
+            self.blob_index.add_chunk_location(chunk_hash, location);
+        }
         self.reset_chunk_stage();
-        blob
+        Ok(())
     }
 
     // Final blob (in-memory) gets written to disk
     pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        if self.chunks_empty() {
+        if self.blob_empty() {
             return Ok(CFAddStatus::NothingToDo);
         }
-        let blob = self.make_blob();
-        let path = self.write_blob(blob)?;
-        // TODO: BI updates
-        Ok(CFAddStatus::WrittenToDisk(path))
+        self.roll_new_blob()?;
+        Ok(CFAddStatus::WrittenToDisk)
     }
 
-    fn chunks_full(&self) -> bool {
-        self.chunks.len() >= self.chunk_capacity
+    fn blob_full(&self) -> bool {
+        self.data.len() >= self.blob_capacity
     }
-    fn chunks_empty(&self) -> bool {
-        self.chunks.is_empty()
+    fn blob_empty(&self) -> bool {
+        self.data.is_empty()
     }
     fn reset_chunk_stage(&mut self) {
-        self.chunks = vec![];
+        self.data = vec![];
+        self.offset = 0;
+        self.positions = HashMap::new();
     }
 }
 
@@ -196,6 +209,10 @@ impl BlobIndex {
         self.map.insert(chunk_hash.clone(), location.clone());
     }
 
+    fn has_chunk(&self, chunk_hash: &Hash) -> bool {
+        self.map.contains_key(chunk_hash)
+    }
+
     fn deserialize_from_disk<P: AsRef<Path>>(
         index_file_path: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -204,14 +221,10 @@ impl BlobIndex {
         Ok(decoded)
     }
 
-    // TODO: Opposite of deserialize_from_disk above
-    // START HERE 2022-05-07
     fn serialize_to_disk(
         &self,
         index_file_path: impl AsRef<Path>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
-        //     .unwrap_or_else(|_| BlobIndex::new());
         let encoded = bincode::serialize(&self)?;
         std::fs::write(index_file_path, encoded)?;
         Ok(())
