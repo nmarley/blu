@@ -99,12 +99,13 @@ impl BlobManager {
     }
 
     // Final blob (in-memory) gets written to disk
-    pub fn finalize(&mut self) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
-        if self.blob_empty() {
-            return Ok(CFAddStatus::NothingToDo);
+    pub fn finalize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.blob_empty() {
+            self.roll_new_blob()?;
         }
-        self.roll_new_blob()?;
-        Ok(CFAddStatus::WrittenToDisk)
+        self.blob_index
+            .serialize_to_disk(self.datadir.as_path().join(DEFAULT_BLOB_INDEX_FILENAME))?;
+        Ok(())
     }
 
     fn blob_full(&self) -> bool {
