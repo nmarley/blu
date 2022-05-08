@@ -69,8 +69,8 @@ impl BlobManager {
                     },
                 );
                 offset += size;
-                // TODO: this
-                self.blob_index.write_flush();
+                self.blob_index
+                    .serialize_to_disk(self.datadir.as_path().join(DEFAULT_BLOB_INDEX_FILENAME))?;
             }
             return Ok(CFAddStatus::WrittenToDisk(path));
         }
@@ -197,21 +197,30 @@ impl BlobIndex {
     }
 
     fn deserialize_from_disk<P: AsRef<Path>>(
-        datadir: P,
+        index_file_path: P,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read(datadir.as_ref())?;
+        let data = std::fs::read(index_file_path.as_ref())?;
         let decoded: BlobIndex = bincode::deserialize(&data)?;
         Ok(decoded)
     }
 
     // TODO: Opposite of deserialize_from_disk above
     // START HERE 2022-05-07
-    fn write_flush(&mut self) {}
+    fn serialize_to_disk(
+        &self,
+        index_file_path: impl AsRef<Path>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
+        //     .unwrap_or_else(|_| BlobIndex::new());
+        let encoded = bincode::serialize(&self)?;
+        std::fs::write(index_file_path, encoded)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    // use super::*;
 
     // helper func used in tests below
     // fn test_chunkfile() -> ChunkFile {
