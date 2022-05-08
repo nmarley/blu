@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let index = PlainIndex::new(dir)?;
     // dbg!(&index);
 
-    let mut blob_mgr = BlobManager::new(&cfg.datadir(), &bbox);
+    let mut blob_mgr = BlobManager::new(&cfg.datadir(), Some(&bbox));
     // dbg!(&blob_mgr);
 
     // Let the BlobManager determine if we need to encrypt something ...

@@ -24,7 +24,7 @@ pub struct BlobManager {
 }
 
 impl BlobManager {
-    pub fn new<P: AsRef<Path>>(dir: P, _bbox: &BlackBox) -> Self {
+    pub fn new<P: AsRef<Path>>(dir: P, _bbox: Option<&BlackBox>) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         let blob_index =
             BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
@@ -90,6 +90,13 @@ impl BlobManager {
         }
         self.reset_chunk_stage();
         Ok(path)
+    }
+
+    fn eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
+        let data = self.data.clone();
+        let pos = self.positions.clone();
+        self.reset_chunk_stage();
+        (data, pos)
     }
 
     // Final blob (in-memory) gets written to disk
@@ -188,25 +195,25 @@ impl BlobIndex {
 
 #[cfg(test)]
 mod test {
+    use super::*;
+
     // TODO: Test BlobManager
     // START HERE: 2022-05-08
 
-    // use super::*;
-
     // helper func used in tests below
-    // fn test_chunkfile() -> ChunkFile {
-    //     let vec: Vec<Vec<u8>> = vec![
-    //         vec![0x0b, 0x0a, 0x00],
-    //         vec![0xde, 0xad, 0xbe, 0xef],
-    //         vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
-    //     ];
-    //     let mut cf = ChunkFile::new();
-    //     // load w/some data
-    //     for v in vec.iter() {
-    //         cf.add_chunk(v).unwrap();
-    //     }
-    //     cf
-    // }
+    fn test_blobmgr() -> BlobManager {
+        let vec: Vec<Vec<u8>> = vec![
+            vec![0x0b, 0x0a, 0x00],
+            vec![0xde, 0xad, 0xbe, 0xef],
+            vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
+        ];
+        let mut blob_mgr = BlobManager::new("/tmp", None);
+        // load w/some data
+        for v in vec.iter_mut() {
+            blob_mgr.add_chunk(v).unwrap();
+        }
+        blob_mgr
+    }
 
     // #[test]
     // fn capacity() {
@@ -254,30 +261,30 @@ mod test {
     // }
 
     // #[test]
-    // fn blob() {
-    //     let mut cf = test_chunkfile();
-    //     let fb = cf.flatten();
-    //     assert_eq!(
-    //         fb.data,
-    //         vec![
-    //             0x0b, 0x0a, 0x00, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e,
-    //             0xad
-    //         ]
-    //     );
-    //     let positions: HashMap<Hash, Position> = HashMap::from([
-    //         (
-    //             Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"),
-    //             Position { offset: 0, size: 3 }
-    //         ),
-    //         (
-    //             Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"),
-    //             Position { offset: 3, size: 4 },
-    //         ),
-    //         (
-    //             Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"),
-    //             Position { offset: 7, size: 8 },
-    //         ),
-    //     ]);
-    //     assert_eq!(fb.positions, positions);
-    // }
+    fn blob() {
+        let mut blob_mgr = test_blobmgr();
+        let (data, positions) = blob_mgr.eject_blob();
+        assert_eq!(
+            data,
+            vec![
+                0x0b, 0x0a, 0x00, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e,
+                0xad
+            ]
+        );
+        let expected_positions: HashMap<Hash, Position> = HashMap::from([
+            (
+                Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"),
+                Position { offset: 0, size: 3 }
+            ),
+            (
+                Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"),
+                Position { offset: 3, size: 4 },
+            ),
+            (
+                Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"),
+                Position { offset: 7, size: 8 },
+            ),
+        ]);
+        assert_eq!(positions, expected_positions);
+    }
 }
