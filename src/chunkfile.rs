@@ -60,6 +60,10 @@ impl BlobManager {
     ) -> Result<CFAddStatus, Box<dyn std::error::Error>> {
         let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
         if self.blob_index.has_chunk(&chunk_hash) {
+            println!(
+                "Already found chunk {:?} in blob index, nothing to add",
+                &chunk_hash
+            );
             return Ok(CFAddStatus::NothingToDo);
         }
 
