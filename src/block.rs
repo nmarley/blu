@@ -116,16 +116,6 @@ impl PlainIndex {
 /// BlockRef has a collection of file hashes which reference a particular block.
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct BlockRef {
-    // TODO (2022-05-06): not sure if this should be here, or just in the BI instead.
-    //
-    // Maybe we ONLY keep it in the BI... but then, BM would need to pass it
-    // thru somehow, or we pass ALL blocks to the BM for encryption and let the
-    // BM sort it.
-    //
-    // Has the block been encrypted? If so, hash is here.
-    // It can be looked up in the blob index.
-    pub encrypted_hash: Option<Hash>,
-
     // hashes of the files which reference this block
     // this field is now entirely redundant b/c of references below.
     // can be removed any time.
@@ -147,7 +137,6 @@ pub struct FileRefLocationIndex {
 impl BlockRef {
     fn new() -> Self {
         Self {
-            encrypted_hash: None,
             referencing_file_hashes: HashSet::new(),
             references: HashSet::new(),
         }
@@ -371,7 +360,6 @@ mod test {
             (
                 Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                 BlockRef {
-                    encrypted_hash: None,
                     referencing_file_hashes: HashSet::from([
                         Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
                     ]),
@@ -387,7 +375,6 @@ mod test {
             (
                 Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
                 BlockRef {
-                    encrypted_hash: None,
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                     ]),
@@ -403,7 +390,6 @@ mod test {
             (
                 Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
                 BlockRef {
-                    encrypted_hash: None,
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                         Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
@@ -425,7 +411,6 @@ mod test {
             (
                 Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
                 BlockRef {
-                    encrypted_hash: None,
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                     ]),
@@ -441,7 +426,6 @@ mod test {
             (
                 Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
                 BlockRef {
-                    encrypted_hash: None,
                     referencing_file_hashes: HashSet::from([
                         Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
                         Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
