@@ -129,8 +129,12 @@ impl BlobManager {
         self.positions = HashMap::new();
     }
 
-    pub fn blob_file_count(&self) -> usize {
-        self.blob_index.blob_file_count()
+    pub fn count_blob_files(&self) -> usize {
+        self.blob_index.count_blob_files()
+    }
+
+    pub fn count_chunks_indexed(&self) -> usize {
+        self.blob_index.count_chunks_indexed()
     }
 }
 
@@ -205,12 +209,16 @@ impl BlobIndex {
     }
 
     // TODO: this is inefficient to call multiple times in a row
-    fn blob_file_count(&self) -> usize {
+    fn count_blob_files(&self) -> usize {
         let mut set = HashSet::<PathBuf>::new();
         for loc in self.map.values() {
             set.insert(loc.path.clone());
         }
         set.len()
+    }
+
+    fn count_chunks_indexed(&self) -> usize {
+        self.map.len()
     }
 }
 
@@ -218,9 +226,6 @@ impl BlobIndex {
 mod test {
     use super::*;
     use tempfile::tempdir;
-
-    // TODO: Test BlobManager
-    // START HERE: 2022-05-08
 
     // helper func used in tests below
     fn test_blobmgr() -> BlobManager {
@@ -239,6 +244,14 @@ mod test {
     }
 
     #[test]
+    fn new() {
+        let mut blob_mgr = test_blobmgr();
+        blob_mgr.finalize().unwrap();
+        assert_eq!(blob_mgr.count_blob_files(), 1);
+        assert_eq!(blob_mgr.count_chunks_indexed(), 3);
+    }
+
+    #[test]
     fn capacity() {
         // NOTE: do not use `test_blobmgr()` here, as we are testing capacity
         let mut vec: Vec<Vec<u8>> = vec![
@@ -252,7 +265,8 @@ mod test {
         for v in vec.iter_mut() {
             blob_mgr.add_chunk(v).unwrap();
         }
-        assert_eq!(blob_mgr.blob_file_count(), vec.len());
+        assert_eq!(blob_mgr.count_blob_files(), vec.len());
+        assert_eq!(blob_mgr.count_chunks_indexed(), vec.len());
     }
 
     #[test]
