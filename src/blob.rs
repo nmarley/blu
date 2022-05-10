@@ -254,21 +254,6 @@ mod test {
         assert_eq!(blob_mgr.blob_file_count(), vec.len());
     }
 
-    // #[test]
-    // fn index() {
-    //     let blob_mgr = test_blobmgr();
-    //     let hashes_expected = vec![
-    //         ("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76", Some(0)),
-    //         ("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f", Some(1)),
-    //         ("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c", Some(2)),
-    //         ("1340cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e", None),
-    //     ];
-    //     for tuple in hashes_expected.into_iter() {
-    //         let (hash, opt) = (Hash::from(tuple.0), tuple.1);
-    //         // assert_eq!(blob_mgr.get_index_for_hash(&hash), opt);
-    //     }
-    // }
-
     #[test]
     fn blob() {
         let mut blob_mgr = test_blobmgr();
