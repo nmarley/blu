@@ -99,7 +99,8 @@ impl BlobManager {
         Ok(path)
     }
 
-    fn eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
+    /// Do not use, for testing only.
+    fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
         let data = self.data.clone();
         let pos = self.positions.clone();
         self.reset_chunk_stage();
@@ -257,7 +258,7 @@ mod test {
     #[test]
     fn blob() {
         let mut blob_mgr = test_blobmgr();
-        let (data, positions) = blob_mgr.eject_blob();
+        let (data, positions) = blob_mgr._eject_blob();
         assert_eq!(
             data,
             vec![
