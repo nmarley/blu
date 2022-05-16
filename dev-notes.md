@@ -10,6 +10,7 @@
   - [ ] 2022-05-07: Add tests for BlobManager. Lots of tests.
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
+  See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
 
 - [ ] Tags / notes on files (on the FileRef portion of the files index). Probably in a later release.
 
