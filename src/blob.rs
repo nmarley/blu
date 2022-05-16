@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
@@ -161,6 +162,16 @@ pub struct BlobChunkLocation {
     position: Position,
 }
 
+impl BlobChunkLocation {
+    pub fn get_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut f = std::fs::File::open(&self.path)?;
+        let mut buf: Vec<u8> = vec![0; self.position.size];
+        let _seekptr = f.seek(SeekFrom::Start(self.position.offset as u64))?;
+        f.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+}
+
 /// BlobIndex maps the plain hash to the blob and position within. This is
 /// managed by the BlobManager.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
@@ -187,6 +198,14 @@ impl BlobIndex {
 
     fn has_chunk(&self, chunk_hash: &Hash) -> bool {
         self.map.contains_key(chunk_hash)
+    }
+
+    fn get_chunk_bytes(&self, chunk_hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let location_ref = self
+            .map
+            .get(chunk_hash)
+            .ok_or("chunk hash not found in index")?;
+        location_ref.get_bytes()
     }
 
     fn deserialize_from_disk<P: AsRef<Path>>(
@@ -258,6 +277,9 @@ mod test {
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
+            vec![0xde, 0xad],
+            vec![0xde, 0xad],
+            vec![0xde, 0xad],
         ];
         let datadir = tempdir().unwrap();
         let mut blob_mgr = BlobManager::with_capacity(&datadir, None, 3);
@@ -265,8 +287,8 @@ mod test {
         for v in vec.iter_mut() {
             blob_mgr.add_chunk(v).unwrap();
         }
-        assert_eq!(blob_mgr.count_blob_files(), vec.len());
-        assert_eq!(blob_mgr.count_chunks_indexed(), vec.len());
+        assert_eq!(blob_mgr.count_blob_files(), 4);
+        assert_eq!(blob_mgr.count_chunks_indexed(), 4);
     }
 
     #[test]
