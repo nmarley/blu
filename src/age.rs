@@ -7,6 +7,12 @@ pub struct BlackBox {
     identities: Vec<age::x25519::Identity>,
 }
 
+impl std::fmt::Debug for BlackBox {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
 // TODO:
 // - seed gen / recovery (24-word seed -> key only)
 impl BlackBox {

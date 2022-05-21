@@ -17,6 +17,9 @@ pub struct BlobManager {
     datadir: PathBuf,
     blob_index: BlobIndex,
 
+    // encryption
+    bbox: Option<BlackBox>,
+
     // transient
     data: Vec<u8>,
     blob_capacity: usize,
@@ -25,14 +28,10 @@ pub struct BlobManager {
 }
 
 impl BlobManager {
-    pub fn new<P: AsRef<Path>>(dir: P, bbox: Option<&BlackBox>) -> Self {
+    pub fn new<P: AsRef<Path>>(dir: P, bbox: Option<BlackBox>) -> Self {
         Self::with_capacity(dir, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
     }
-    pub fn with_capacity<P: AsRef<Path>>(
-        dir: P,
-        _bbox: Option<&BlackBox>,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity<P: AsRef<Path>>(dir: P, bbox: Option<BlackBox>, capacity: usize) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         let blob_index =
             BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
@@ -40,6 +39,7 @@ impl BlobManager {
         Self {
             datadir,
             blob_index,
+            bbox,
             data: vec![],
             blob_capacity: capacity,
             offset: 0,
@@ -91,7 +91,14 @@ impl BlobManager {
     }
 
     fn roll_new_blob(&mut self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let path = self.write_blob(&self.data)?;
+        // TODO: compress / encrypt here
+        let data = match &self.bbox {
+            Some(bbox) => bbox.encrypt(&self.data)?,
+            None => self.data.clone(),
+        };
+        // let encrypted = self.bbox.encrypt(&self.data)?;
+
+        let path = self.write_blob(&data)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
             location.path = path.clone();
             self.blob_index.add_chunk_location(chunk_hash, location);
@@ -176,7 +183,7 @@ impl BlobChunkLocation {
 /// managed by the BlobManager.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
 pub struct BlobIndex {
-    // map the encrypted hash to the location of the data on disk
+    // map the hash to the location of the data on disk
     map: HashMap<Hash, BlobChunkLocation>,
     // Do not re-serialize to disk if the blob index wasn't modified.
     #[serde(skip)]
