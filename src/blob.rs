@@ -223,9 +223,9 @@ impl BlobIndex {
         Ok(decoded)
     }
 
-    fn serialize_to_disk(
+    fn serialize_to_disk<P: AsRef<Path>>(
         &self,
-        index_file_path: impl AsRef<Path>,
+        index_file_path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.modified {
             let encoded = bincode::serialize(&self)?;
