@@ -1,4 +1,8 @@
 # ignore compiled binaries and related
 /target
+
+# ignore data dir
+data/
+
 # ignore test .blu dirs
 .blu/
