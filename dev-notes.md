@@ -2,6 +2,11 @@
 
 ## TODO
 
+- [ ] Implement document index conceptually separate from encryption/hash index
+  - [ ] search tags / filenames
+  - [ ] tag/untag files
+  - [ ] list all tags
+
 - [x] rename crate::block::File to something that does NOT conflict with std::fs::File
 
 - [/] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
