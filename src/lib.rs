@@ -142,7 +142,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&index_filename);
 
     let mut enc_idx_bytes = Vec::new();
-    let _ = index.write(&mut enc_idx_bytes, &bbox)?;
+    index.write(&mut enc_idx_bytes, &bbox)?;
     let mut file = fs::File::create(index_filename)?;
     file.write_all(&enc_idx_bytes)?;
 

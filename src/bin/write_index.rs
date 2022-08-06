@@ -30,14 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dbg!(&index);
 
     // writing index for testing
-    let _ = write_index_file(&index, &bbox)?;
+    write_index_file(&index, &bbox)?;
 
     Ok(())
 }
 
 fn write_index_file(index: &Index, bbox: &BlackBox) -> Result<(), Box<dyn std::error::Error>> {
     let mut enc_idx_bytes = Vec::new();
-    let _ = index.write(&mut enc_idx_bytes, bbox)?;
+    index.write(&mut enc_idx_bytes, bbox)?;
     let mut file = fs::File::create("test-idx-enc.dat")?;
     file.write_all(&enc_idx_bytes)?;
     Ok(())

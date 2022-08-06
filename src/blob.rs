@@ -148,7 +148,7 @@ impl BlobManager {
 
 impl std::ops::Drop for BlobManager {
     fn drop(&mut self) {
-        let _ = self.finalize().unwrap();
+        self.finalize().unwrap();
     }
 }
 
@@ -207,6 +207,7 @@ impl BlobIndex {
         self.map.contains_key(chunk_hash)
     }
 
+    #[allow(dead_code)]
     fn get_chunk_bytes(&self, chunk_hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let location_ref = self
             .map
