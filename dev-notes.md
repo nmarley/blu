@@ -6,6 +6,7 @@
   - [ ] search tags / filenames
   - [ ] tag/untag files
   - [ ] list all tags
+  - [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
 
 - [x] rename crate::block::File to something that does NOT conflict with std::fs::File
 
@@ -16,8 +17,6 @@
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
   See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
-
-- [ ] Tags / notes on files (on the FileRef portion of the files index). Probably in a later release.
 
 ## Understand
 
@@ -42,9 +41,11 @@ Add passphrase encryption for the on-disk private key storage, which must be unl
 
 Priv key never leaves device (not in sync dir).
 
-### Search
+### Search - Document Index
 
 There should be a search function which searches filenames, tags, notes and returns most (or even all) relevant matches (tweakable of course).
+
+### Initialization
 
 ```sh
 blu init /  # should not be allowed
