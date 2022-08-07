@@ -2,6 +2,8 @@
 
 ## TODO
 
+- [ ] status command
+
 - [ ] Implement document index conceptually separate from encryption/hash index
   - [ ] search tags / filenames
   - [ ] tag/untag files
