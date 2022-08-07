@@ -29,6 +29,11 @@ impl PlainIndex {
         Ok(Self { files, blocks })
     }
 
+    // pub fn read<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+    //     let (files, blocks) = Self::build_index(dir)?;
+    //     Ok(Self { files, blocks })
+    // }
+
     fn build_index<P: AsRef<Path>>(
         dir: P,
     ) -> Result<(FileIndex, BlockIndex), Box<dyn std::error::Error>> {
