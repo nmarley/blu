@@ -487,7 +487,7 @@ impl EncryptedIndex {
                 let mut v: Vec<_> = set_enc.iter().collect();
                 v.sort();
                 let mut v_iter = v.into_iter();
-                let top_enc_hash = &*v_iter.next().unwrap();
+                let top_enc_hash = v_iter.next().unwrap();
 
                 // this is so screwy ...
                 for item in v_iter {
