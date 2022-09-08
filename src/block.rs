@@ -11,7 +11,7 @@ use crate::hash::{self, Hash};
 const BLOCK_SIZE: usize = 4096;
 
 /// PlainIndex ...
-#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct PlainIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
     files: HashMap<Hash, FileRef>,
@@ -118,7 +118,7 @@ impl PlainIndex {
 // blockref -> option<enc hash>
 //          -> set of references to chunk on disk
 /// BlockRef has a collection of file hashes which reference a particular block.
-#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct BlockRef {
     // on-disk locations where this block can be read if necessary
     pub references: HashSet<FileRefLocationIndex>,
@@ -144,7 +144,7 @@ impl BlockRef {
 
 /// FileRef is a container encapsulating a Vec<ChunkMeta> (collection of hashes
 /// of chunks read from a fs::File) and filesystem references to it (filenames)
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct FileRef {
     chunkmetas: Vec<ChunkMeta>,
     paths: HashSet<PathBuf>,
@@ -165,7 +165,7 @@ impl FileRef {
 }
 
 // ChunkMeta is the hash of a chunk of data and the size of the data, before hashing
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct ChunkMeta {
     hash: Hash,
     size: usize,

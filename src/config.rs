@@ -7,7 +7,7 @@ use std::{
 };
 
 // TODO: implement backends -- probably a trait
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub enum Backend {
     Local,
     S3,
@@ -44,7 +44,7 @@ const DEFAULT_DATADIR: &str = ".blu/data";
 //                                              "$HOME/.blu/secrets/blu.pub";
 // std::env::get("HOME")
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct Config {
     pub backend: Backend,
     pub blu_version: String,

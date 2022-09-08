@@ -17,7 +17,7 @@ use crate::magic::Wizard;
 
 pub const INDEX_FILENAME: &str = "index.dat";
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct Entry {
     paths: HashSet<PathBuf>,
     filetype: String,
@@ -92,7 +92,7 @@ fn deserialize_index(data: &[u8]) -> Result<Index, Box<dyn std::error::Error>> {
 
 // This struct is only used to deserialize and convert into a new index with
 // timestamps.
-#[derive(PartialEq, Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize, Eq)]
 pub struct OldIndex {
     map: HashMap<Hash, Entry>,
     version: String,
@@ -112,7 +112,7 @@ impl OldIndex {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct Index {
     map: HashMap<Hash, Entry>,
     version: String,
@@ -312,7 +312,7 @@ impl Default for Index {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct EncryptedIndex {
     map: HashMap<Hash, Encrypted>,
 }

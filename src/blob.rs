@@ -154,7 +154,7 @@ impl std::ops::Drop for BlobManager {
 
 /// Position is the offset and size of a chunk of data within a bigger blob of
 /// data.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct Position {
     // where to start reading
     offset: usize,
@@ -163,7 +163,7 @@ pub struct Position {
 }
 
 /// BlobChunkLocation is a path to a blob file and a position (offset/size)
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct BlobChunkLocation {
     path: PathBuf,
     position: Position,
@@ -181,7 +181,7 @@ impl BlobChunkLocation {
 
 /// BlobIndex maps the plain hash to the blob and position within. This is
 /// managed by the BlobManager.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
     // map the hash to the location of the data on disk
     map: HashMap<Hash, BlobChunkLocation>,
