@@ -1,6 +1,7 @@
 // #![allow(dead_code)]
 // #![allow(unused_imports)]
 
+use clap::Parser;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -11,7 +12,7 @@ extern crate log;
 pub mod age;
 pub mod blob;
 pub mod block;
-pub mod clap;
+pub mod clapargs;
 pub mod compression;
 pub mod config;
 pub mod dir;
@@ -20,6 +21,8 @@ pub mod hash;
 pub mod magic;
 pub mod metadata;
 
+pub mod cmds;
+
 const TEST_AGE_SECRET_KEY: &str =
     "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use crate::age::BlackBox;
@@ -27,13 +30,26 @@ use crate::hash::Hash;
 use crate::metadata::{Encrypted, EncryptedIndex, Index, INDEX_FILENAME};
 
 // also: consider an internal webserver which serves up the UI for blu
+
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // TODO: handle cmd-line args w/clap
-    // let mut args: Args = Args::parse();
+    let args: clapargs::Args = clapargs::Args::parse();
     // if args.num_crawlers < 1 || args.num_crawlers > 999 {
     //     args.num_crawlers = 96; // how to get default here?
     // }
-    // dbg!(&args);
+    dbg!(&args);
+    println!("action: {:?}", args.action);
+    match args.action {
+        clapargs::Action::Add => {
+            cmds::add();
+        },
+        clapargs::Action::Init => {
+            cmds::init();
+        },
+        clapargs::Action::Restore => {
+            cmds::restore();
+        },
+    };
 
     // let key = read-key-from-.blu/metadata.json;
     // decrypt somehow?
