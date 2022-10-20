@@ -42,13 +42,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     match args.action {
         clapargs::Action::Add => {
             cmds::add();
-        },
+        }
         clapargs::Action::Init => {
             cmds::init();
-        },
+        }
         clapargs::Action::Restore => {
             cmds::restore();
-        },
+        }
+        _ => {
+            println!("Other")
+        }
     };
 
     // let key = read-key-from-.blu/metadata.json;
