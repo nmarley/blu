@@ -65,3 +65,5 @@ If a web-ui is added, probably would like to use Actix-Web. A new version was ju
 ## TODOs
 
 - Should there be a .bluignore, similar to .gitignore? Or within .blu, e.g. .blu/ignore?
+
+- Consider licensing as Apache + MIT dual license or similar
