@@ -1,12 +1,14 @@
 use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::hash::{self, Hash};
+
+mod chunkerator;
+pub use chunkerator::Chunkerator;
 
 const BLOCK_SIZE: usize = 4096;
 
@@ -194,51 +196,9 @@ impl ChunkMeta {
     }
 }
 
-/// Chunkerator reads files a "chunk" at a time, and returns chunks via the
-/// iterator.
-#[derive(Debug)]
-pub struct Chunkerator {
-    buf_reader: BufReader<std::fs::File>,
-}
-
-impl Chunkerator {
-    fn new<P: AsRef<Path>>(
-        filepath: P,
-        chunk_size: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let f = std::fs::File::open(filepath.as_ref()).unwrap();
-        let reader = BufReader::with_capacity(chunk_size, f);
-        Ok(Self { buf_reader: reader })
-    }
-}
-
-impl std::iter::Iterator for Chunkerator {
-    type Item = Vec<u8>;
-    fn next(&mut self) -> Option<Self::Item> {
-        // fill entire reader
-        let data = match self.buf_reader.fill_buf() {
-            Ok(data) => data,
-            Err(e) => {
-                error!("Chunkerator read error: {}", e);
-                return None;
-            }
-        };
-        // handle None case (no more data to read)
-        if data.is_empty() {
-            return None;
-        }
-        let data = data.to_vec();
-        self.buf_reader.consume(data.len());
-        Some(data)
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use super::{
-        BlockRef, ChunkMeta, Chunkerator, FileRef, FileRefLocationIndex, Hash, PlainIndex,
-        BLOCK_SIZE,
-    };
+    use super::{BlockRef, ChunkMeta, FileRef, FileRefLocationIndex, Hash, PlainIndex};
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
 
@@ -434,14 +394,5 @@ mod test {
         let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
         assert_eq!(index.files, helper_files_map());
         assert_eq!(index.blocks, helper_blocks_map());
-    }
-
-    #[test]
-    fn chunkerator() {
-        let file5_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-        let mut chunker = Chunkerator::new(file5_path, BLOCK_SIZE).unwrap();
-        let chunk = chunker.next();
-        assert!(chunk.is_some());
-        assert_eq!(chunk.unwrap().len(), 1024);
     }
 }
