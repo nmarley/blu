@@ -1,6 +1,3 @@
-// #![allow(dead_code)]
-// #![allow(unused_imports)]
-
 use clap::Parser;
 use std::{env, process};
 

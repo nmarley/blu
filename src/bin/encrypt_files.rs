@@ -1,8 +1,3 @@
-// #![allow(dead_code)]
-// #![allow(unused_imports)]
-// #![allow(unused_mut)]
-// #![allow(unused_variables)]
-
 use std::env;
 
 use blu::age::BlackBox;
