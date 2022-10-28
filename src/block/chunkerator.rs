@@ -52,7 +52,6 @@ impl std::iter::Iterator for Chunkerator {
 #[cfg(test)]
 mod test {
     use super::Chunkerator;
-    // use crate::{BlockRef, ChunkMeta, FileRef, FileRefLocationIndex, Hash, PlainIndex};
     use crate::block::BLOCK_SIZE;
     use std::path::Path;
 
