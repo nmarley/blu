@@ -36,5 +36,5 @@ Two halves - plain + encrypted
 
 __TODO: Finish this design__
 
-All encryption is done via age keys. Currently only single-key symmetric is supported.
+All encryption is done via age keys. Currently only single-keypair asymmetric encryption is supported.
 
