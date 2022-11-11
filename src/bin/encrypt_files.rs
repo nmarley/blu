@@ -1,8 +1,3 @@
-// #![allow(dead_code)]
-// #![allow(unused_imports)]
-// #![allow(unused_mut)]
-// #![allow(unused_variables)]
-
 use std::env;
 
 use blu::age::BlackBox;
@@ -31,17 +26,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&cfg);
 
     let index = PlainIndex::new(dir)?;
-    // dbg!(&index);
+    dbg!(&index);
 
-    let mut blob_mgr = BlobManager::new(&cfg.datadir(), Some(bbox));
-    // dbg!(&blob_mgr);
-
+    //let mut blob_mgr = BlobManager::new(&cfg.datadir(), Some(bbox));
+    //// dbg!(&blob_mgr);
+    //
     // Let the BlobManager determine if we need to encrypt something ...
-    for (_block_hash, block_ref) in index.blocks_map_ref().iter() {
-        // dbg!(&block_ref);
-        let mut chunk_bytes = index.get_chunk_bytes(block_ref);
-        blob_mgr.add_chunk(&mut chunk_bytes)?;
-    }
+    //for (_block_hash, block_ref) in index.blocks_map_ref().iter() {
+    //    // dbg!(&block_ref);
+    //    let mut chunk_bytes = index.get_chunk_bytes(block_ref);
+    //    blob_mgr.add_chunk(&mut chunk_bytes)?;
+    //}
 
     Ok(())
 }
