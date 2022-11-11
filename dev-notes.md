@@ -1,5 +1,10 @@
 # dev notes
 
+## Note (2022-11-11):
+
+I'm realizing that instead of mixing up encryption + metadata, tagging and de-duplication, instead I should focus ONLY on the metadata portion for now. The encryption should be transparent and will come, and separately. Can focus on UX (don't need web UI right now but _could_ ostensibly in a few versions down the road), such as tagging and data search. Make encryption optional (at least in this phase of the design) and not necessary for every effing command. Will make implementing this conceptutally much easier.
+
+
 ## TODO
 
 - [ ] status command
