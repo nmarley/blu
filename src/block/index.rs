@@ -19,7 +19,7 @@ use super::FileRef;
 
 const BLOCK_SIZE: usize = 4096;
 
-// const INDEX_FILENAME: &str = "index.dat";
+pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.0";
 
 type FileIndex = HashMap<Hash, FileRef>;

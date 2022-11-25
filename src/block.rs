@@ -14,6 +14,7 @@ use fileref::FileRef;
 
 pub use chunkerator::Chunkerator;
 pub use index::PlainIndex;
+pub use index::INDEX_FILENAME;
 
 const BLOCK_SIZE: usize = 4096;
 

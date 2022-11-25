@@ -2,7 +2,7 @@ use std::env;
 
 use blu::age::BlackBox;
 use blu::blob::BlobManager;
-use blu::block::PlainIndex;
+use blu::block::{PlainIndex, INDEX_FILENAME};
 use blu::config;
 
 const TEST_AGE_SECRET_KEY: &str =
@@ -25,8 +25,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     dbg!(&cfg);
 
-    let index = PlainIndex::new(dir)?;
+    let datadir = cfg.datadir();
+    dbg!(&datadir);
+
+    // TODO: add this to either metadata, dir, config
+    let index_filename = &datadir.join(INDEX_FILENAME);
+    dbg!(&index_filename);
+
+    // read+decrypt the index from std location:
+    let data = std::fs::read(index_filename)?;
+    let index = PlainIndex::read(&data[..], &bbox)?;
     dbg!(&index);
+
+    // TODO: ... do we only encrypt the files in index, or do we add/update
+    // files, THEN encrypt everything that is not already encrypted?
 
     //let mut blob_mgr = BlobManager::new(&cfg.datadir(), Some(bbox));
     //// dbg!(&blob_mgr);
