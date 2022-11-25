@@ -8,6 +8,7 @@ I'm realizing that instead of mixing up encryption + metadata, tagging and de-du
 ## TODO
 
 - [ ] status command
+  -- which does what? Describe this.
 
 - [ ] Implement document index conceptually separate from encryption/hash index
   - [ ] search tags / filenames
