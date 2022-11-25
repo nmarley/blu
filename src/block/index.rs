@@ -2,10 +2,12 @@ use chrono::NaiveDateTime;
 use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use walkdir::WalkDir;
 
+use crate::age::BlackBox;
+use crate::compression::{compress, decompress};
 use crate::format::datetime_format;
 use crate::hash::Hash;
 
@@ -49,10 +51,46 @@ impl PlainIndex {
         })
     }
 
-    // pub fn read<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
-    //     let (files, blocks) = Self::build_index(dir)?;
-    //     Ok(Self { files, blocks })
-    // }
+    // read / write serialization methods integrate BlackBox for automagic
+    // decryption / encryption when reading from disk
+    pub fn write<W: io::Write>(
+        &self,
+        mut stream: W,
+        bbox: &BlackBox,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let serialized = self.serialize()?;
+        let compressed = compress(&serialized)?;
+        let encrypted = bbox.encrypt(&compressed)?;
+        let _ = stream.write_all(&encrypted);
+        Ok(())
+    }
+
+    fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        // let decoded: Index = serde_cbor::from_slice(data)?;
+        let decoded: Self = bincode::deserialize(data)?;
+        // let decoded: Self = match bincode::deserialize(data) {
+        //     Ok(index) => index,
+        //     Err(_) => OldIndex::deserialize(data)?.into_index(),
+        // };
+        Ok(decoded)
+    }
+
+    fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let encoded: Vec<u8> = bincode::serialize(&self)?;
+        // let encoded: Vec<u8> = serde_cbor::to_vec(&self)?;
+        Ok(encoded)
+    }
+
+    pub fn read<R: io::Read>(
+        mut stream: R,
+        bbox: &BlackBox,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut encrypted = Vec::new();
+        let _ = stream.read_to_end(&mut encrypted)?;
+        let compressed = bbox.decrypt(&encrypted)?;
+        let serialized = decompress(&compressed)?;
+        Self::deserialize(&serialized)
+    }
 
     fn build_index<P: AsRef<Path>>(
         dir: P,
