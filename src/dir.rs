@@ -33,7 +33,7 @@ impl Manager {
         // create the path (directories)
         fs::create_dir_all(path.parent().unwrap())?;
         // write file
-        fs::write(&path, &data)?;
+        fs::write(&path, data)?;
 
         Ok(path)
     }
@@ -57,7 +57,7 @@ impl Manager {
         // dbg!(&mh.size());
         // dbg!(&mh.digest());
 
-        let hash_str = hex::encode(&mh.digest());
+        let hash_str = hex::encode(mh.digest());
         // dbg!(&hash_str);
 
         Ok(self

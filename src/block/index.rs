@@ -113,7 +113,7 @@ impl PlainIndex {
             // chunking, full file hashing
             let mut chunkmetas: Vec<ChunkMeta> = vec![];
             let mut hasher = Sha2_512::default();
-            let chunker = Chunkerator::new(&elem.path(), BLOCK_SIZE)?;
+            let chunker = Chunkerator::new(elem.path(), BLOCK_SIZE)?;
             for chunk in chunker {
                 chunkmetas.push(ChunkMeta::new(&chunk));
                 hasher.update(&chunk);
