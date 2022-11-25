@@ -1,13 +1,17 @@
 use std::io::Write;
 use std::{env, fs};
 
-const TEST_AGE_SECRET_KEY: &str =
-    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
 use blu::age::BlackBox;
 use blu::config;
 use blu::metadata::{EncryptedIndex, Index};
 
+const TEST_AGE_SECRET_KEY: &str =
+    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+const V1_WARNING: &str = "WARNING: This tool is from v0.1 and will not work w/current codebase";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}\n", V1_WARNING);
+
     let mut args = env::args();
     if args.len() == 1 {
         eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
