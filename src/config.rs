@@ -1,5 +1,6 @@
 use crate::age::BlackBox;
-use crate::metadata::{Index, INDEX_FILENAME};
+use crate::block::{PlainIndex, INDEX_FILENAME};
+use crate::metadata::{Index, INDEX_FILENAME as V1_INDEX_FILENAME};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -78,10 +79,38 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
 }
 
 impl Config {
-    pub fn load_index(&self, bbox: &BlackBox) -> Result<Option<Index>, Box<dyn std::error::Error>> {
+    pub fn load_index(
+        &self,
+        bbox: &BlackBox,
+    ) -> Result<Option<PlainIndex>, Box<dyn std::error::Error>> {
+        self.v2_load_index(bbox)
+    }
+
+    pub fn v2_load_index(
+        &self,
+        bbox: &BlackBox,
+    ) -> Result<Option<PlainIndex>, Box<dyn std::error::Error>> {
+        let index_path = self.datadir().join(INDEX_FILENAME);
+
+        // todo: filter index.dat
+        // if error loading this (e.g. file doesn't exist) then return None or
+        // build a new index ... consider building a new one instead of None.
+        let index_data: Vec<u8> = match fs::read(index_path) {
+            Ok(data) => data,
+            Err(_) => return Ok(None),
+        };
+        // read index
+        let index = PlainIndex::read(&index_data[..], bbox)?;
+        Ok(Some(index))
+    }
+
+    pub fn v1_load_index(
+        &self,
+        bbox: &BlackBox,
+    ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
         // should always sit in same directory with the data
         // this should _not_ be user-configurable (e.g. should not be in Config)
-        let index_path = self.datadir().join(INDEX_FILENAME);
+        let index_path = self.datadir().join(V1_INDEX_FILENAME);
         // todo: filter index.dat
 
         // if error loading this (e.g. file doesn't exist) then return None or
@@ -114,6 +143,7 @@ pub(crate) mod test {
     const TEST_DIR_T0: &str = "test/t0/";
     const TEST_DIR_T1: &str = "test/t1/";
     const TEST_DIR_T2: &str = "test/t2/";
+    const TEST_DIR_BLOCKS_T4: &str = "test/blocks/t4/";
 
     #[test]
     fn read_config() {
@@ -134,10 +164,31 @@ pub(crate) mod test {
     }
 
     #[test]
-    fn load_index() {
+    fn v1_load_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_DIR_T2).unwrap();
+        let index = cfg.v1_load_index(&bbox).unwrap();
+
+        assert!(index.is_some());
+        let _index = index.unwrap();
+    }
+
+    #[test]
+    fn v2_load_index() {
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
+        let index = cfg.v2_load_index(&bbox).unwrap();
+
+        assert!(index.is_some());
+        let _index = index.unwrap();
+    }
+
+    #[test]
+    fn load_index() {
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
         let index = cfg.load_index(&bbox).unwrap();
+        dbg!(&index);
 
         assert!(index.is_some());
         let _index = index.unwrap();
