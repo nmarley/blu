@@ -53,7 +53,6 @@ impl std::iter::Iterator for Chunkerator {
 #[cfg(test)]
 mod test {
     use super::Chunkerator;
-    use crate::block::BLOCK_SIZE;
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
@@ -61,9 +60,9 @@ mod test {
     #[test]
     fn chunkerator() {
         let file5_path = Path::new(TEST_BLOCKS_DIR_T1).join("file5.txt");
-        let mut chunker = Chunkerator::new(file5_path, BLOCK_SIZE).unwrap();
+        let mut chunker = Chunkerator::new(file5_path, 512).unwrap();
         let chunk = chunker.next();
         assert!(chunk.is_some());
-        assert_eq!(chunk.unwrap().len(), 1024);
+        assert_eq!(chunk.unwrap().len(), 512);
     }
 }
