@@ -1,9 +1,9 @@
 use chrono::NaiveDateTime;
 use multihash::{Code, Hasher, MultihashDigest, Sha2_512};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -170,6 +170,89 @@ impl PlainIndex {
         let _seekptr = f.seek(SeekFrom::Start(disk_index.offset as u64)).unwrap();
         f.read_exact(&mut buf).unwrap();
         buf
+    }
+
+    // Update the index, return a list of removed (dangling) entries
+    // TODO: test this update method
+    //   - ensure that pathbufs are updated
+    //   - ensure that deleted filerefs and blockrefs are removed from index
+    //   - ensure that added filerefs and blockrefs are added to index
+    //
+    // Probably should create an index via `new`, and then use a different
+    // updated dir with `update` and ensure expected changes are applied.
+    pub fn update<P: AsRef<Path>>(
+        &mut self,
+        base_dir: P,
+    ) -> Result<(Vec<FileRef>, Vec<BlockRef>), Box<dyn std::error::Error>> {
+        let new_index = Self::new(base_dir)?;
+
+        let mut to_delete: HashSet<Hash> = HashSet::new();
+        let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
+        let mut is_updated = false;
+
+        // TODO: handle both BlockRefs and FileRefs in NEW and OLD
+
+        // for each fileref in OLD ...
+        for hash in self.files.keys() {
+            if let Some(fileref) = new_index.files.get(hash) {
+                // TODO: WRITE TEST FOR THIS
+                // update in case path changed or was added
+                new_paths.insert(hash.clone(), fileref.paths.clone());
+            } else {
+                // if it does NOT exist in NEW ...
+                // ... add it to to_delete
+                to_delete.insert(hash.clone());
+            }
+        }
+
+        // set new paths
+        for (hash, paths) in new_paths.into_iter() {
+            self.files.entry(hash).and_modify(|e| e.paths = paths);
+        }
+
+        // for each hash/fileref in NEW ...
+        for (hash, fileref) in new_index.files.into_iter() {
+            if let None = self.files.get(&hash) {
+                // add it
+                self.files.insert(hash, fileref);
+            }
+        }
+
+        // files HashMap::<Hash, FileRef>
+        // to_delete HashSet<&Hash>
+        let mut deleted_filerefs: Vec<FileRef> = vec![];
+        for hash in to_delete.into_iter() {
+            let e = self.files.remove_entry(&hash).unwrap();
+            deleted_filerefs.push(e.1);
+            is_updated = true;
+        }
+
+        // blockrefs
+        //
+        let mut to_delete: HashSet<Hash> = HashSet::new();
+        // for each blockref in OLD ...
+        for hash in self.blocks.keys() {
+            if let None = new_index.blocks.get(hash) {
+                // this blockref should be removed
+                // ... add it to to_delete
+                to_delete.insert(hash.clone());
+            }
+        }
+
+        // blocks HashMap::<Hash, BlockRef>
+        // to_delete HashSet<&Hash>
+        let mut deleted_blockrefs: Vec<BlockRef> = vec![];
+        for hash in to_delete.into_iter() {
+            let e = self.blocks.remove_entry(&hash).unwrap();
+            deleted_blockrefs.push(e.1);
+            is_updated = true;
+        }
+
+        if is_updated {
+            self.updated_at = now();
+        }
+
+        Ok((deleted_filerefs, deleted_blockrefs))
     }
 }
 
