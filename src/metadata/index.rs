@@ -14,7 +14,7 @@ use crate::format::datetime_format;
 use crate::hash::{self, Hash};
 use crate::magic::Wizard;
 
-#[allow(unused_imports)]
+// #[allow(unused_imports)]
 use super::encrypted::{Encrypted, EncryptedIndex};
 use super::entry::Entry;
 

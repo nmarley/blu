@@ -1,3 +1,4 @@
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
@@ -14,7 +15,7 @@ use std::path::Path;
 /// ```
 #[derive(Debug)]
 pub struct Chunkerator {
-    buf_reader: BufReader<std::fs::File>,
+    buf_reader: BufReader<File>,
 }
 
 impl Chunkerator {
@@ -22,7 +23,7 @@ impl Chunkerator {
         filepath: P,
         chunk_size: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let f = std::fs::File::open(filepath.as_ref()).unwrap();
+        let f = File::open(filepath.as_ref()).unwrap();
         let reader = BufReader::with_capacity(chunk_size, f);
         Ok(Self { buf_reader: reader })
     }

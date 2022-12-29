@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::hash::Hash;
-
 mod blockref;
 mod chunkerator;
 mod chunkmeta;
@@ -20,9 +17,11 @@ const BLOCK_SIZE: usize = 4096;
 
 #[cfg(test)]
 mod test {
-    use super::{BlockRef, ChunkMeta, FileRef, FileRefLocationIndex, Hash, PlainIndex};
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
+
+    use super::{BlockRef, ChunkMeta, FileRef, FileRefLocationIndex, PlainIndex};
+    use crate::hash::Hash;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
     // -rw-r--r-- 1 joshua staff 16384 Mar 22 15:32 file1.txt
