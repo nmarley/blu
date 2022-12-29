@@ -277,15 +277,8 @@ mod test {
         let before_path = Path::new(TEST_BLOCKS_DIR_T5).join("before");
         let after_path = Path::new(TEST_BLOCKS_DIR_T5).join("after");
         let mut index = PlainIndex::new(before_path).unwrap();
-        // let exp = helper_files_map("test/blocks/t5/before");
 
-        // TODO: remove this block once test complete
-        // for (hash, fileref) in index.files.iter() {
-        //     if let Some(fr) = exp.get(hash) {
-        //         assert_eq!(fr, fileref);
-        //     }
-        //     // println!("{:?}: {:?}", hash, fileref);
-        // }
+        // TODO: need a better way of mocking paths for test
 
         let prefix = "test/blocks/t5/before";
         let before_filerefs = HashMap::from([
@@ -481,78 +474,95 @@ mod test {
             ),
         ]);
 
-        // let after_blockrefs = HashMap::from([
-        //     (
-        //         Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
-        //         BlockRef {
-        //             references: HashSet::from([
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
-        //                     offset: 0,
-        //                     size: 1024,
-        //                 },
-        //             ]),
-        //         }
-        //     ),
-        //     (
-        //         Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
-        //         BlockRef {
-        //             references: HashSet::from([
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
-        //                     offset: 4096,
-        //                     size: 4096,
-        //                 },
-        //             ]),
-        //         },
-        //     ),
-        //     (
-        //         Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
-        //         BlockRef {
-        //             references: HashSet::from([
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
-        //                     offset: 0,
-        //                     size: 4096,
-        //                 },
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
-        //                     offset: 0,
-        //                     size: 4096,
-        //                 },
-        //             ]),
-        //         },
-        //     ),
-        //     (
-        //         Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
-        //         BlockRef {
-        //             references: HashSet::from([
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
-        //                     offset: 12288,
-        //                     size: 4096,
-        //                 },
-        //             ]),
-        //         },
-        //     ),
-        //     (
-        //         Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-        //         BlockRef {
-        //             references: HashSet::from([
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
-        //                     offset: 8192,
-        //                     size: 4096,
-        //                 },
-        //                 FileRefLocationIndex {
-        //                     file_hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-        //                     offset: 0,
-        //                     size: 4096,
-        //                 },
-        //             ]),
-        //         },
-        //     ),
-        // ]);
+        // NGM
+        // BlockRef = hashset <filereflocation>
+        // pub struct FileRefLocationIndex {
+        //     pub file_hash: Hash,
+        //     pub offset: usize,
+        //     pub size: usize,
+        // }
+        // let mut blocks = HashMap::<Hash, BlockRef>::new();
+        // blocks index maps chunk hash to blockref
+
+        let after_blockrefs = HashMap::from([
+            (
+                Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file6
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                            offset: 0,
+                            size: 1024,
+                        },
+                    ]),
+                }
+            ),
+            (
+                Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file1
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            offset: 4096,
+                            size: 4096,
+                        },
+                    ]),
+                },
+            ),
+            (
+                Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file1
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            offset: 0,
+                            size: 4096,
+                        },
+                        // file2
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                            offset: 0,
+                            size: 4096,
+                        },
+                    ]),
+                },
+            ),
+            (
+                Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file1
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            offset: 12288,
+                            size: 4096,
+                        },
+                    ]),
+                },
+            ),
+            (
+                Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file1
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            offset: 8192,
+                            size: 4096,
+                        },
+                        // file4 -- should be deleted?
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                            offset: 0,
+                            size: 4096,
+                        },
+                    ]),
+                },
+            ),
+        ]);
 
         assert_eq!(index.files, before_filerefs);
         assert_eq!(index.blocks, before_blockrefs);
@@ -570,7 +580,7 @@ mod test {
 
         let (filerefs, _blockrefs) = index.update(after_path).unwrap();
         assert_eq!(index.files, after_filerefs);
-        // assert_eq!(index.blocks, after_blockrefs);
+        assert_eq!(index.blocks, after_blockrefs);
 
         let prefix = "test/blocks/t5/before";
         let deleted_filerefs = Vec::from([
