@@ -102,6 +102,7 @@ impl PlainIndex {
         // TODO: normalize paths by removing `dir` prefix from each elem walked
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
             // skip special .blu dir
+            #[allow(clippy::needless_borrow)]
             if elem.path().starts_with(&bludir) {
                 continue;
             }

@@ -97,6 +97,7 @@ impl Index {
         for elem in WalkDir::new(&base_dir).into_iter().filter_map(|e| e.ok()) {
             // TODO: normalize path prefixes (see comment just above)
             // skip special .blu dir
+            #[allow(clippy::needless_borrow)]
             if elem.path().starts_with(&bludir) {
                 continue;
             }
