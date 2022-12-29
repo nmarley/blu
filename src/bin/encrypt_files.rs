@@ -1,7 +1,7 @@
 use std::env;
 
 use blu::age::BlackBox;
-use blu::blob::BlobManager;
+// use blu::blob::BlobManager;
 use blu::block::{PlainIndex, INDEX_FILENAME};
 use blu::config;
 

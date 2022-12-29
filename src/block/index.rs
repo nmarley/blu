@@ -213,7 +213,7 @@ impl PlainIndex {
 
         // for each hash/fileref in NEW ...
         for (hash, fileref) in new_index.files.into_iter() {
-            if let None = self.files.get(&hash) {
+            if self.files.get(&hash).is_none() {
                 // add it
                 self.files.insert(hash, fileref);
             }
@@ -233,7 +233,7 @@ impl PlainIndex {
         let mut to_delete: HashSet<Hash> = HashSet::new();
         // for each blockref in OLD ...
         for hash in self.blocks.keys() {
-            if let None = new_index.blocks.get(hash) {
+            if new_index.blocks.get(hash).is_none() {
                 // this blockref should be removed
                 // ... add it to to_delete
                 to_delete.insert(hash.clone());

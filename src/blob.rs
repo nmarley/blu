@@ -207,7 +207,7 @@ impl BlobIndex {
         self.map.contains_key(chunk_hash)
     }
 
-    // #[allow(dead_code)]
+    #[allow(dead_code)]
     fn get_chunk_bytes(&self, chunk_hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let location_ref = self
             .map
