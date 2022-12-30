@@ -639,20 +639,20 @@ mod test {
                     ]),
                 },
             ),
-            // (
-            //     // 'e' * 4095
-            //     Hash::from("1340a2186f7619d9b6cf298d9cf1d3a2fb02f916b275b749280c490f701bbf4efecd8f4dd0fb8ba9d806bcf7a26419166601e77bc8f25314e38fc336e55d8dc25de8"),
-            //     BlockRef {
-            //         references: HashSet::from([
-            //             // file3 - new
-            //             FileRefLocationIndex {
-            //                 file_hash: Hash::from("1340a2186f7619d9b6cf298d9cf1d3a2fb02f916b275b749280c490f701bbf4efecd8f4dd0fb8ba9d806bcf7a26419166601e77bc8f25314e38fc336e55d8dc25de8"),
-            //                 offset: 0,
-            //                 size: 4096,
-            //             },
-            //         ]),
-            //     },
-            // ),
+            (
+                // 'e' * 4095
+                Hash::from("1340a2186f7619d9b6cf298d9cf1d3a2fb02f916b275b749280c490f701bbf4efecd8f4dd0fb8ba9d806bcf7a26419166601e77bc8f25314e38fc336e55d8dc25de8"),
+                BlockRef {
+                    references: HashSet::from([
+                        // file3 - new
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("1340a2186f7619d9b6cf298d9cf1d3a2fb02f916b275b749280c490f701bbf4efecd8f4dd0fb8ba9d806bcf7a26419166601e77bc8f25314e38fc336e55d8dc25de8"),
+                            offset: 0,
+                            size: 4096,
+                        },
+                    ]),
+                },
+            ),
         ]);
 
         // ├── after
@@ -678,10 +678,10 @@ mod test {
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
 
-        // for (hash, fileref) in index.files.iter() {
-        //     println!("hash: {:?}, fileref: {:?}", hash, fileref);
-        //     assert_eq!(after_filerefs.get(hash), Some(fileref));
-        // }
+        for (hash, blockref) in index.blocks.iter() {
+            println!("hash: {:?}, blockref: {:?}", hash, blockref);
+            assert_eq!(after_blockrefs.get(hash), Some(blockref));
+        }
 
         assert_eq!(index.files, after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
