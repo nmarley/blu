@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dbg!(&index);
     println!("uniq bytes indexed: {}", index.uniq_bytes_indexed());
     println!("total bytes indexed: {}", index.total_bytes_indexed());
+    println!("dupe bytes indexed: {}", index.duplicate_bytes_indexed());
 
     Ok(())
 }

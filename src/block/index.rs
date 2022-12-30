@@ -165,6 +165,11 @@ impl PlainIndex {
         })
     }
 
+    // returns number of duplicate bytes on disk (bytes saved in encryption step by de-duplicating)
+    pub fn duplicate_bytes_indexed(&self) -> u64 {
+        self.total_bytes_indexed() - self.uniq_bytes_indexed()
+    }
+
     pub fn count_blocks(&self) -> usize {
         self.blocks.len()
     }
