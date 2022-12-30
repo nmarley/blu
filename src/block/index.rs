@@ -145,6 +145,26 @@ impl PlainIndex {
         Ok((files, blocks))
     }
 
+    // returns unique bytes indexed, excludes duplicates
+    pub fn uniq_bytes_indexed(&self) -> u64 {
+        self.blocks.iter().fold(0u64, |acc, elem| {
+            elem.1.references.iter().next().unwrap().size as u64 + acc
+        })
+    }
+
+    // returns total bytes indexed, including duplicates
+    pub fn total_bytes_indexed(&self) -> u64 {
+        self.blocks.iter().fold(0u64, |acc, elem| {
+            acc + elem
+                .1
+                .references
+                .iter()
+                .fold(0u64, |inner_acc, inner_elem| {
+                    inner_elem.size as u64 + inner_acc
+                })
+        })
+    }
+
     pub fn count_blocks(&self) -> usize {
         self.blocks.len()
     }
