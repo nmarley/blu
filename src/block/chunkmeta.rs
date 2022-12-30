@@ -6,7 +6,7 @@ use crate::block::BLOCK_SIZE;
 use crate::hash::{self, Hash};
 
 // ChunkMeta is the hash of a chunk of data and the size of the data, before hashing
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Ord, PartialOrd)]
 pub struct ChunkMeta {
     pub hash: Hash,
     pub size: usize,

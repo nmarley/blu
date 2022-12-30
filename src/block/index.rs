@@ -311,13 +311,25 @@ mod test {
     // - ensures that pathbufs are updated
     // - ensures that deleted filerefs and blockrefs are removed from index
     // - ensures that added filerefs and blockrefs are added to index
-    //
-    // - TODO: test for deleted blockrefs removed from index
     #[test]
     fn update_index() {
         let mut index = PlainIndex::new(TEST_BLOCKS_DIR_T5).unwrap();
 
         let before_filerefs = HashMap::from([
+            (
+                // file_f
+                Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                FileRef {
+                    chunkmetas: vec![
+                        ChunkMeta {
+                            // 'f' * 4095
+                            hash: Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                            size: 4096,
+                        },
+                    ],
+                    paths: HashSet::from(["test/blocks/t5/file_f.txt".into()])
+                },
+            ),
             (
                 // file5
                 Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
@@ -392,6 +404,20 @@ mod test {
         ]);
 
         let before_blockrefs = HashMap::from([
+            (
+                // 'f' * 4095
+                Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                BlockRef {
+                    references: HashSet::from([
+                        FileRefLocationIndex {
+                            // file_f - 'f' * 4095
+                            file_hash: Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                            offset: 0,
+                            size: 4096,
+                        },
+                    ]),
+                }
+            ),
             (
                 // file5 - 'a' * 1023
                 Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
@@ -492,6 +518,10 @@ mod test {
         let mut e_buf = vec![b'e'; 4095];
         e_buf.push(b'\n');
         std::fs::write(dir_path.join("file3.txt"), e_buf).unwrap();
+
+        // remove file_f.txt
+        let file_f_buf = std::fs::read(dir_path.join("file_f.txt")).unwrap();
+        std::fs::remove_file(dir_path.join("file_f.txt")).unwrap();
 
         let after_filerefs = HashMap::from([
             (
@@ -649,14 +679,15 @@ mod test {
             ),
         ]);
 
-        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5).unwrap();
+        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5).unwrap();
         // rename file6.txt back to file5.txt
         std::fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt")).unwrap();
         // restore file4.txt
         std::fs::write(dir_path.join("file4.txt"), file4_buf).unwrap();
         // restore file3.txt
         std::fs::write(dir_path.join("file3.txt"), file3_buf).unwrap();
-
+        // restore file_f.txt
+        std::fs::write(dir_path.join("file_f.txt"), file_f_buf).unwrap();
         // NOTE: DO NOT put any tests between the index.update() call and the
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
@@ -664,18 +695,41 @@ mod test {
         assert_eq!(index.files, after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
 
-        let deleted_filerefs = Vec::from([
-                FileRef {
-                        chunkmetas: vec![
-                            ChunkMeta {
-                               hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-                               size: 4096,
-                            },
-                        ],
-                    paths: HashSet::from(["test/blocks/t5/file4.txt".into()])
-                },
+        let mut deleted_filerefs = Vec::from([
+            FileRef {
+                chunkmetas: vec![
+                    ChunkMeta {
+                        hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                        size: 4096,
+                    },
+                ],
+                paths: HashSet::from(["test/blocks/t5/file4.txt".into()])
+            },
+            FileRef {
+                chunkmetas: vec![
+                    ChunkMeta {
+                        hash: Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                        size: 4096,
+                    },
+                ],
+                paths: HashSet::from(["test/blocks/t5/file_f.txt".into()])
+            },
         ]);
-        let deleted_blockrefs: Vec<BlockRef> = Vec::from([]);
+        let deleted_blockrefs: Vec<BlockRef> = Vec::from([
+            BlockRef {
+                references: HashSet::from([
+                    FileRefLocationIndex {
+                        file_hash: Hash::from("13401b9b1047eed22db2f29b3d93838a9d6d0aea552f4a8284bb554fe1fb98c6b71b53a9917020472b50421235cd9e65e43c54e052abd16c18fd867347b0b7eae0ae"),
+                        offset: 0,
+                        size: 4096,
+                    },
+                ]),
+            },
+        ]);
+
+        // sort for the comparison below
+        filerefs.sort_unstable();
+        deleted_filerefs.sort_unstable();
 
         assert_eq!(deleted_filerefs, filerefs);
         assert_eq!(deleted_blockrefs, blockrefs);
