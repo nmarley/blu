@@ -147,7 +147,7 @@ impl PlainIndex {
 
     pub fn num_bytes_indexed(&self) -> u64 {
         self.blocks.iter().fold(0u64, |acc, elem| {
-            elem.1.references.iter().nth(0).unwrap().size as u64 + acc
+            elem.1.references.iter().next().unwrap().size as u64 + acc
         })
     }
 
