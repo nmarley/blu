@@ -633,4 +633,86 @@ mod test {
         assert_eq!(deleted_filerefs, filerefs);
         // assert_eq!(deleted_blockrefs, blockrefs);
     }
+
+    const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
+    #[test]
+    fn update_index_paths() {
+        let mut index = PlainIndex::new(TEST_BLOCKS_DIR_T6).unwrap();
+
+        let before_filerefs = HashMap::from([
+            (
+                Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                FileRef {
+                    chunkmetas: vec![
+                        ChunkMeta {
+                            hash: Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                            size: 14,
+                        },
+                    ],
+                    paths: HashSet::from(["test/blocks/t6/hi.txt".into()])
+                },
+            ),
+        ]);
+        let before_blockrefs = HashMap::from([
+            (
+                Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                BlockRef {
+                    references: HashSet::from([
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                            offset: 0,
+                            size: 14,
+                        },
+                    ]),
+                }
+            ),
+        ]);
+
+        let after_filerefs = HashMap::from([
+            (
+                Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                FileRef {
+                    chunkmetas: vec![
+                        ChunkMeta {
+                            hash: Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                            size: 14,
+                        },
+                    ],
+                    paths: HashSet::from(["test/blocks/t6/hello.txt".into()])
+                },
+            ),
+        ]);
+        let after_blockrefs = HashMap::from([
+            (
+                Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                BlockRef {
+                    references: HashSet::from([
+                        FileRefLocationIndex {
+                            file_hash: Hash::from("1340d58359f9a20ea1864c246ed06797907f3fc9cdc4b50099b2c943beb18bbc4e07650de9056b4491dfdd94dc47801e30db12344735aa06cefdb6d09c49fb75e25c"),
+                            offset: 0,
+                            size: 14,
+                        },
+                    ]),
+                }
+            ),
+        ]);
+
+        assert_eq!(index.files, before_filerefs);
+        assert_eq!(index.blocks, before_blockrefs);
+
+        let old_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hi.txt");
+        let new_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hello.txt");
+        // rename to test
+        std::fs::rename(&old_filename, &new_filename).unwrap();
+        // run the update
+        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6).unwrap();
+        // move it back
+        std::fs::rename(&new_filename, &old_filename).unwrap();
+
+        assert_eq!(index.files, after_filerefs);
+        assert_eq!(index.blocks, after_blockrefs);
+
+        assert_eq!(filerefs, []);
+        assert_eq!(blockrefs, []);
+    }
 }
