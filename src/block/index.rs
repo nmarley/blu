@@ -256,12 +256,32 @@ impl PlainIndex {
         // blockrefs
         //
         let mut to_delete: HashSet<Hash> = HashSet::new();
+        let mut new_references: HashMap<Hash, HashSet<FileRefLocationIndex>> = HashMap::new();
+
         // for each blockref in OLD ...
         for hash in self.blocks.keys() {
-            if new_index.blocks.get(hash).is_none() {
+            if let Some(blockref) = new_index.blocks.get(hash) {
+                // update the references
+                new_references.insert(hash.clone(), blockref.references.clone());
+            } else {
                 // this blockref should be removed
                 // ... add it to to_delete
                 to_delete.insert(hash.clone());
+            }
+        }
+
+        // set new references
+        for (hash, references) in new_references.into_iter() {
+            self.blocks
+                .entry(hash)
+                .and_modify(|e| e.references = references);
+        }
+
+        // for each hash/fileref in NEW ...
+        for (hash, blockref) in new_index.blocks.into_iter() {
+            if self.blocks.get(&hash).is_none() {
+                // add it
+                self.blocks.insert(hash, blockref);
             }
         }
 
