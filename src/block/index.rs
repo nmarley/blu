@@ -735,6 +735,8 @@ mod test {
         assert_eq!(deleted_blockrefs, blockrefs);
     }
 
+    // TODO: this is tested above, so can probably remove this test and reserve
+    // t6 for something else.
     const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
     #[test]
     fn update_index_paths() {
