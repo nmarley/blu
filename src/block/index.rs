@@ -199,13 +199,6 @@ impl PlainIndex {
     }
 
     // Update the index, return a list of removed (dangling) entries
-    // TODO: test this update method
-    //   - ensure that pathbufs are updated
-    //   - ensure that deleted filerefs and blockrefs are removed from index
-    //   - ensure that added filerefs and blockrefs are added to index
-    //
-    // Probably should create an index via `new`, and then use a different
-    // updated dir with `update` and ensure expected changes are applied.
     pub fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
@@ -215,8 +208,6 @@ impl PlainIndex {
         let mut to_delete: HashSet<Hash> = HashSet::new();
         let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
         let mut is_updated = false;
-
-        // TODO: handle both BlockRefs and FileRefs in NEW and OLD
 
         // for each fileref in OLD ...
         for hash in self.files.keys() {
@@ -317,6 +308,11 @@ mod test {
 
     const TEST_BLOCKS_DIR_T5: &str = "test/blocks/t5/";
 
+    // - ensures that pathbufs are updated
+    // - ensures that deleted filerefs and blockrefs are removed from index
+    // - ensures that added filerefs and blockrefs are added to index
+    //
+    // - TODO: test for deleted blockrefs removed from index
     #[test]
     fn update_index() {
         let mut index = PlainIndex::new(TEST_BLOCKS_DIR_T5).unwrap();
@@ -482,28 +478,6 @@ mod test {
 
         assert_eq!(index.files, before_filerefs);
         assert_eq!(index.blocks, before_blockrefs);
-
-        // NGM
-        // BlockRef = hashset <filereflocation>
-        // pub struct FileRefLocationIndex {
-        //     pub file_hash: Hash,
-        //     pub offset: usize,
-        //     pub size: usize,
-        // }
-        // let mut blocks = HashMap::<Hash, BlockRef>::new();
-        // blocks index maps chunk hash to blockref
-
-        // do things to fs
-        // ├── after
-        // │   ├── file1.txt
-        // │   ├── file2.txt
-        // │   └── file6.txt
-        // └── before
-        //     ├── file1.txt
-        //     ├── file2.txt
-        //     ├── file3.txt
-        //     ├── file4.txt
-        //     └── file5.txt
 
         // rename file5.txt to file6.txt
         let dir_path = Path::new(TEST_BLOCKS_DIR_T5);
@@ -675,18 +649,7 @@ mod test {
             ),
         ]);
 
-        // ├── after
-        // │   ├── file1.txt
-        // │   ├── file2.txt
-        // │   └── file6.txt
-        // └── before
-        //     ├── file1.txt
-        //     ├── file2.txt
-        //     ├── file3.txt
-        //     ├── file4.txt
-        //     └── file5.txt
-
-        let (filerefs, _blockrefs) = index.update(TEST_BLOCKS_DIR_T5).unwrap();
+        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5).unwrap();
         // rename file6.txt back to file5.txt
         std::fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt")).unwrap();
         // restore file4.txt
@@ -697,11 +660,6 @@ mod test {
         // NOTE: DO NOT put any tests between the index.update() call and the
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
-
-        for (hash, blockref) in index.blocks.iter() {
-            println!("hash: {:?}, blockref: {:?}", hash, blockref);
-            assert_eq!(after_blockrefs.get(hash), Some(blockref));
-        }
 
         assert_eq!(index.files, after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
@@ -717,24 +675,10 @@ mod test {
                     paths: HashSet::from(["test/blocks/t5/file4.txt".into()])
                 },
         ]);
-
-        // let deleted_blockrefs = HashMap::from([
-        //     (
-        //         Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-        //         FileRef {
-        //                 chunkmetas: vec![
-        //                     ChunkMeta {
-        //                        hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-        //                        size: 4096,
-        //                     },
-        //                 ],
-        //             paths: HashSet::from([format!("{}/file4.txt", prefix).into()])
-        //         },
-        //     ),
-        // ]);
+        let deleted_blockrefs: Vec<BlockRef> = Vec::from([]);
 
         assert_eq!(deleted_filerefs, filerefs);
-        // assert_eq!(deleted_blockrefs, blockrefs);
+        assert_eq!(deleted_blockrefs, blockrefs);
     }
 
     const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
