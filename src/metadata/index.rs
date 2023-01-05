@@ -341,8 +341,7 @@ mod test {
         assert_eq!(index, idx2);
     }
 
-    const TEST_AGE_SECRET_KEY: &str =
-        "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+    const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
     const TEST_DIR_T3: &str = "test/t3/";
     use crate::age::BlackBox;
     use crate::config;

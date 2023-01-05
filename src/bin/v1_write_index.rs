@@ -5,8 +5,7 @@ use blu::age::BlackBox;
 use blu::config;
 use blu::metadata::{EncryptedIndex, Index};
 
-const TEST_AGE_SECRET_KEY: &str =
-    "AGE-SECRET-KEY-13QFLW9V8FWEC7F63TQ5K2PY9E8CC8HMTXHP0VRZT45Y8KS44X4NSDGYA94";
+const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 const V1_WARNING: &str = "WARNING: This tool is from v0.1 and will not work w/current codebase";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
