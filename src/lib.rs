@@ -13,6 +13,7 @@ pub mod config;
 pub mod dir;
 pub mod format;
 pub mod hash;
+pub mod io;
 pub mod magic;
 pub mod metadata;
 

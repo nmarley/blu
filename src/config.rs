@@ -1,11 +1,12 @@
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use crate::age::BlackBox;
 use crate::block::{PlainIndex, INDEX_FILENAME};
+use crate::io::BlackBoxSerializable;
 use crate::metadata::{Index, INDEX_FILENAME as V1_INDEX_FILENAME};
-use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use crate::tagger::{TagIndex, TAG_INDEX_FILENAME};
 
 // TODO: implement backends -- probably a trait
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
