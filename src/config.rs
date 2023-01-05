@@ -134,6 +134,24 @@ impl Config {
         };
         self.basedir.join(rel_dir)
     }
+
+    pub fn load_tag_index(
+        &self,
+        bbox: &BlackBox,
+    ) -> Result<Option<TagIndex>, Box<dyn std::error::Error>> {
+        let index_path = self.datadir().join(TAG_INDEX_FILENAME);
+
+        // todo: filter index.dat
+        // if error loading this (e.g. file doesn't exist) then return None or
+        // build a new index ... consider building a new one instead of None.
+        let index_data: Vec<u8> = match fs::read(index_path) {
+            Ok(data) => data,
+            Err(_) => return Ok(None),
+        };
+        // read index
+        let index = TagIndex::read(&index_data[..], bbox)?;
+        Ok(Some(index))
+    }
 }
 
 #[cfg(test)]
