@@ -1,3 +1,9 @@
+// #![warn(rust_2018_idioms)]
+// #![warn(missing_debug_implementations)]
+// #![warn(missing_docs)]
+//
+// https://doc.rust-lang.org/rustc/lints/groups.html
+
 use clap::Parser;
 use std::{env, process};
 
