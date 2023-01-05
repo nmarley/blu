@@ -16,6 +16,7 @@ pub mod hash;
 pub mod io;
 pub mod magic;
 pub mod metadata;
+pub mod tagger;
 
 pub mod cmds;
 
