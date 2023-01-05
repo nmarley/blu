@@ -61,6 +61,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Restore => {
             cmds::restore();
         }
+        clapargs::Action::ListTags => {
+            cmds::list_tags(&cfg, &bbox);
+        }
         _ => {
             unimplemented!();
         }

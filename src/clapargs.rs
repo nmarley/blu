@@ -13,6 +13,7 @@ pub enum Action {
     Init,
     Add,
     Restore,
+    ListTags,
     #[command(hide = true)]
     PrintIndex,
 }
