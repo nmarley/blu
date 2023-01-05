@@ -16,6 +16,7 @@ pub mod hash;
 pub mod io;
 pub mod magic;
 pub mod metadata;
+pub mod tagger;
 
 pub mod cmds;
 
@@ -59,6 +60,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         clapargs::Action::Restore => {
             cmds::restore();
+        }
+        clapargs::Action::ListTags => {
+            cmds::list_tags(&cfg, &bbox);
         }
         _ => {
             unimplemented!();

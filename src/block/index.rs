@@ -134,6 +134,11 @@ impl PlainIndex {
         self.blocks.len()
     }
 
+    // iterate over the hashes of all files in the index
+    pub fn iter_hashes(&self) -> impl Iterator<Item = &Hash> {
+        self.files.keys()
+    }
+
     pub fn files_map_ref(&self) -> &HashMap<Hash, FileRef> {
         &self.files
     }

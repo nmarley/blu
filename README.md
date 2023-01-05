@@ -16,7 +16,38 @@ blu init .
 
 ### Config
 
+```sh
+vi .blu/config.json
+```
+
+### Add
+
+Single file w/optional tags:
+
+```sh
+blu add ./passport.png --tags passport,US,Alice
+```
+
+Entire dir:
+
+```sh
+blu add ./
+```
+
 ### Restore
+
+```sh
+blu restore .
+```
+
+### Query
+
+```sh
+blu query --tags passport,US,Alice
+
+...
+```
+
 
 ## License
 
