@@ -7,24 +7,28 @@ I'm realizing that instead of mixing up encryption + metadata, tagging and de-du
 
 ## TODO
 
+- [ ] filename search
+  -- consider https://github.com/BurntSushi/suffix for this
+
 - [ ] status command
   -- which does what? Describe this.
 
 - [ ] Implement document index conceptually separate from encryption/hash index
-  - [ ] search tags / filenames
-  - [ ] tag/untag files
-  - [ ] list all tags
+  - [/] search tags / filenames
+  - [x] tag/untag files
+  - [x] list all tags
   - [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
-
-- [x] rename crate::block::File to something that does NOT conflict with std::fs::File
 
 - [/] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
   - [x] 2022-05-07: This is mostly done, blob index and manager are finished. Just need to...
   - [ ] 2022-05-07: Add encryption (and possibly compression) to the blob before hashing/writing.
   - [ ] 2022-05-07: Add tests for BlobManager. Lots of tests.
+    -- 2023-01-05: Reconsider this design, maybe.
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
   See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
+
+- [ ] multi-key encryption/recovery. How to handle this?
 
 ## Understand
 
