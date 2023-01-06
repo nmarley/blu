@@ -1,14 +1,13 @@
+use multihash::Multihash;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::hash::Hash;
-use crate::metadata::Encrypted;
 
 #[derive(Default, Debug)]
 pub struct Manager {
     datadir: PathBuf,
 }
-use multihash::Multihash;
 
 impl Manager {
     pub fn new<P: AsRef<Path>>(datadir: P) -> Self {
@@ -17,12 +16,7 @@ impl Manager {
         }
     }
 
-    pub fn delete_encrypted(&self, enc: &Encrypted) -> Result<(), Box<dyn std::error::Error>> {
-        let path = self.path_for(&enc.get_hash())?;
-        fs::remove_file(path)?;
-        Ok(())
-    }
-
+    // TODO: Reconsider this? Not sure if we want to assume local storage or if this goes here.
     pub fn write_data(
         &self,
         hash: &Hash,
@@ -38,16 +32,16 @@ impl Manager {
         Ok(path)
     }
 
-    // get a path for the encrypted
-    // this is generally the hash, but broken into a dir structure
-    // also with the multihash prefix(es) removed from the front...
-    //
-    // example, this hash ... :
-    // 1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
-    //
-    // ... would be stored in:
-    // DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
-    //
+    /// Get a path for the encrypted data.
+    /// This is generally the hash of the data, but broken into a dir structure also with the
+    /// multihash prefix(es) removed from the front...
+    ///
+    /// example, this hash ... :
+    /// 1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+    ///
+    /// ... would be stored in:
+    /// DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+    ///
     fn path_for(&self, hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
         // use multihash lib to properly separate multihash header code and size
         // (do not make assumptions about removing X number of bytes)
@@ -71,9 +65,10 @@ impl Manager {
 
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
+
     use super::Manager;
     use crate::hash::Hash;
-    use std::path::PathBuf;
 
     // macro which tests several different hash algos
     macro_rules! test_path_for {
