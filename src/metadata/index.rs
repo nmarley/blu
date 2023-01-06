@@ -267,9 +267,9 @@ mod test {
     use crate::hash::{self, Hash};
     use std::collections::HashSet;
 
-    const TEST_DIR_T0: &str = "test/t0/";
-    // const TEST_DIR_T1: &str = "test/t1/";
-    // const TEST_DIR_T2: &str = "test/t2/";
+    const TEST_DIR_T0: &str = "test/old/t0/";
+    // const TEST_DIR_T1: &str = "test/old/t1/";
+    // const TEST_DIR_T2: &str = "test/old/t2/";
 
     #[test]
     fn index() {
@@ -277,8 +277,8 @@ mod test {
         let art1_hash = Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6");
         let entry = index.get_entry_ref(&art1_hash).unwrap();
         let paths = HashSet::from([
-            "test/t0/art1_dup_en.txt".into(),
-            "test/t0/article1_en.txt".into(),
+            "test/old/t0/art1_dup_en.txt".into(),
+            "test/old/t0/article1_en.txt".into(),
         ]);
 
         assert_eq!(
@@ -342,7 +342,7 @@ mod test {
     }
 
     const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
-    const TEST_DIR_T3: &str = "test/t3/";
+    const TEST_DIR_T3: &str = "test/old/t3/";
     use crate::age::BlackBox;
     use crate::config;
 
@@ -359,7 +359,7 @@ mod test {
         assert_eq!(
             deleted_entries,
             vec![Entry {
-                paths: HashSet::from(["test/t3/article1_lu.txt".into()]),
+                paths: HashSet::from(["test/old/t3/article1_lu.txt".into()]),
                 filetype: "Unicode text, UTF-8 text".to_string(),
                 hash: Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b"),
                 size: 223,
@@ -372,7 +372,7 @@ mod test {
         let entries = index.get_all_entry_refs();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0], &Entry {
-            paths: HashSet::from(["test/t3/article-one.txt".into()]),
+            paths: HashSet::from(["test/old/t3/article-one.txt".into()]),
             filetype: "ASCII text".to_string(),
             hash: Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"),
             size: 171,
@@ -384,7 +384,7 @@ mod test {
 
     // Return a Vec of Entries that exist in this Index, but do *not* yet exist
     // in the EncIdx.
-    const TEST_DIR_T4: &str = "test/t4/";
+    const TEST_DIR_T4: &str = "test/old/t4/";
     #[test]
     fn diff_enc_idx() {
         // load index
@@ -409,7 +409,7 @@ mod test {
             to_encrypt,
             vec![
                 Entry {
-                    paths: HashSet::from(["test/t4/article1_lu.txt".into()]),
+                    paths: HashSet::from(["test/old/t4/article1_lu.txt".into()]),
                     filetype: "Unicode text, UTF-8 text".to_string(),
                     hash: Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b"),
                     size: 223,
@@ -421,7 +421,7 @@ mod test {
         );
     }
 
-    const TEST_DIR_T5: &str = "test/t5/";
+    const TEST_DIR_T5: &str = "test/old/t5/";
     #[test]
     fn diff_idx() {
         // load index
@@ -449,7 +449,7 @@ mod test {
             dangling,
             vec![
                 &Encrypted {
-                    path: "test/t5/.blu/data/9/9b1/9b1d7/9b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed".into(),
+                    path: "test/old/t5/.blu/data/9/9b1/9b1d7/9b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed".into(),
                     hash: Hash::from("13409b1d7ad7a63e3931b2547c3534962dbae82607d4264f8fbdc22526b2576dd6b58e52d4b770319862568c10cf44d0278a00bebc6e9c78c9f9a3b09894aa07daed"),
                     size: 563,
                     keys: vec![],
@@ -460,7 +460,7 @@ mod test {
 
     // test multiple different Encrypted's that decrypt to the same file
     // (reconciliation / convergence (upon a single enc hash) / cleanup)
-    const TEST_DIR_T6: &str = "test/t6/";
+    const TEST_DIR_T6: &str = "test/old/t6/";
     #[test]
     fn double_enc() {
         // load index

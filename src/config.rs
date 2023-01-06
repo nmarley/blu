@@ -159,9 +159,9 @@ pub(crate) mod test {
     use super::{Backend, BlackBox, Config};
     use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_AGE_SECRET_KEY_PATH};
 
-    const TEST_DIR_T0: &str = "test/t0/";
-    const TEST_DIR_T1: &str = "test/t1/";
-    const TEST_DIR_T2: &str = "test/t2/";
+    const TEST_DIR_T0: &str = "test/old/t0/";
+    const TEST_DIR_T1: &str = "test/old/t1/";
+    const TEST_DIR_T2: &str = "test/old/t2/";
     const TEST_DIR_BLOCKS_T4: &str = "test/blocks/t4/";
 
     #[test]
