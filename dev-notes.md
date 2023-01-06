@@ -10,6 +10,9 @@ I'm realizing that instead of mixing up encryption + metadata, tagging and de-du
 - [ ] filename search
   -- consider https://github.com/BurntSushi/suffix for this
 
+- [ ] enc map implement + testing
+  -- maps plain to encrypted -- built when files are encrypted and STREAMs the plain text thru to the encrypted data store -- be that local or s3/
+
 - [ ] status command
   -- which does what? Describe this.
 
