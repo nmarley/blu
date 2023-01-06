@@ -1,9 +1,8 @@
-// use std::{env, fs};
 use std::env;
 
 use blu::age::BlackBox;
-// use blu::block::PlainIndex;
 use blu::config;
+use blu::io::BlackBoxSerializable;
 use blu::tagger::TagIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
