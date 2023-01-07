@@ -20,7 +20,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n{}\n", V1_WARNING);
 
     let args = Args::parse();
-    let dir = args.dir;
+    let dir = match args.dir {
+        dir if dir.starts_with("./") => dir.strip_prefix("./").unwrap().to_string(),
+        dir => dir,
+    };
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let mut index = Index::new(&dir)?;

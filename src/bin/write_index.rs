@@ -17,7 +17,10 @@ pub struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let dir = args.dir;
+    let dir = match args.dir {
+        dir if dir.starts_with("./") => dir.strip_prefix("./").unwrap().to_string(),
+        dir => dir,
+    };
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let index = PlainIndex::new(dir)?;
