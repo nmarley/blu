@@ -23,23 +23,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     // dbg!(&cfg);
 
-    let index = cfg
-        .load_index(&bbox)
-        .map_err(|e| {
-            eprintln!("Unable to load index. Please create index via `index` subcommand");
-            eprintln!("More info: {}", e);
-            e
-        })?
-        .unwrap();
+    let index = cfg.load_plain_index(&bbox).unwrap();
     dbg!(&index);
 
     // let mut tag_index = cfg
     //     .load_tag_index(&bbox)
-    //     .map_err(|e| {
-    //         eprintln!("Unable to load tag index. Please create tag index via `tag` subcommand");
-    //         eprintln!("More info: {}", e);
-    //         e
-    //     })?
     //     .unwrap();
 
     let mut tag_index = TagIndex::new();

@@ -47,7 +47,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let bbox = load_key();
     dbg!(&bbox);
-    // let mut index = match cfg.load_index(&bbox)? {
+    // let mut index = match cfg.load_plain_index(&bbox) {
     //     None => Index::new(&dir)?,
     //     Some(idx) => idx,
     // };

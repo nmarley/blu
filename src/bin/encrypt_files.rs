@@ -27,14 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let datadir = cfg.datadir();
     dbg!(&datadir);
 
-    // TODO: add this to either metadata, dir, config
-    let index_filename = &datadir.join(INDEX_FILENAME);
-    dbg!(&index_filename);
-
-    // read+decrypt the index from std location:
-    let data = std::fs::read(index_filename)?;
-    let index = PlainIndex::read(&data[..], &bbox)?;
-    dbg!(&index);
+    let index = cfg.load_plain_index(&bbox).unwrap();
+    // dbg!(&index);
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?

@@ -336,7 +336,7 @@ mod test {
     fn update_idx() {
         let cfg = config::read_config(TEST_DIR_T3).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let mut index = match cfg.v1_load_index(&bbox).unwrap() {
+        let mut index = match cfg.v1_load_index(&bbox) {
             None => Index::new(TEST_DIR_T3).unwrap(),
             Some(idx) => idx,
         };
@@ -376,7 +376,7 @@ mod test {
         // load index
         let cfg = config::read_config(TEST_DIR_T4).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let mut index = match cfg.v1_load_index(&bbox).unwrap() {
+        let mut index = match cfg.v1_load_index(&bbox) {
             None => Index::new(TEST_DIR_T4).unwrap(),
             Some(idx) => idx,
         };
@@ -413,7 +413,7 @@ mod test {
         // load index
         let cfg = config::read_config(TEST_DIR_T5).unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let mut index = match cfg.v1_load_index(&bbox).unwrap() {
+        let mut index = match cfg.v1_load_index(&bbox) {
             None => Index::new(TEST_DIR_T5).unwrap(),
             Some(idx) => idx,
         };
@@ -454,7 +454,6 @@ mod test {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut index = cfg
             .v1_load_index(&bbox)
-            .unwrap()
             .unwrap_or_else(|| Index::new(TEST_DIR_T6).unwrap());
 
         // ensure the index changes after reconciliation + convergence

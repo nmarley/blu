@@ -21,7 +21,7 @@ use crate::config::Config;
 
 pub fn list_tags(cfg: &Config, bbox: &BlackBox) {
     // open the tagger index + list the tags. Could ostensibly sort them?
-    let tag_index = cfg.load_tag_index(bbox).unwrap().unwrap();
+    let tag_index = cfg.load_tag_index(bbox).unwrap();
     for tag in tag_index.list_all_tags() {
         println!("{}", tag);
     }

@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
+use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::io::BlackBoxSerializable;
 use crate::metadata::{Index, INDEX_FILENAME as V1_INDEX_FILENAME};
@@ -46,7 +47,8 @@ const DEFAULT_DATADIR: &str = ".blu/data";
 //                                              "$HOME/.blu/secrets/blu.pub";
 // std::env::get("HOME")
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[serde(default)]
 pub struct Config {
     pub backend: Backend,
     pub blu_version: String,
@@ -64,6 +66,31 @@ pub struct Config {
     pub prune_deleted: bool,
     // should blu delete dangling Encrypted from filesystem?
     pub prune_dangling: bool,
+
+    pub plain_index_filename: PathBuf,
+    pub tag_index_filename: PathBuf,
+    pub blob_index_filename: PathBuf,
+    // deprecated
+    pub v1_plain_index_filename: PathBuf,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            backend: Backend::default(),
+            blu_version: env!("CARGO_PKG_VERSION").to_string(),
+            data_key_files: vec![],
+            basedir: PathBuf::from("."),
+            datadir: Some(DEFAULT_DATADIR.into()),
+            prune_deleted: false,
+            prune_dangling: false,
+            plain_index_filename: INDEX_FILENAME.into(),
+            tag_index_filename: TAG_INDEX_FILENAME.into(),
+            blob_index_filename: BLOB_INDEX_FILENAME.into(),
+            // deprecated
+            v1_plain_index_filename: V1_INDEX_FILENAME.into(),
+        }
+    }
 }
 
 pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
@@ -79,54 +106,26 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
     Ok(cfg)
 }
 
+/// macro to write load_index, load_tag_index, load_blob_index, etc. ...
+macro_rules! load_index {
+    ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
+        pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
+            let index_path = self.datadir().join(&self.$idx_filename_varname);
+            // read index file data or return None
+            let index_data: Vec<u8> = match fs::read(index_path) {
+                Ok(data) => data,
+                Err(_) => return None,
+            };
+            // deserialize + decompress + decrypt index or return None
+            match $idx_struct_name::read(&index_data[..], bbox) {
+                Ok(index) => Some(index),
+                Err(_e) => None,
+            }
+        }
+    };
+}
+
 impl Config {
-    pub fn load_index(
-        &self,
-        bbox: &BlackBox,
-    ) -> Result<Option<PlainIndex>, Box<dyn std::error::Error>> {
-        self.v2_load_index(bbox)
-    }
-
-    pub fn v2_load_index(
-        &self,
-        bbox: &BlackBox,
-    ) -> Result<Option<PlainIndex>, Box<dyn std::error::Error>> {
-        let index_path = self.datadir().join(INDEX_FILENAME);
-
-        // todo: filter index.dat
-        // if error loading this (e.g. file doesn't exist) then return None or
-        // build a new index ... consider building a new one instead of None.
-        let index_data: Vec<u8> = match fs::read(index_path) {
-            Ok(data) => data,
-            Err(_) => return Ok(None),
-        };
-        // read index
-        let index = PlainIndex::read(&index_data[..], bbox)?;
-        Ok(Some(index))
-    }
-
-    pub fn v1_load_index(
-        &self,
-        bbox: &BlackBox,
-    ) -> Result<Option<Index>, Box<dyn std::error::Error>> {
-        // should always sit in same directory with the data
-        // this should _not_ be user-configurable (e.g. should not be in Config)
-        let index_path = self.datadir().join(V1_INDEX_FILENAME);
-        // todo: filter index.dat
-
-        // if error loading this (e.g. file doesn't exist) then return None or
-        // build a new index ... consider building a new one instead of None.
-        let index_data: Vec<u8> = match fs::read(index_path) {
-            Ok(data) => data,
-            Err(_) => return Ok(None),
-        };
-
-        // read index
-        let index = Index::read(&index_data[..], bbox)?;
-
-        Ok(Some(index))
-    }
-
     pub fn datadir(&self) -> PathBuf {
         let rel_dir = match self.datadir.clone() {
             Some(s) => s,
@@ -135,23 +134,11 @@ impl Config {
         self.basedir.join(rel_dir)
     }
 
-    pub fn load_tag_index(
-        &self,
-        bbox: &BlackBox,
-    ) -> Result<Option<TagIndex>, Box<dyn std::error::Error>> {
-        let index_path = self.datadir().join(TAG_INDEX_FILENAME);
-
-        // todo: filter index.dat
-        // if error loading this (e.g. file doesn't exist) then return None or
-        // build a new index ... consider building a new one instead of None.
-        let index_data: Vec<u8> = match fs::read(index_path) {
-            Ok(data) => data,
-            Err(_) => return Ok(None),
-        };
-        // read index
-        let index = TagIndex::read(&index_data[..], bbox)?;
-        Ok(Some(index))
-    }
+    load_index!(load_blob_index, BlobIndex, blob_index_filename);
+    load_index!(load_tag_index, TagIndex, tag_index_filename);
+    load_index!(load_plain_index, PlainIndex, plain_index_filename);
+    // deprecated
+    load_index!(v1_load_index, Index, v1_plain_index_filename);
 }
 
 #[cfg(test)]
@@ -186,30 +173,18 @@ pub(crate) mod test {
     fn v1_load_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_DIR_T2).unwrap();
-        let index = cfg.v1_load_index(&bbox).unwrap();
+        let index_opt = cfg.v1_load_index(&bbox);
 
-        assert!(index.is_some());
-        let _index = index.unwrap();
+        assert!(index_opt.is_some());
+        let _index = index_opt.unwrap();
     }
 
     #[test]
-    fn v2_load_index() {
+    fn load_plain_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
-        let index = cfg.v2_load_index(&bbox).unwrap();
-
-        assert!(index.is_some());
-        let _index = index.unwrap();
-    }
-
-    #[test]
-    fn load_index() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
-        let index = cfg.load_index(&bbox).unwrap();
-        dbg!(&index);
-
-        assert!(index.is_some());
-        let _index = index.unwrap();
+        let index_opt = cfg.load_plain_index(&bbox);
+        assert!(index_opt.is_some());
+        let _index = index_opt.unwrap();
     }
 }
