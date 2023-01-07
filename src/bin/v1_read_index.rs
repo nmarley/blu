@@ -1,6 +1,7 @@
 use std::{env, fs};
 
 use blu::age::BlackBox;
+use blu::io::BlackBoxSerializable;
 use blu::metadata::Index;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");

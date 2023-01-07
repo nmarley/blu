@@ -12,6 +12,7 @@ use crate::age::BlackBox;
 use crate::compression::{compress, decompress};
 use crate::format::datetime_format;
 use crate::hash::{self, Hash};
+use crate::io::BlackBoxSerializable;
 use crate::magic::Wizard;
 
 #[allow(unused_imports)]
@@ -39,39 +40,6 @@ impl Index {
             map,
             ..Default::default()
         })
-    }
-
-    fn deserialize(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        deserialize_index(data)
-    }
-
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        serialize_index(self)
-    }
-
-    // read / write serialization methods integrate BlackBox for automagic
-    // decryption / encryption when reading from disk
-    pub fn write<W: io::Write>(
-        &self,
-        mut stream: W,
-        bbox: &BlackBox,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let serialized = self.serialize()?;
-        let compressed = compress(&serialized)?;
-        let encrypted = bbox.encrypt(&compressed)?;
-        let _ = stream.write_all(&encrypted);
-        Ok(())
-    }
-
-    pub fn read<R: io::Read>(
-        mut stream: R,
-        bbox: &BlackBox,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut encrypted = Vec::new();
-        let _ = stream.read_to_end(&mut encrypted)?;
-        let compressed = bbox.decrypt(&encrypted)?;
-        let serialized = decompress(&compressed)?;
-        Self::deserialize(&serialized)
     }
 
     pub fn get_entry_ref(&self, hash: &Hash) -> Result<&Entry, Box<dyn std::error::Error>> {
@@ -205,6 +173,48 @@ impl Index {
     }
 }
 
+impl BlackBoxSerializable for Index {
+    // read / write serialization methods integrate BlackBox for automagic
+    // decryption / encryption when reading from disk
+    fn write<W: io::Write>(
+        &self,
+        mut stream: W,
+        bbox: &BlackBox,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let serialized = self.serialize_bytes()?;
+        let compressed = compress(&serialized)?;
+        let encrypted = bbox.encrypt(&compressed)?;
+        let _ = stream.write_all(&encrypted);
+        Ok(())
+    }
+
+    fn read<R: io::Read>(
+        mut stream: R,
+        bbox: &BlackBox,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut encrypted = Vec::new();
+        let _ = stream.read_to_end(&mut encrypted)?;
+        let compressed = bbox.decrypt(&encrypted)?;
+        let serialized = decompress(&compressed)?;
+        Self::deserialize_bytes(&serialized)
+    }
+
+    fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        // let decoded: Index = serde_cbor::from_slice(data)?;
+        let decoded: Index = match bincode::deserialize(data) {
+            Ok(index) => index,
+            Err(_) => OldIndex::deserialize(data)?.into_index(),
+        };
+        Ok(decoded)
+    }
+
+    fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let encoded: Vec<u8> = bincode::serialize(self)?;
+        // let encoded: Vec<u8> = serde_cbor::to_vec(index)?;
+        Ok(encoded)
+    }
+}
+
 impl Default for Index {
     fn default() -> Self {
         Self {
@@ -214,21 +224,6 @@ impl Default for Index {
             updated_at: now(),
         }
     }
-}
-
-fn serialize_index(index: &Index) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let encoded: Vec<u8> = bincode::serialize(index)?;
-    // let encoded: Vec<u8> = serde_cbor::to_vec(index)?;
-    Ok(encoded)
-}
-
-fn deserialize_index(data: &[u8]) -> Result<Index, Box<dyn std::error::Error>> {
-    // let decoded: Index = serde_cbor::from_slice(data)?;
-    let decoded: Index = match bincode::deserialize(data) {
-        Ok(index) => index,
-        Err(_) => OldIndex::deserialize(data)?.into_index(),
-    };
-    Ok(decoded)
 }
 
 fn now() -> chrono::NaiveDateTime {
@@ -260,12 +255,11 @@ impl OldIndex {
 
 #[cfg(test)]
 mod test {
-    use super::{
-        compress, deserialize_index, serialize_index, Encrypted, EncryptedIndex, Entry, HashMap,
-        Index,
-    };
-    use crate::hash::{self, Hash};
     use std::collections::HashSet;
+
+    use super::{Encrypted, EncryptedIndex, Entry, HashMap, Index};
+    use crate::hash::{self, Hash};
+    use crate::io::BlackBoxSerializable;
 
     const TEST_DIR_T0: &str = "test/old/t0/";
     // const TEST_DIR_T1: &str = "test/old/t1/";
@@ -323,21 +317,12 @@ mod test {
             map,
             ..Default::default()
         };
-        let serialized_idx = serialize_index(&index).unwrap();
-        // println!(
-        //     "{} (len {} bytes)",
-        //     &hex::encode(&serialized_idx),
-        //     serialized_idx.len()
-        // );
 
-        let _compressed_ser_idx = compress(&serialized_idx).unwrap();
-        // println!(
-        //     "compressed: {} (len {} bytes)",
-        //     &hex::encode(&compressed_ser_idx),
-        //     _compressed_ser_idx.len()
-        // );
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut serialized_idx = Vec::new();
+        index.write(&mut serialized_idx, &bbox).unwrap();
 
-        let idx2 = deserialize_index(&serialized_idx).unwrap();
+        let idx2 = Index::read(&serialized_idx[..], &bbox).unwrap();
         assert_eq!(index, idx2);
     }
 

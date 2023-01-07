@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use blu::age::BlackBox;
+use blu::io::BlackBoxSerializable;
 use blu::metadata::Index;
 
 #[derive(Parser)]
