@@ -4,8 +4,7 @@ use std::io::Write;
 use std::path::Path;
 
 use blu::age::BlackBox;
-use blu::config;
-use blu::metadata::{EncryptedIndex, Index};
+use blu::metadata::Index;
 
 #[derive(Parser)]
 pub struct Args {
@@ -26,21 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let mut index = Index::new(&dir)?;
-
-    let cfg = config::read_config(&dir)?;
-    dbg!(&cfg);
-
-    let enc_idx = EncryptedIndex::new(cfg.datadir())?;
-    dbg!(&enc_idx);
-
-    let to_restore = enc_idx.difference_idx(&mut index, Some(&bbox));
-    dbg!(&to_restore);
-
-    // dbg!(&index);
+    let index = Index::new(&dir)?;
 
     let outfile = args.outfile;
-    // writing index for testing
     write_index_file(&index, &bbox, &outfile)?;
 
     Ok(())
