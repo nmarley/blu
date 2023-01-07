@@ -233,6 +233,7 @@ fn now() -> chrono::NaiveDateTime {
 
 // This struct is only used to deserialize and convert into a new index with
 // timestamps.
+// #[deprecated(since = "0.1.1", note = "Use Index instead")]
 #[derive(PartialEq, Serialize, Deserialize, Eq)]
 pub struct OldIndex {
     map: HashMap<Hash, Entry>,
