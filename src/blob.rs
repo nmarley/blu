@@ -1,24 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
+use crate::compression::{compress, decompress};
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
+use crate::io::BlackBoxSerializable;
 
-const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
+// const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
+pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
 
 /// BlobManager writes blob files, re-indexes and re-orgs in case of many
 /// chunks (or unused chunks), etc.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BlobManager {
     datadir: PathBuf,
     blob_index: BlobIndex,
 
     // encryption
-    bbox: Option<BlackBox>,
+    bbox: BlackBox,
 
     // transient
     data: Vec<u8>,
@@ -28,14 +31,16 @@ pub struct BlobManager {
 }
 
 impl BlobManager {
-    pub fn new<P: AsRef<Path>>(dir: P, bbox: Option<BlackBox>) -> Self {
-        Self::with_capacity(dir, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
+    pub fn new<P: AsRef<Path>>(dir: P, bbox: BlackBox, blob_index: BlobIndex) -> Self {
+        Self::with_capacity(dir, bbox, blob_index, DEFAULT_BLOB_CAPACITY_BYTES)
     }
-    pub fn with_capacity<P: AsRef<Path>>(dir: P, bbox: Option<BlackBox>, capacity: usize) -> Self {
+    pub fn with_capacity<P: AsRef<Path>>(
+        dir: P,
+        bbox: BlackBox,
+        blob_index: BlobIndex,
+        capacity: usize,
+    ) -> Self {
         let datadir = dir.as_ref().to_path_buf();
-        let blob_index =
-            BlobIndex::deserialize_from_disk(dir.as_ref().join(DEFAULT_BLOB_INDEX_FILENAME))
-                .unwrap_or_else(|_| BlobIndex::new());
         Self {
             datadir,
             blob_index,
@@ -51,6 +56,7 @@ impl BlobManager {
         let raw_bytes = data;
         let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
         let dir_manager = Manager::new(&self.datadir);
+        // TODO: not a fan of this design ... :/
         dir_manager.write_data(&blobfile_hash, raw_bytes)
     }
 
@@ -91,14 +97,14 @@ impl BlobManager {
     }
 
     fn roll_new_blob(&mut self) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        // TODO: compress / encrypt here
-        let data = match &self.bbox {
-            Some(bbox) => bbox.encrypt(&self.data)?,
-            None => self.data.clone(),
-        };
-        // let encrypted = self.bbox.encrypt(&self.data)?;
+        // compress / encrypt here
+        // 1. serialize (done, this is self.data)
+        // 2. compress
+        // 3. encrypt
+        let compressed = compress(&self.data)?;
+        let encrypted = self.bbox.encrypt(&compressed)?;
 
-        let path = self.write_blob(&data)?;
+        let path = self.write_blob(&encrypted)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
             location.path = path.clone();
             self.blob_index.add_chunk_location(chunk_hash, location);
@@ -120,8 +126,12 @@ impl BlobManager {
         if !self.blob_empty() {
             self.roll_new_blob()?;
         }
-        self.blob_index
-            .serialize_to_disk(self.datadir.as_path().join(DEFAULT_BLOB_INDEX_FILENAME))?;
+        if self.blob_index.modified {
+            let blob_index_path = self.datadir.as_path().join(BLOB_INDEX_FILENAME);
+            let mut buf = Vec::new();
+            self.blob_index.write(&mut buf, &self.bbox)?;
+            std::fs::write(blob_index_path, buf)?;
+        }
         Ok(())
     }
 
@@ -179,8 +189,8 @@ impl BlobChunkLocation {
     }
 }
 
-/// BlobIndex maps the plain hash to the blob and position within. This is
-/// managed by the BlobManager.
+/// BlobIndex maps the plain hash to the encrypted blobfile and position within.
+/// This is managed by the BlobManager.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
     // map the hash to the location of the data on disk
@@ -191,24 +201,27 @@ pub struct BlobIndex {
 }
 
 impl BlobIndex {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             map: HashMap::new(),
             modified: false,
         }
     }
 
-    fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
+    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
         self.modified = true;
     }
 
-    fn has_chunk(&self, chunk_hash: &Hash) -> bool {
+    pub fn has_chunk(&self, chunk_hash: &Hash) -> bool {
         self.map.contains_key(chunk_hash)
     }
 
     #[allow(dead_code)]
-    fn get_chunk_bytes(&self, chunk_hash: &Hash) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn get_chunk_bytes(
+        &self,
+        chunk_hash: &Hash,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let location_ref = self
             .map
             .get(chunk_hash)
@@ -216,36 +229,55 @@ impl BlobIndex {
         location_ref.get_bytes()
     }
 
-    fn deserialize_from_disk<P: AsRef<Path>>(
-        index_file_path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read(index_file_path.as_ref())?;
-        let decoded: BlobIndex = bincode::deserialize(&data)?;
-        Ok(decoded)
+    pub fn count_blob_files(&self) -> usize {
+        self.map
+            .values()
+            .map(|loc| &loc.path)
+            .collect::<HashSet<&PathBuf>>()
+            .len()
     }
 
-    fn serialize_to_disk<P: AsRef<Path>>(
+    pub fn count_chunks_indexed(&self) -> usize {
+        self.map.len()
+    }
+}
+
+impl BlackBoxSerializable for BlobIndex {
+    fn write<W: io::Write>(
         &self,
-        index_file_path: P,
+        mut stream: W,
+        bbox: &BlackBox,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.modified {
-            let encoded = bincode::serialize(&self)?;
-            std::fs::write(index_file_path, encoded)?;
-        }
+        let serialized = self.serialize_bytes()?;
+        let compressed = compress(&serialized)?;
+        let encrypted = bbox.encrypt(&compressed)?;
+        let _ = stream.write_all(&encrypted);
         Ok(())
     }
 
-    // TODO: this is inefficient to call multiple times in a row
-    fn count_blob_files(&self) -> usize {
-        let mut set = HashSet::<PathBuf>::new();
-        for loc in self.map.values() {
-            set.insert(loc.path.clone());
-        }
-        set.len()
+    fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        // let decoded: Index = serde_cbor::from_slice(data)?;
+        let decoded: Self = bincode::deserialize(data)?;
+        Ok(decoded)
     }
 
-    fn count_chunks_indexed(&self) -> usize {
-        self.map.len()
+    fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let encoded: Vec<u8> = bincode::serialize(&self)?;
+        // let encoded: Vec<u8> = serde_cbor::to_vec(&self)?;
+        Ok(encoded)
+    }
+
+    // read / write serialization methods integrate BlackBox for automagic
+    // also compress and decompress
+    fn read<R: io::Read>(
+        mut stream: R,
+        bbox: &BlackBox,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut encrypted = Vec::new();
+        let _ = stream.read_to_end(&mut encrypted)?;
+        let compressed = bbox.decrypt(&encrypted)?;
+        let serialized = decompress(&compressed)?;
+        Self::deserialize_bytes(&serialized)
     }
 }
 
@@ -254,15 +286,19 @@ mod test {
     use super::*;
     use tempfile::tempdir;
 
+    const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
+
     // helper func used in tests below
     fn test_blobmgr() -> BlobManager {
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
         ];
         let datadir = tempdir().unwrap();
-        let mut blob_mgr = BlobManager::new(&datadir, None);
+        let blob_index = BlobIndex::new();
+        let mut blob_mgr = BlobManager::new(&datadir, bbox, blob_index);
         // load w/some data
         for v in vec.iter_mut() {
             blob_mgr.add_chunk(v).unwrap();
@@ -290,7 +326,9 @@ mod test {
             vec![0xde, 0xad],
         ];
         let datadir = tempdir().unwrap();
-        let mut blob_mgr = BlobManager::with_capacity(&datadir, None, 3);
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let blob_index = BlobIndex::new();
+        let mut blob_mgr = BlobManager::with_capacity(&datadir, bbox, blob_index, 3);
         // load w/some data
         for v in vec.iter_mut() {
             blob_mgr.add_chunk(v).unwrap();
