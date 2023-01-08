@@ -139,6 +139,22 @@ impl Config {
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
     // deprecated
     load_index!(v1_load_index, Index, v1_plain_index_filename);
+
+    pub fn write_blob_index(
+        &self,
+        blob_index: &BlobIndex,
+        bbox: &BlackBox,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let index_path = self.datadir().join(&self.blob_index_filename);
+
+        // encrypt + compress + serialize index to buf
+        let mut buf = vec![];
+        blob_index.write(&mut buf, bbox)?;
+        // write to file
+        std::fs::write(index_path, buf)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
