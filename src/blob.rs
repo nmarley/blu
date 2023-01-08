@@ -16,9 +16,10 @@ const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
 /// BlobManager writes blob files, re-indexes and re-orgs in case of many
 /// chunks (or unused chunks), etc.
 #[derive(Debug)]
-pub struct BlobManager {
+pub struct BlobBuffer {
+    // TODO: Remove this in favor of a trait / implementation?
+    //    e.g. the writer could be a FileBlobWriter, or a S3BlobWriter (CloudBlobWriter?), etc.
     datadir: PathBuf,
-    blob_index: BlobIndex,
 
     // encryption
     bbox: BlackBox,
@@ -30,20 +31,14 @@ pub struct BlobManager {
     positions: HashMap<Hash, BlobChunkLocation>,
 }
 
-impl BlobManager {
-    pub fn new<P: AsRef<Path>>(dir: P, bbox: BlackBox, blob_index: BlobIndex) -> Self {
-        Self::with_capacity(dir, bbox, blob_index, DEFAULT_BLOB_CAPACITY_BYTES)
+impl BlobBuffer {
+    pub fn new<P: AsRef<Path>>(dir: P, bbox: BlackBox) -> Self {
+        Self::with_capacity(dir, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
     }
-    pub fn with_capacity<P: AsRef<Path>>(
-        dir: P,
-        bbox: BlackBox,
-        blob_index: BlobIndex,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity<P: AsRef<Path>>(dir: P, bbox: BlackBox, capacity: usize) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         Self {
             datadir,
-            blob_index,
             bbox,
             data: vec![],
             blob_capacity: capacity,
@@ -52,24 +47,12 @@ impl BlobManager {
         }
     }
 
-    fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = data;
-        let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
-        let dir_manager = Manager::new(&self.datadir);
-        // TODO: not a fan of this design ... :/
-        dir_manager.write_data(&blobfile_hash, raw_bytes)
-    }
-
-    pub fn add_chunk(&mut self, chunk: &mut [u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn add_chunk(
+        &mut self,
+        chunk: &mut [u8],
+        idx: &mut BlobIndex,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
-        if self.blob_index.has_chunk(&chunk_hash) {
-            println!(
-                "Already found chunk {:?} in blob index, nothing to add",
-                &chunk_hash
-            );
-            return Ok(());
-        }
-
         let mut chunk_copy = chunk.to_vec();
         self.data.append(&mut chunk_copy);
         let size = chunk.len();
@@ -86,8 +69,8 @@ impl BlobManager {
         );
         self.offset += size;
 
-        if self.blob_full() {
-            let path = self.roll_new_blob()?;
+        if self.is_full() {
+            let path = self.roll_new_blob(idx)?;
             println!("Rolled new blob at {:?}!", path);
             return Ok(());
         }
@@ -96,7 +79,28 @@ impl BlobManager {
         Ok(())
     }
 
-    fn roll_new_blob(&mut self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Final blob (in-memory) gets written to disk
+    pub fn finalize(&mut self, idx: &mut BlobIndex) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.is_empty() {
+            self.roll_new_blob(idx)?;
+        }
+        Ok(())
+    }
+
+    fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let raw_bytes = data;
+        let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
+        let dir_manager = Manager::new(&self.datadir);
+        // TODO: not a fan of this design ... :/
+        // maybe move dir_manager to BlobBuffer?
+        dir_manager.write_data(&blobfile_hash, raw_bytes)
+    }
+
+    // TODO: rename this
+    fn roll_new_blob(
+        &mut self,
+        idx: &mut BlobIndex,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         // compress / encrypt here
         // 1. serialize (done, this is self.data)
         // 2. compress
@@ -107,58 +111,31 @@ impl BlobManager {
         let path = self.write_blob(&encrypted)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
             location.path = path.clone();
-            self.blob_index.add_chunk_location(chunk_hash, location);
+            idx.add_chunk_location(chunk_hash, location);
         }
-        self.reset_chunk_stage();
+        self.reset();
         Ok(path)
     }
 
     /// Do not use, for testing only.
+    /// TODO: Remove this entirely
     fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
         let data = self.data.clone();
         let pos = self.positions.clone();
-        self.reset_chunk_stage();
+        self.reset();
         (data, pos)
     }
 
-    // Final blob (in-memory) gets written to disk
-    pub fn finalize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.blob_empty() {
-            self.roll_new_blob()?;
-        }
-        if self.blob_index.modified {
-            let blob_index_path = self.datadir.as_path().join(BLOB_INDEX_FILENAME);
-            let mut buf = Vec::new();
-            self.blob_index.write(&mut buf, &self.bbox)?;
-            std::fs::write(blob_index_path, buf)?;
-        }
-        Ok(())
-    }
-
-    fn blob_full(&self) -> bool {
+    fn is_full(&self) -> bool {
         self.data.len() >= self.blob_capacity
     }
-    fn blob_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
-    fn reset_chunk_stage(&mut self) {
+    fn reset(&mut self) {
         self.data = vec![];
         self.offset = 0;
         self.positions = HashMap::new();
-    }
-
-    pub fn count_blob_files(&self) -> usize {
-        self.blob_index.count_blob_files()
-    }
-
-    pub fn count_chunks_indexed(&self) -> usize {
-        self.blob_index.count_chunks_indexed()
-    }
-}
-
-impl std::ops::Drop for BlobManager {
-    fn drop(&mut self) {
-        self.finalize().unwrap();
     }
 }
 
@@ -289,7 +266,7 @@ mod test {
     const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     // helper func used in tests below
-    fn test_blobmgr() -> BlobManager {
+    fn test_blobbuf() -> (BlobBuffer, BlobIndex) {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
@@ -297,21 +274,21 @@ mod test {
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
         ];
         let datadir = tempdir().unwrap();
-        let blob_index = BlobIndex::new();
-        let mut blob_mgr = BlobManager::new(&datadir, bbox, blob_index);
+        let mut blob_index = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::new(&datadir, bbox);
         // load w/some data
         for v in vec.iter_mut() {
-            blob_mgr.add_chunk(v).unwrap();
+            blob_buf.add_chunk(v, &mut blob_index).unwrap();
         }
-        blob_mgr
+        (blob_buf, blob_index)
     }
 
     #[test]
     fn new() {
-        let mut blob_mgr = test_blobmgr();
-        blob_mgr.finalize().unwrap();
-        assert_eq!(blob_mgr.count_blob_files(), 1);
-        assert_eq!(blob_mgr.count_chunks_indexed(), 3);
+        let (mut blob_buf, mut idx) = test_blobbuf();
+        blob_buf.finalize(&mut idx).unwrap();
+        assert_eq!(idx.count_blob_files(), 1);
+        assert_eq!(idx.count_chunks_indexed(), 3);
     }
 
     #[test]
@@ -327,20 +304,20 @@ mod test {
         ];
         let datadir = tempdir().unwrap();
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let blob_index = BlobIndex::new();
-        let mut blob_mgr = BlobManager::with_capacity(&datadir, bbox, blob_index, 3);
+        let mut blob_index = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::with_capacity(&datadir, bbox, 3);
         // load w/some data
         for v in vec.iter_mut() {
-            blob_mgr.add_chunk(v).unwrap();
+            blob_buf.add_chunk(v, &mut blob_index).unwrap();
         }
-        assert_eq!(blob_mgr.count_blob_files(), 4);
-        assert_eq!(blob_mgr.count_chunks_indexed(), 4);
+        assert_eq!(blob_index.count_blob_files(), 4);
+        assert_eq!(blob_index.count_chunks_indexed(), 4);
     }
 
     #[test]
     fn blob() {
-        let mut blob_mgr = test_blobmgr();
-        let (data, positions) = blob_mgr._eject_blob();
+        let (mut blob_buf, mut _idx) = test_blobbuf();
+        let (data, positions) = blob_buf._eject_blob();
         assert_eq!(
             data,
             vec![
