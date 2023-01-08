@@ -1,23 +1,58 @@
-use std::{env, fs};
+use clap::Parser;
+use std::fs;
 
+// encryption/serialization stuff
 use blu::age::BlackBox;
-use blu::block::PlainIndex;
 use blu::io::BlackBoxSerializable;
+
+// index types
+use blu::blob::BlobIndex;
+use blu::block::PlainIndex;
+use blu::metadata::Index;
+use blu::tagger::TagIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
+#[derive(Parser)]
+pub struct Args {
+    #[clap(value_enum)]
+    pub index_type: IndexType,
+    pub file: String,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum IndexType {
+    V1Plain,
+    Plain,
+    Blob,
+    Tag,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args();
-    if args.len() == 1 {
-        eprintln!("usage: {} <index-file>", args.next().unwrap());
-        std::process::exit(1);
-    }
-    let index_file = &args.nth(1).unwrap();
+    let args = Args::parse();
+    let index_file = &args.file;
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let data = fs::read(index_file)?;
-    let index = PlainIndex::read(&data[..], &bbox)?;
-    dbg!(&index);
+
+    match args.index_type {
+        IndexType::V1Plain => {
+            let index = Index::read(&data[..], &bbox)?;
+            dbg!(&index);
+        }
+        IndexType::Plain => {
+            let index = PlainIndex::read(&data[..], &bbox)?;
+            dbg!(&index);
+        }
+        IndexType::Blob => {
+            let index = BlobIndex::read(&data[..], &bbox)?;
+            dbg!(&index);
+        }
+        IndexType::Tag => {
+            let index = TagIndex::read(&data[..], &bbox)?;
+            dbg!(&index);
+        }
+    }
 
     Ok(())
 }
