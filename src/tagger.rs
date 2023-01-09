@@ -5,7 +5,7 @@ use std::io;
 use crate::age::BlackBox;
 use crate::compression::{compress, decompress};
 use crate::hash::Hash;
-use crate::io::BlackBoxSerializable;
+use crate::io::{gen_std_bbserde, BlackBoxSerializable};
 
 /// default filename for the tag index file
 pub const TAG_INDEX_FILENAME: &str = "tags.dat";
@@ -113,44 +113,7 @@ impl TagIndex {
     }
 }
 
-impl BlackBoxSerializable for TagIndex {
-    fn write<W: io::Write>(
-        &self,
-        mut stream: W,
-        bbox: &BlackBox,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let serialized = self.serialize_bytes()?;
-        let compressed = compress(&serialized)?;
-        let encrypted = bbox.encrypt(&compressed)?;
-        let _ = stream.write_all(&encrypted);
-        Ok(())
-    }
-
-    fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        // let decoded: Index = serde_cbor::from_slice(data)?;
-        let decoded: Self = bincode::deserialize(data)?;
-        Ok(decoded)
-    }
-
-    fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let encoded: Vec<u8> = bincode::serialize(&self)?;
-        // let encoded: Vec<u8> = serde_cbor::to_vec(&self)?;
-        Ok(encoded)
-    }
-
-    // read / write serialization methods integrate BlackBox for automagic
-    // also compress and decompress
-    fn read<R: io::Read>(
-        mut stream: R,
-        bbox: &BlackBox,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut encrypted = Vec::new();
-        let _ = stream.read_to_end(&mut encrypted)?;
-        let compressed = bbox.decrypt(&encrypted)?;
-        let serialized = decompress(&compressed)?;
-        Self::deserialize_bytes(&serialized)
-    }
-}
+gen_std_bbserde!(TagIndex);
 
 #[cfg(test)]
 mod test {
