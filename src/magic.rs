@@ -3,11 +3,14 @@ use filemagic::Magic;
 const MAGIC_BUF_MAX_SIZE: usize = 1024;
 const BREW_MAGIC_DB: &str = "/usr/local/share/misc/magic.mgc";
 
+/// A wrapper around the filemagic crate. This is used to determine the file
+/// type.
 pub struct Wizard {
     magic: Magic,
 }
 
 impl Wizard {
+    /// Create a new Wizard.
     pub fn new() -> Wizard {
         let m = Magic::open(Default::default()).unwrap();
         let magic_dbs = vec![BREW_MAGIC_DB];
@@ -16,6 +19,7 @@ impl Wizard {
         Wizard { magic: m }
     }
 
+    /// Get the file type of the given data.
     pub fn get_filetype(
         &self,
         data: &[u8],

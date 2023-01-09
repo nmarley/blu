@@ -20,13 +20,16 @@ use super::FileRef;
 
 const BLOCK_SIZE: usize = 4096;
 
+/// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.0";
 
 type FileIndex = HashMap<Hash, FileRef>;
 type BlockIndex = HashMap<Hash, BlockRef>;
 
-/// PlainIndex ...
+/// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
+/// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
+/// by the hash of the block's contents.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct PlainIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
@@ -41,6 +44,7 @@ pub struct PlainIndex {
 }
 
 impl PlainIndex {
+    /// Create a new PlainIndex given a directory path.
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
         let (files, blocks) = Self::build_index(dir)?;
         Ok(Self {
@@ -52,6 +56,7 @@ impl PlainIndex {
         })
     }
 
+    /// Build a new PlainIndex given a directory path.
     fn build_index<P: AsRef<Path>>(
         dir: P,
     ) -> Result<(FileIndex, BlockIndex), Box<dyn std::error::Error>> {
@@ -105,14 +110,14 @@ impl PlainIndex {
         Ok((files, blocks))
     }
 
-    // returns unique bytes indexed, excludes duplicates
+    /// Returns the number of unique bytes indexed.
     pub fn uniq_bytes_indexed(&self) -> u64 {
         self.blocks.iter().fold(0u64, |acc, elem| {
             elem.1.references.iter().next().unwrap().size as u64 + acc
         })
     }
 
-    // returns total bytes indexed, including duplicates
+    /// Returns the total number of bytes indexed.
     pub fn total_bytes_indexed(&self) -> u64 {
         self.blocks.iter().fold(0u64, |acc, elem| {
             acc + elem
@@ -125,32 +130,39 @@ impl PlainIndex {
         })
     }
 
-    // returns number of duplicate bytes on disk (bytes saved in encryption step by de-duplicating)
+    /// Returns the number of duplicate bytes indexed (bytes saved in encryption step by
+    /// de-duplicating beforehand).
     pub fn duplicate_bytes_indexed(&self) -> u64 {
         self.total_bytes_indexed() - self.uniq_bytes_indexed()
     }
 
+    /// Returns the number of unique blocks (not files) indexed.
     pub fn count_blocks(&self) -> usize {
         self.blocks.len()
     }
 
-    // iterate over the hashes of all files in the index
+    /// Returns an iterator over the hashes of all files in the index.
     pub fn iter_hashes(&self) -> impl Iterator<Item = &Hash> {
         self.files.keys()
     }
 
+    /// Get a shared reference to the files map.
     pub fn files_map_ref(&self) -> &HashMap<Hash, FileRef> {
         &self.files
     }
 
+    /// Get a shared reference to the blocks map.
     pub fn blocks_map_ref(&self) -> &HashMap<Hash, BlockRef> {
         &self.blocks
     }
 
+    /// Get a reference to the FileRef for a given hash.
     pub fn get_fileref_ref(&self, file_hash: &Hash) -> Option<&FileRef> {
         self.files.get(file_hash)
     }
 
+    // TODO: Should this be block hash instead?
+    /// Read the bytes from disk and return them for a given blockref.
     pub fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
         let disk_index = blockref.references.iter().next().unwrap();
         let fileref = self.get_fileref_ref(&disk_index.file_hash).unwrap();
@@ -163,7 +175,8 @@ impl PlainIndex {
         buf
     }
 
-    // Update the index, return a list of removed (dangling) entries
+    /// Update the existing index, given a directory path, and return a list of removed (dangling)
+    /// entries.
     pub fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
@@ -297,6 +310,7 @@ impl BlackBoxSerializable for PlainIndex {
     }
 }
 
+/// Helper method to return the current timestamp
 fn now() -> chrono::NaiveDateTime {
     // returns a NaiveDateTime without milli/nano seconds
     NaiveDateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)

@@ -1,37 +1,48 @@
 # dev notes
 
-## Note (2022-11-11):
-
-I'm realizing that instead of mixing up encryption + metadata, tagging and de-duplication, instead I should focus ONLY on the metadata portion for now. The encryption should be transparent and will come, and separately. Can focus on UX (don't need web UI right now but _could_ ostensibly in a few versions down the road), such as tagging and data search. Make encryption optional (at least in this phase of the design) and not necessary for every effing command. Will make implementing this conceptutally much easier.
-
-
 ## TODO
+
+- [ ] restore (functionality / util) from given datadir + indexes
+  - [ ] implement as separate util in src/bin/
+  - [ ] accept a restore_to dirname as argument (must be empty)
 
 - [ ] filename search
   -- consider https://github.com/BurntSushi/suffix for this
 
-- [ ] enc map implement + testing
+- [x] split blob index + blob buffer out from BlobManager
+  - [x] blob index
+    - [x] implement
+    - [ ] test
+  - [x] blob buffer refactor
   -- maps plain to encrypted -- built when files are encrypted and STREAMs the plain text thru to the encrypted data store -- be that local or s3/
 
 - [ ] status command
   -- which does what? Describe this.
+  -- Could display files which are in the PlainIndex but not encrypted
+  -- Could display stats, e.g. # files, # bytes de-duplicated (saved), x tags being used, etc.
 
-- [ ] Implement document index conceptually separate from encryption/hash index
+- [x] Implement document index conceptually separate from encryption/hash index
   - [/] search tags / filenames
   - [x] tag/untag files
   - [x] list all tags
   - [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
 
-- [/] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
+- [x] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
   - [x] 2022-05-07: This is mostly done, blob index and manager are finished. Just need to...
-  - [ ] 2022-05-07: Add encryption (and possibly compression) to the blob before hashing/writing.
-  - [ ] 2022-05-07: Add tests for BlobManager. Lots of tests.
-    -- 2023-01-05: Reconsider this design, maybe.
+  - [x] 2022-05-07: Add encryption (and possibly compression) to the blob before hashing/writing.
+  - [x] 2022-05-07: Add tests for BlobManager. Lots of tests. (won't do, this has been refactored away)
+    - [x] 2023-01-05: Reconsider this design (refactored)
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
   See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
 
 - [ ] multi-key encryption/recovery. How to handle this?
+
+Other storage backends such as s3, etc. Current version only implements local disk!
+- [ ] s3
+- [ ] digital ocean one?
+- [ ] Google Cloud?
+- [ ] Azure?
 
 ## Understand
 
@@ -80,3 +91,21 @@ If a web-ui is added, probably would like to use Actix-Web. A new version was ju
 - Should there be a .bluignore, similar to .gitignore? Or within .blu, e.g. .blu/ignore?
 
 - Consider licensing as Apache + MIT dual license or similar
+
+### Old notes from main binary (pre-v0.2):
+
+// There are 2 operations:
+//     a. archive - encrypt+de-duplicate new files
+//     b. restore - restore from backup
+//
+// now, difference method depends on the operation...
+//
+// if we are doing in archive (encrypted any new files), then we want to get
+// the difference of:
+//
+// index - enc_idx
+// ... ignoring any extra encrypted files lying around.
+//
+// Likewise, a restore operation would be the opposite.
+// enc_idx - index
+// ... restore any left over, ignoring un-encrypted files lying around.

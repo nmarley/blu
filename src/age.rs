@@ -3,6 +3,9 @@ use std::io::{Read, Write};
 use std::str::FromStr;
 
 // TODO: Could have a more elegant separation of keys, enc-only keys, etc.
+/// BlackBox is a "black-box" which encapsulates (and obscures) all encryption and decryption.
+///
+/// Anything that needs encryption or decryption in the project should use this.
 #[derive(Clone)]
 pub struct BlackBox {
     identities: Vec<age::x25519::Identity>,
@@ -17,6 +20,7 @@ impl std::fmt::Debug for BlackBox {
 // TODO:
 // - seed gen / recovery (24-word seed -> key only)
 impl BlackBox {
+    /// Create a new BlackBox with the given identities.
     pub fn new(priv_keys: &[&str]) -> BlackBox {
         let identities: Vec<age::x25519::Identity> = priv_keys
             .iter()
@@ -28,6 +32,7 @@ impl BlackBox {
     fn identities(&self) -> Vec<age::x25519::Identity> {
         self.identities.clone()
     }
+
     fn new_encryptor(&self) -> age::Encryptor {
         let identities = self.identities();
 
@@ -45,6 +50,7 @@ impl BlackBox {
         age::Encryptor::with_recipients(pub_keys)
     }
 
+    /// Encrypt the given bytes using the identities associated with the BlackBox.
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, age::EncryptError> {
         let mut encrypted = vec![];
         let mut writer = self.new_encryptor().wrap_output(&mut encrypted)?;
@@ -54,6 +60,7 @@ impl BlackBox {
         Ok(encrypted)
     }
 
+    /// Decrypt the given bytes using the identities associated with the BlackBox.
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut decrypted = vec![];
         let decryptor = match age::Decryptor::new(data).unwrap() {
@@ -68,6 +75,7 @@ impl BlackBox {
     }
 }
 
+/// Decrypt some bytes using a passphrase.
 pub fn passphrase_decrypt(
     data: &[u8],
     passphrase: &str,
@@ -83,6 +91,7 @@ pub fn passphrase_decrypt(
     Ok(decrypted)
 }
 
+/// Encrypt some bytes using a passphrase.
 pub fn passphrase_encrypt(
     data: &[u8],
     passphrase: &str,

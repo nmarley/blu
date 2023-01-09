@@ -19,6 +19,7 @@ pub struct Chunkerator {
 }
 
 impl Chunkerator {
+    /// Create a new Chunkerator, given a chunk size.
     pub fn new<P: AsRef<Path>>(
         filepath: P,
         chunk_size: usize,

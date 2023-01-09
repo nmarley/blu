@@ -1,6 +1,9 @@
 use multihash::{Code, Multihash, MultihashDigest};
 use serde::{Deserialize, Serialize};
 
+/// Returns a multihash of the given data. Currently uses the sha-512 hash.
+///
+/// This is a bad design and should be more flexible in the hash to be used.
 pub fn multihash(data: &[u8]) -> Multihash {
     Code::Sha2_512.digest(data)
 }
@@ -31,6 +34,7 @@ impl From<&str> for Hash {
     }
 }
 impl Hash {
+    /// Returns the bytes which constitute the multihash.
     pub fn to_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
     }
