@@ -48,3 +48,6 @@ pub mod search;
 pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
+
+/// search for filenames
+pub mod search_trie;
