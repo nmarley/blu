@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 use std::str::FromStr;
 
 // TODO: Could have a more elegant separation of keys, enc-only keys, etc.
+#[derive(Clone)]
 pub struct BlackBox {
     identities: Vec<age::x25519::Identity>,
 }

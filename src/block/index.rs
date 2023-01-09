@@ -151,7 +151,7 @@ impl PlainIndex {
         self.files.get(file_hash)
     }
 
-    pub fn get_chunk_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
+    pub fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
         let disk_index = blockref.references.iter().next().unwrap();
         let fileref = self.get_fileref_ref(&disk_index.file_hash).unwrap();
         let filename = fileref.get_a_path();
