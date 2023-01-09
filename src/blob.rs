@@ -9,12 +9,12 @@ use crate::dir::Manager;
 use crate::hash::{self, Hash};
 use crate::io::BlackBoxSerializable;
 
-// const DEFAULT_BLOB_INDEX_FILENAME: &str = "blob_index.dat";
+/// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
 
-/// BlobManager writes blob files, re-indexes and re-orgs in case of many
-/// chunks (or unused chunks), etc.
+/// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks (or unused blocks),
+/// etc.
 #[derive(Debug)]
 pub struct BlobBuffer {
     // TODO: Remove this in favor of a trait / implementation?
@@ -32,9 +32,11 @@ pub struct BlobBuffer {
 }
 
 impl BlobBuffer {
+    /// Create a new BlobBuffer with the default capacity
     pub fn new<P: AsRef<Path>>(dir: P, bbox: BlackBox) -> Self {
         Self::with_capacity(dir, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
     }
+    /// Create a new BlobBuffer with a specified capacity
     pub fn with_capacity<P: AsRef<Path>>(dir: P, bbox: BlackBox, capacity: usize) -> Self {
         let datadir = dir.as_ref().to_path_buf();
         Self {
@@ -47,6 +49,10 @@ impl BlobBuffer {
         }
     }
 
+    /// Write a block of data to the blob buffer. If the buffer is full, it will be flushed to disk
+    /// and a new one started.
+    ///
+    /// To be used with [`BlobBuffer::finalize`].
     pub fn add_chunk(
         &mut self,
         chunk: &mut [u8],
@@ -79,7 +85,7 @@ impl BlobBuffer {
         Ok(())
     }
 
-    // Final blob (in-memory) gets written to disk
+    /// Finalize the blob buffer, writing the last blob to disk and updating the index.
     pub fn finalize(&mut self, idx: &mut BlobIndex) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_empty() {
             self.roll_new_blob(idx)?;
@@ -117,8 +123,8 @@ impl BlobBuffer {
         Ok(path)
     }
 
-    /// Do not use, for testing only.
-    /// TODO: Remove this entirely
+    // Do not use, for testing only.
+    // TODO: Remove this entirely
     fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
         let data = self.data.clone();
         let pos = self.positions.clone();
@@ -157,6 +163,7 @@ pub struct BlobChunkLocation {
 }
 
 impl BlobChunkLocation {
+    /// Read the data from the blob file at the specified position
     pub fn get_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut f = std::fs::File::open(&self.path)?;
         let mut buf: Vec<u8> = vec![0; self.position.size];
@@ -166,8 +173,7 @@ impl BlobChunkLocation {
     }
 }
 
-/// BlobIndex maps the plain hash to the encrypted blobfile and position within.
-/// This is managed by the BlobManager.
+/// BlobIndex maps the plain hashes to the encrypted blob files and positions within.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
     // map the hash to the location of the data on disk
@@ -178,6 +184,7 @@ pub struct BlobIndex {
 }
 
 impl BlobIndex {
+    /// Create a new BlobIndex
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -185,27 +192,38 @@ impl BlobIndex {
         }
     }
 
+    /// Add a chunk location to the index. This should be done after a blob is written to disk.
+    ///
+    /// Generally the blob buffer will do this in the add_chunk and finalize methods.
     pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
         self.modified = true;
     }
 
+    /// Return whether the block is in the blob index or not.
+    ///
+    /// This is a good indication of if the block has been encrypted or not.
     pub fn has_chunk(&self, chunk_hash: &Hash) -> bool {
         self.map.contains_key(chunk_hash)
     }
 
-    #[allow(dead_code)]
-    pub fn get_chunk_bytes(
-        &self,
-        chunk_hash: &Hash,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let location_ref = self
-            .map
-            .get(chunk_hash)
-            .ok_or("chunk hash not found in index")?;
-        location_ref.get_bytes()
-    }
+    // #[allow(dead_code)]
+    // /// Get a block of data from the given blob index.
+    // ///
+    // /// WARNING: This was implemented before encryption, so does not work as-is right now. Might be
+    // /// useful for restores or reconciliation (for dangling blob chunks / index entries).
+    // pub fn get_chunk_bytes(
+    //     &self,
+    //     chunk_hash: &Hash,
+    // ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    //     let location_ref = self
+    //         .map
+    //         .get(chunk_hash)
+    //         .ok_or("chunk hash not found in index")?;
+    //     location_ref.get_bytes()
+    // }
 
+    /// Get the count of encrypted files (not blocks) referenced by the blob index.
     pub fn count_blob_files(&self) -> usize {
         self.map
             .values()
@@ -214,6 +232,7 @@ impl BlobIndex {
             .len()
     }
 
+    /// Get the count of encrypted blocks (not files) referenced by the blob index.
     pub fn count_chunks_indexed(&self) -> usize {
         self.map.len()
     }

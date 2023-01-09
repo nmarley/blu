@@ -51,8 +51,8 @@ impl Index {
         self.map.get_mut(hash)
     }
 
-    // walk the dir and hash all regular files
-    // ignore block/char specials, etc.
+    /// Build an index by walk the dir and hashing all regular files.
+    /// Ignore block/char specials, etc.
     fn build_index<P: AsRef<Path>>(
         base_dir: P,
     ) -> Result<HashMap<Hash, Entry>, Box<dyn std::error::Error>> {
@@ -104,13 +104,13 @@ impl Index {
         Ok(map_files)
     }
 
-    // get all entries in the index
+    /// Get all entries in the index
     pub fn get_all_entry_refs(&self) -> Vec<&Entry> {
         self.map.values().collect::<Vec<&Entry>>()
     }
 
-    // Return a Vec of Entries that exist in this Index, but do *not* yet exist
-    // in the EncIdx.
+    /// Return a Vec of Entries that exist in this Index, but do *not* yet exist
+    /// in the EncIdx.
     pub fn difference_enc_idx(&self, enc_idx: &EncryptedIndex) -> Vec<Entry> {
         let mut to_encrypt: Vec<Entry> = vec![];
         for entry in self.map.values() {
@@ -126,7 +126,7 @@ impl Index {
         to_encrypt
     }
 
-    // Update the index, return a list of removed (dangling) entries
+    /// Update the index, return a list of removed (dangling) entries
     pub fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,

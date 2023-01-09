@@ -4,12 +4,19 @@ use std::path::{Path, PathBuf};
 
 use crate::hash::Hash;
 
+/// Manager is the manager for the data directory. It is responsible for
+/// generating the filenames for the encrypted data blobs, and for writing the
+/// data files to disk.
+///
+/// This is a terrible design and will be changed, or likely absorbed into the
+/// BlobBuffer struct.
 #[derive(Default, Debug)]
 pub struct Manager {
     datadir: PathBuf,
 }
 
 impl Manager {
+    /// Create a new dir::Manager with the given datadir.
     pub fn new<P: AsRef<Path>>(datadir: P) -> Self {
         Self {
             datadir: datadir.as_ref().to_path_buf(),
@@ -17,6 +24,7 @@ impl Manager {
     }
 
     // TODO: Reconsider this? Not sure if we want to assume local storage or if this goes here.
+    /// Write the data to the datadir. Pick the filename based on the hash.
     pub fn write_data(
         &self,
         hash: &Hash,
@@ -33,6 +41,7 @@ impl Manager {
     }
 
     /// Get a path for the encrypted data.
+    ///
     /// This is generally the hash of the data, but broken into a dir structure also with the
     /// multihash prefix(es) removed from the front...
     ///

@@ -7,19 +7,22 @@ use crate::compression::{compress, decompress};
 use crate::hash::Hash;
 use crate::io::BlackBoxSerializable;
 
+/// default filename for the tag index file
 pub const TAG_INDEX_FILENAME: &str = "tags.dat";
 
-/// TagIndex ...
+/// TagIndex is a struct that stores a mapping of tags to files and files to
+/// tags.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Default)]
 pub struct TagIndex {
     // fileref hash (hash of entire file) + tags as a hashset of strings
     pub(crate) file_tags: HashMap<Hash, HashSet<String>>,
 
-    // string -> hashset<file hash>
+    /// string -> hashset<file hash>
     pub(crate) tag_files: HashMap<String, HashSet<Hash>>,
 }
 
 impl TagIndex {
+    /// Create a new TagIndex
     pub fn new() -> Self {
         Self {
             file_tags: HashMap::new(),

@@ -10,9 +10,13 @@ use crate::metadata::{Index, INDEX_FILENAME as V1_INDEX_FILENAME};
 use crate::tagger::{TagIndex, TAG_INDEX_FILENAME};
 
 // TODO: implement backends -- probably a trait
+/// Backend is the storage backend for blu. Currently only local filesystem is
+/// supported.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub enum Backend {
+    /// Local filesystem
     Local,
+    /// Amazon S3
     S3,
 }
 
@@ -23,15 +27,20 @@ impl Default for Backend {
 }
 
 // for now locked to just Age keys, for simplicity
+/// KeyType is the type of key used to encrypt/decrypt data. Currently only Age
+/// keys are supported.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub enum KeyType {
     // RSA,
     // DSA,
     // ECDSA,
     // Ed25519,
+    /// Age key
     Age,
 }
 
+/// KeyID is a unique identifier for a key. It is a combination of the key type
+/// and public key, but in reality is just the public key.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
 pub struct KeyID {
     r#type: KeyType,
@@ -47,6 +56,8 @@ const DEFAULT_DATADIR: &str = ".blu/data";
 //                                              "$HOME/.blu/secrets/blu.pub";
 // std::env::get("HOME")
 
+/// Config is the configuration for blu. It is stored in the .blu directory in
+/// the config.json file.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(default)]
 pub struct Config {
@@ -93,6 +104,7 @@ impl Default for Config {
     }
 }
 
+/// read_config reads the config from the .blu directory in the base_dir.
 pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
     let cfg_dir = base_dir.as_ref().join(".blu");
     let config_filename = cfg_dir.join("config.json");
@@ -109,6 +121,7 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
 /// macro to write load_index, load_tag_index, load_blob_index, etc. ...
 macro_rules! load_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
+        /// $name loads the index from the config's datadir.
         pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
             let index_path = self.datadir().join(&self.$idx_filename_varname);
             // read index file data or return None
@@ -126,6 +139,11 @@ macro_rules! load_index {
 }
 
 impl Config {
+    /// Returns the datadir WITHIN the base directory for blu. This is the
+    /// directory that holds the encrypted data blobs and index files.
+    ///
+    /// Probably not a great design, and I'm open to changing this in the
+    /// future.
     pub fn datadir(&self) -> PathBuf {
         let rel_dir = match self.datadir.clone() {
             Some(s) => s,
@@ -140,6 +158,7 @@ impl Config {
     // deprecated
     load_index!(v1_load_index, Index, v1_plain_index_filename);
 
+    /// write_blob_index writes the blob index to the config's datadir.
     pub fn write_blob_index(
         &self,
         blob_index: &BlobIndex,

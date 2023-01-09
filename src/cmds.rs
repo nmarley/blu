@@ -1,3 +1,7 @@
+// Note: this module is so immature and not well thought-out that I don't want
+// to waste time generating rustdoc for it.
+#![allow(missing_docs)]
+
 mod add;
 mod init;
 mod restore;
