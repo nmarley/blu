@@ -50,28 +50,28 @@ const DEFAULT_DATADIR: &str = ".blu/data";
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(default)]
 pub struct Config {
-    pub backend: Backend,
-    pub blu_version: String,
-    pub data_key_files: Vec<String>,
+    backend: Backend,
+    blu_version: String,
+    data_key_files: Vec<String>,
 
     // base dir
     #[serde(skip)]
-    pub basedir: PathBuf,
+    basedir: PathBuf,
 
     // The datadir should hold encrypted data and metadata. Priv keys should
     // never be stored here, even encrypted.
-    pub datadir: Option<PathBuf>,
+    datadir: Option<PathBuf>,
 
     // should blu delete Encrypted from filesystem, if the plain version was deleted?
-    pub prune_deleted: bool,
+    prune_deleted: bool,
     // should blu delete dangling Encrypted from filesystem?
-    pub prune_dangling: bool,
+    prune_dangling: bool,
 
-    pub plain_index_filename: PathBuf,
-    pub tag_index_filename: PathBuf,
-    pub blob_index_filename: PathBuf,
+    plain_index_filename: PathBuf,
+    tag_index_filename: PathBuf,
+    blob_index_filename: PathBuf,
     // deprecated
-    pub v1_plain_index_filename: PathBuf,
+    v1_plain_index_filename: PathBuf,
 }
 
 impl Default for Config {
