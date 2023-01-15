@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
@@ -162,14 +162,97 @@ pub struct BlobBlockLocation {
     position: Position,
 }
 
-impl BlobBlockLocation {
-    /// Read the data from the blob file at the specified position
-    pub fn get_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let mut f = std::fs::File::open(&self.path)?;
-        let mut buf: Vec<u8> = vec![0; self.position.size];
-        let _seekptr = f.seek(SeekFrom::Start(self.position.offset as u64))?;
-        f.read_exact(&mut buf)?;
-        Ok(buf)
+/// DataCache caches the data from a decrypted blob file.
+///
+/// This is used to avoid decrypting the same blob file multiple times.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
+pub struct DataCache {
+    // file hash -> bytes
+    map: HashMap<Hash, Vec<u8>>,
+    limit: usize,
+    lru: Vec<Hash>,
+}
+
+impl DataCache {
+    /// Create a new DataCache with a limit on the number of cached blobs.
+    pub fn new(limit: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            limit,
+            lru: vec![],
+        }
+    }
+
+    /// Get the data from the cache, if it exists.
+    pub fn get(&mut self, hash: &Hash) -> Option<&Vec<u8>> {
+        match self.map.get(hash) {
+            None => None,
+            Some(data) => {
+                // update the positions for lru
+                let pos = self.lru.iter().position(|x| x == hash).unwrap();
+                let hash = self.lru.remove(pos);
+                self.lru.push(hash);
+                Some(data)
+            }
+        }
+    }
+
+    /// Add the data to the cache.
+    pub fn add(&mut self, hash: &Hash, data: Vec<u8>) {
+        let is_in_lru = self.map.contains_key(hash);
+        // add or update data
+        self.map.insert(hash.clone(), data);
+
+        if is_in_lru {
+            // update the positions for lru
+            let pos = self.lru.iter().position(|x| x == hash).unwrap();
+            let hash = self.lru.remove(pos);
+            self.lru.push(hash);
+        } else {
+            self.lru.push(hash.clone());
+        }
+
+        if self.lru.len() > self.limit {
+            let to_remove = self.lru.remove(0);
+            self.map.remove(&to_remove);
+        }
+    }
+}
+
+/// EncBlobReader reads encrypted blobs from disk.
+#[derive(Debug)]
+pub struct EncBlobReader<'a> {
+    data_cache: DataCache,
+    bbox: &'a BlackBox,
+}
+impl<'a> EncBlobReader<'a> {
+    /// Create a new EncBlobReader.
+    pub fn new(bbox: &'a BlackBox) -> Self {
+        Self {
+            data_cache: DataCache::new(10),
+            bbox,
+        }
+    }
+
+    /// Get the bytes from the blob file at the specified position.
+    pub fn get_bytes(
+        &mut self,
+        hash: &Hash,
+        location_ref: &BlobBlockLocation,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let full_data_ref = match self.data_cache.get(hash) {
+            Some(data) => data,
+            None => {
+                let data = std::fs::read(&location_ref.path)?;
+                let data = self.bbox.decrypt(&data)?;
+                let data = decompress(&data)?;
+                self.data_cache.add(hash, data);
+                self.data_cache.get(hash).unwrap()
+            }
+        };
+
+        let pos = &location_ref.position;
+        Ok(full_data_ref[pos.offset..pos.offset + pos.size].to_vec())
     }
 }
 
@@ -207,21 +290,17 @@ impl BlobIndex {
         self.map.contains_key(chunk_hash)
     }
 
-    // #[allow(dead_code)]
-    // /// Get a block of data from the given blob index.
-    // ///
-    // /// WARNING: This was implemented before encryption, so does not work as-is right now. Might be
-    // /// useful for restores or reconciliation (for dangling blob chunks / index entries).
-    // pub fn get_chunk_bytes(
-    //     &self,
-    //     chunk_hash: &Hash,
-    // ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    //     let location_ref = self
-    //         .map
-    //         .get(chunk_hash)
-    //         .ok_or("chunk hash not found in index")?;
-    //     location_ref.get_bytes()
-    // }
+    /// Get the location of the block within the blob.
+    pub fn get_block_location_ref(
+        &self,
+        block_hash: &Hash,
+    ) -> Result<BlobBlockLocation, Box<dyn std::error::Error>> {
+        let location_ref = self
+            .map
+            .get(block_hash)
+            .ok_or("block hash not found in index")?;
+        Ok(location_ref.clone())
+    }
 
     /// Get the count of encrypted files (not blocks) referenced by the blob index.
     pub fn count_blob_files(&self) -> usize {
@@ -327,5 +406,33 @@ mod test {
             .map(|(k, v)| (k, v.position))
             .collect();
         assert_eq!(positions, expected_positions);
+    }
+
+    #[test]
+    fn data_cache() {
+        let a_hash = Hash::from("1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let b_hash = Hash::from("1340bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let c_hash = Hash::from("1340cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+
+        let mut dc = super::DataCache::new(2);
+        dc.add(&a_hash, vec![0x0b, 0x0a, 0x00]);
+        dc.add(&b_hash, vec![0x00, 0x0a, 0x0b]);
+
+        assert_eq!(dc.get(&a_hash), Some(&vec![0x0b, 0x0a, 0x00]));
+        assert_eq!(dc.get(&b_hash), Some(&vec![0x00, 0x0a, 0x0b]));
+
+        dc.add(&a_hash, vec![0x00, 0x0a, 0x0b]);
+        dc.add(&c_hash, vec![0x0c, 0x0c, 0x0c]);
+
+        assert_eq!(dc.get(&b_hash), None);
+        assert_eq!(dc.get(&c_hash), Some(&vec![0x0c, 0x0c, 0x0c]));
+        assert_eq!(dc.get(&a_hash), Some(&vec![0x00, 0x0a, 0x0b]));
+        dc.add(&b_hash, vec![0x00, 0x0a, 0x0b]);
+
+        // added a, then c, then b... but most recently used a, before adding b,
+        // so C should now be removed
+        assert_eq!(dc.get(&c_hash), None);
+
+        dbg!(&dc);
     }
 }
