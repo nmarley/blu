@@ -126,8 +126,8 @@ impl BlobBuffer {
     // Do not use, for testing only.
     // TODO: Remove this entirely
     fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobBlockLocation>) {
-        let data = self.data.clone();
-        let pos = self.positions.clone();
+        let data = std::mem::take(&mut self.data);
+        let pos = std::mem::take(&mut self.positions);
         self.reset();
         (data, pos)
     }
@@ -299,6 +299,7 @@ mod test {
     #[test]
     fn blob() {
         let (mut blob_buf, mut _idx) = test_blobbuf();
+        // TODO: Test the interface, not the implementation
         let (data, positions) = blob_buf._eject_blob();
         assert_eq!(
             data,
