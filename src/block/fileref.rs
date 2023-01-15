@@ -39,4 +39,10 @@ impl FileRef {
     pub fn get_a_path(&self) -> PathBuf {
         self.paths.iter().next().unwrap().to_path_buf()
     }
+
+    pub fn total_size(&self) -> u64 {
+        self.chunkmetas
+            .iter()
+            .fold(0, |acc, elem| acc + elem.size as u64)
+    }
 }
