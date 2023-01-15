@@ -2,9 +2,9 @@
 
 ## TODO
 
-- [ ] restore (functionality / util) from given datadir + indexes
-  - [ ] implement as separate util in src/bin/
-  - [ ] accept a restore_to dirname as argument (must be empty)
+-- done, 2023-01-14
+- [x] restore (functionality / util) from given datadir + indexes
+  - [x] implement as separate util in src/bin/
 
 - [ ] filename search
   -- consider https://github.com/BurntSushi/suffix for this
