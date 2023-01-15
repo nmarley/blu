@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later
+    let mut count_added = 0;
     for (blockhash, blockref) in plain_index.blocks_map_ref() {
         // let block = index.get_block(blockref).unwrap();
         // dbg!(&blockhash);
@@ -65,15 +66,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // add it to the blob buffer
         blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
+        count_added += 1;
         println!("========================================================================");
     }
-    match blob_buf.finalize(&mut blob_index) {
-        Ok(_) => println!("Finalized blob buffer!"),
-        Err(e) => println!("Error finalizing blob buffer: {}", e),
-    }
-    match cfg.write_blob_index(&blob_index, &bbox) {
-        Ok(_) => println!("Wrote blob index!"),
-        Err(e) => println!("Error writing blob index: {}", e),
+    println!("Added {} new chunks to blob buffer", count_added);
+    if count_added > 0 {
+        match blob_buf.finalize(&mut blob_index) {
+            Ok(_) => println!("Finalized blob buffer!"),
+            Err(e) => println!("Error finalizing blob buffer: {}", e),
+        }
+        match cfg.write_blob_index(&blob_index, &bbox) {
+            Ok(_) => println!("Wrote blob index!"),
+            Err(e) => println!("Error writing blob index: {}", e),
+        }
     }
 
     Ok(())
