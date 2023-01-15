@@ -28,7 +28,7 @@ pub struct BlobBuffer {
     data: Vec<u8>,
     blob_capacity: usize,
     offset: usize,
-    positions: HashMap<Hash, BlobChunkLocation>,
+    positions: HashMap<Hash, BlobBlockLocation>,
 }
 
 impl BlobBuffer {
@@ -65,7 +65,7 @@ impl BlobBuffer {
         // remap the path after writing and then add to the blob_index
         self.positions.insert(
             chunk_hash,
-            BlobChunkLocation {
+            BlobBlockLocation {
                 path: "".into(),
                 position: Position {
                     offset: self.offset,
@@ -125,7 +125,7 @@ impl BlobBuffer {
 
     // Do not use, for testing only.
     // TODO: Remove this entirely
-    fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobChunkLocation>) {
+    fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobBlockLocation>) {
         let data = self.data.clone();
         let pos = self.positions.clone();
         self.reset();
@@ -155,14 +155,14 @@ pub struct Position {
     size: usize,
 }
 
-/// BlobChunkLocation is a path to a blob file and a position (offset/size)
+/// BlobBlockLocation is a path to a blob file and a position (offset/size)
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
-pub struct BlobChunkLocation {
+pub struct BlobBlockLocation {
     path: PathBuf,
     position: Position,
 }
 
-impl BlobChunkLocation {
+impl BlobBlockLocation {
     /// Read the data from the blob file at the specified position
     pub fn get_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut f = std::fs::File::open(&self.path)?;
@@ -177,7 +177,7 @@ impl BlobChunkLocation {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
     // map the hash to the location of the data on disk
-    map: HashMap<Hash, BlobChunkLocation>,
+    map: HashMap<Hash, BlobBlockLocation>,
     // Do not re-serialize to disk if the blob index wasn't modified.
     #[serde(skip)]
     modified: bool,
@@ -195,7 +195,7 @@ impl BlobIndex {
     /// Add a chunk location to the index. This should be done after a blob is written to disk.
     ///
     /// Generally the blob buffer will do this in the add_chunk and finalize methods.
-    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobChunkLocation) {
+    pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobBlockLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
         self.modified = true;
     }
