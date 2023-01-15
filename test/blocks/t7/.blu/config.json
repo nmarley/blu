@@ -1,0 +1,11 @@
+{
+  "backend": "Local",
+  "blu_version": "0.3.0",
+  "data_key_files": ["test/blu_secrets/blu.key"],
+  "metadata_key_id": {
+    "type": "Age",
+    "public_key": "age12mqsq4tcdvhl3ef8a4vnq0699p40t4rr867vtga4wecn0v45gchqg9sevz"
+  },
+  "prune_deleted": false,
+  "prune_dangling": false
+}
