@@ -3,6 +3,8 @@
 #![warn(missing_docs)]
 //
 // https://doc.rust-lang.org/rustc/lints/groups.html
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::needless_lifetimes)]
 
 //! Blu is an encrypted and de-duplicated file archival system.
 //!
