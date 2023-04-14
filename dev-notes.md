@@ -84,6 +84,7 @@ blu init .  ./data  # should not be allowed
 ## Web UI
 
 If a web-ui is added, probably would like to use Actix-Web. A new version was just released recently (as of 2022-02-27).
+- note (2023-04-14): Might consider Axum instead, will have to evaluate.
 
 
 ## TODOs
