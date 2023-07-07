@@ -11,18 +11,13 @@ use crate::tagger::{TagIndex, TAG_INDEX_FILENAME};
 // TODO: implement backends -- probably a trait
 /// Backend is the storage backend for blu. Currently only local filesystem is
 /// supported.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize, Eq)]
 pub enum Backend {
     /// Local filesystem
+    #[default]
     Local,
     /// Amazon S3
     S3,
-}
-
-impl Default for Backend {
-    fn default() -> Backend {
-        Backend::Local
-    }
 }
 
 // for now locked to just Age keys, for simplicity
