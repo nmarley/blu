@@ -72,9 +72,21 @@ impl PlainIndex {
         let mut files = HashMap::<Hash, FileRef>::new();
         let mut blocks = HashMap::<Hash, BlockRef>::new();
 
+        info!("In build_index, dir={:?}", dir.as_ref());
+
         let bludir = dir.as_ref().join(".blu/");
         // TODO: normalize paths by removing `dir` prefix from each elem walked
+        info!("In build_index, bludir={:?}", bludir);
+        log::logger().flush();
+
+        // TODO: Specify which "data dir" this refers to. In this case, the main directory with the
+        // files to be indexed, not the .blu/data dir.
+        info!("Walking data dir ...");
+        log::logger().flush();
+
         for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
+            info!("elem={:?}", elem);
+            log::logger().flush();
             // skip special .blu dir
             #[allow(clippy::needless_borrow)]
             if elem.path().starts_with(&bludir) {

@@ -1,5 +1,9 @@
 #![allow(clippy::uninlined_format_args)]
 
+#[macro_use]
+extern crate log;
+
+use simplelog::*;
 use std::env;
 use std::path::Path;
 
@@ -11,6 +15,14 @@ use blu::hash::{self, Hash};
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    CombinedLogger::init(vec![TermLogger::new(
+        LevelFilter::Info,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )])
+    .unwrap();
+
     let mut args = env::args();
     if args.len() == 1 {
         eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
@@ -32,15 +44,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dbg!(&cfg);
 
     let _datadir = cfg.datadir();
+    info!("In encrypt_files, datadir = {:?}", _datadir);
     // dbg!(&datadir);
 
+    info!("In encrypt_files, before plain index");
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
+    info!("In encrypt_files, got plain index");
     // dbg!(&plain_index);
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?
 
     let mut blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
+    info!("In encrypt_files, got blob_index?");
     let mut blob_buf = BlobBuffer::new(cfg.datadir(), bbox.clone());
     dbg!(&blob_buf);
 
@@ -51,15 +67,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later
     let mut count_added = 0;
+    info!("In encrypt_files, iterating plain_index now");
     for (blockhash, blockref) in plain_index.blocks_map_ref() {
+        // info!("In encrypt_files, blockhash = {:?}", &blockhash);
+        print!("\rcount={count_added}");
+
         // let block = index.get_block(blockref).unwrap();
         // dbg!(&blockhash);
         if blob_index.has_chunk(blockhash) {
-            println!("already encrypted: {:?}", blockhash);
+            // println!("already encrypted: {:?}", blockhash);
             continue;
         }
 
-        println!("NOT encrypted: {:?}, adding ...", blockhash);
+        // println!("NOT encrypted: {:?}, adding ...", blockhash);
         let data = plain_index.read_block_bytes(blockref);
         // println!("data: {:?}", data);
 
@@ -74,8 +94,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // add it to the blob buffer
         blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
         count_added += 1;
-        println!("========================================================================");
+        // println!("========================================================================");
     }
+    println!();
+
     println!("Added {} new chunks to blob buffer", count_added);
     if count_added > 0 {
         match blob_buf.finalize(&mut blob_index) {

@@ -80,11 +80,11 @@ impl BlobBuffer {
 
         if self.is_full() {
             let path = self.roll_new_blob(idx)?;
-            println!("Rolled new blob at {:?}!", path);
+            debug!("Rolled new blob at {:?}!", path);
             return Ok(());
         }
 
-        println!("Added chunk to memory!");
+        debug!("Added chunk to memory!");
         Ok(())
     }
 

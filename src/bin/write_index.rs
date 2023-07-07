@@ -1,6 +1,10 @@
 #![allow(clippy::uninlined_format_args)]
 
+#[macro_use]
+extern crate log;
+
 use clap::Parser;
+use simplelog::*;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -19,6 +23,14 @@ pub struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    CombinedLogger::init(vec![TermLogger::new(
+        LevelFilter::Debug,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )])
+    .unwrap();
+
     let args = Args::parse();
     // move into the basedir for all internal operations, like `git -C <dir>`
     let prev_dir = env::current_dir()?;
@@ -26,7 +38,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    info!("Writing index ...");
     let index = PlainIndex::new(dir)?;
+    info!("... done");
     // dbg!(&index);
 
     let outfile = args.outfile;
