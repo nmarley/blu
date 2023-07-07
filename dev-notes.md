@@ -2,6 +2,26 @@
 
 ## TODO
 
+- [ ] add a --verbose option to `list_files` which will show number of chunks a
+  file has been broken into and the chunk size, maybe also whether it's been
+  encrypted or not (but really this just depends on if a blob index exists ...)
+
+- [ ] add to Hash type and allow for different multihashes?
+  -- thinking on this, multihash is really just hash digest itself + type of hash algo
+
+- [ ] upgrade multihash crate (a bit of work for v0.19, maybe an hour or 2)
+
+- [ ] tokio for async
+
+- [x] Remove "./" prefix from indexes / all paths.
+    - done, 2023-07-04
+
+- [ ] Add and start to maintain a [changelog](https://keepachangelog.com/en/1.1.0/)
+  - Yes, even now. For the changes below that are to-DONE, but I need/want to keep a record of it
+
+-- STREAM INDEXING TO DISK, DO NOT KEEP IT ALL IN MEMORY ... or do?
+  - memory map it?
+
 -- done, 2023-01-14
 - [x] restore (functionality / util) from given datadir + indexes
   - [x] implement as separate util in src/bin/
