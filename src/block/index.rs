@@ -21,7 +21,7 @@ use super::FileRef;
 
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
-const CURRENT_INDEX_VERSION: &str = "0.2.0";
+const CURRENT_INDEX_VERSION: &str = "0.2.1";
 
 type FileIndex = HashMap<Hash, FileRef>;
 type BlockIndex = HashMap<Hash, BlockRef>;
