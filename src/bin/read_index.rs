@@ -10,7 +10,6 @@ use blu::io::BlackBoxSerializable;
 // index types
 use blu::blob::BlobIndex;
 use blu::block::PlainIndex;
-use blu::metadata::Index;
 use blu::tagger::TagIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
@@ -24,7 +23,6 @@ pub struct Args {
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum IndexType {
-    V1Plain,
     Plain,
     Blob,
     Tag,
@@ -38,10 +36,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(index_file)?;
 
     match args.index_type {
-        IndexType::V1Plain => {
-            let index = Index::read(&data[..], &bbox)?;
-            dbg!(&index);
-        }
         IndexType::Plain => {
             let index = PlainIndex::read(&data[..], &bbox)?;
             dbg!(&index);

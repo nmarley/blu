@@ -46,8 +46,6 @@ pub mod hash;
 pub mod io;
 /// file magic helper
 pub mod magic;
-/// old file-based indexing, deprecated
-pub mod metadata;
 /// tag index, probably should rename this
 pub mod tagger;
 

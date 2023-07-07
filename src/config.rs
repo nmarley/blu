@@ -6,7 +6,6 @@ use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::io::BlackBoxSerializable;
-use crate::metadata::{Index, INDEX_FILENAME as V1_INDEX_FILENAME};
 use crate::tagger::{TagIndex, TAG_INDEX_FILENAME};
 
 // TODO: implement backends -- probably a trait
@@ -81,8 +80,6 @@ pub struct Config {
     plain_index_filename: PathBuf,
     tag_index_filename: PathBuf,
     blob_index_filename: PathBuf,
-    // deprecated
-    v1_plain_index_filename: PathBuf,
 }
 
 impl Default for Config {
@@ -98,8 +95,6 @@ impl Default for Config {
             plain_index_filename: INDEX_FILENAME.into(),
             tag_index_filename: TAG_INDEX_FILENAME.into(),
             blob_index_filename: BLOB_INDEX_FILENAME.into(),
-            // deprecated
-            v1_plain_index_filename: V1_INDEX_FILENAME.into(),
         }
     }
 }
@@ -155,8 +150,6 @@ impl Config {
     load_index!(load_blob_index, BlobIndex, blob_index_filename);
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
-    // deprecated
-    load_index!(v1_load_index, Index, v1_plain_index_filename);
 
     /// write_blob_index writes the blob index to the config's datadir.
     pub fn write_blob_index(
@@ -202,16 +195,6 @@ pub(crate) mod test {
                 ..Default::default()
             }
         );
-    }
-
-    #[test]
-    fn v1_load_index() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let cfg = super::read_config(TEST_DIR_T2).unwrap();
-        let index_opt = cfg.v1_load_index(&bbox);
-
-        assert!(index_opt.is_some());
-        let _index = index_opt.unwrap();
     }
 
     #[test]
