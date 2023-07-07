@@ -23,7 +23,10 @@ use super::FileRef;
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.1";
 
+/// FileIndex is a map of file hash to fileref
 type FileIndex = HashMap<Hash, FileRef>;
+// TODO: maybe rename this now since we are using chunks and not blocks?
+/// BlockIndex is a map of chunk hash to blockref
 type BlockIndex = HashMap<Hash, BlockRef>;
 
 /// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
