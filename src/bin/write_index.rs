@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use clap::Parser;
+use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -19,10 +20,10 @@ pub struct Args {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let dir = match args.dir {
-        dir if dir.starts_with("./") => dir.strip_prefix("./").unwrap().to_string(),
-        dir => dir,
-    };
+    // move into the basedir for all internal operations, like `git -C <dir>`
+    let prev_dir = env::current_dir()?;
+    env::set_current_dir(args.dir)?;
+    let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let index = PlainIndex::new(dir)?;
@@ -31,6 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outfile = args.outfile;
     // writing index for testing
     write_index_file(&index, &bbox, &outfile)?;
+
+    // back out here since we pass a filename as a direct path
+    env::set_current_dir(prev_dir)?;
 
     Ok(())
 }

@@ -1,7 +1,9 @@
 #![allow(clippy::uninlined_format_args)]
 
 use clap::Parser;
+use std::env;
 use std::os::unix::fs::FileExt;
+use std::path::Path;
 
 use blu::age::BlackBox;
 use blu::blob::EncBlobReader;
@@ -12,14 +14,14 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 #[derive(Parser)]
 pub struct Args {
     pub dir: String,
+    pub restore_paths: Vec<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
-    let dir = match args.dir {
-        dir if dir.starts_with("./") => dir.strip_prefix("./").unwrap().to_string(),
-        dir => dir,
-    };
+    // move into the basedir for all operations, like `git -C <dir>`
+    env::set_current_dir(args.dir)?;
+    let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 

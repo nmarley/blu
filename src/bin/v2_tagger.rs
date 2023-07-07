@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use std::env;
+use std::path::Path;
 
 use blu::age::BlackBox;
 use blu::config;
@@ -16,7 +17,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let dir = &args.nth(1).unwrap();
+    let basedir = &args.nth(1).unwrap();
+    // move into the basedir for all operations, like `git -C <dir>`
+    env::set_current_dir(basedir)?;
+    let dir = Path::new(".");
+
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let cfg = config::read_config(dir).map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");

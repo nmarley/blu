@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use std::env;
+use std::path::Path;
 
 use blu::age::BlackBox;
 use blu::blob::BlobBuffer;
@@ -15,7 +16,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
         std::process::exit(1);
     }
-    let dir = &args.nth(1).unwrap();
+
+    // move into the basedir for all operations, like `git -C <dir>`
+    let basedir = &args.nth(1).unwrap();
+    env::set_current_dir(basedir)?;
+    let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 

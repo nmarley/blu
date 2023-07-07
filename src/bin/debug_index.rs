@@ -1,6 +1,7 @@
 #![allow(clippy::uninlined_format_args)]
 
 use std::env;
+use std::path::Path;
 
 use blu::block::PlainIndex;
 
@@ -10,7 +11,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
         std::process::exit(1);
     }
-    let index_dir = &args.nth(1).unwrap();
+
+    // move into the basedir for all operations, like `git -C <dir>`
+    let basedir = &args.nth(1).unwrap();
+    env::set_current_dir(basedir)?;
+    let index_dir = Path::new(".");
 
     let index = PlainIndex::new(index_dir)?;
     dbg!(&index);
