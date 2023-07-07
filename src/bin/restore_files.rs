@@ -66,7 +66,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut path_iter = fileref.paths.iter();
         let restore_path = path_iter.next().unwrap();
         let other_paths = path_iter.collect::<Vec<_>>();
-        println!("Choosing path: '{:?}' for restoration", restore_path);
+        println!(
+            "Choosing path: '{}' for restoration",
+            restore_path.display()
+        );
 
         // TODO: Create the TEMP file first. If restore fails at any
         // data block, fail and move on, and remove the temp file.
