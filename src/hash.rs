@@ -14,25 +14,40 @@ pub fn multihash(data: &[u8]) -> Multihash {
 pub struct Hash(Vec<u8>);
 impl std::fmt::Debug for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = write!(f, "{:?}", &hex::encode(&self.0));
+        // use multihash lib to properly separate multihash header code and size
+        // (do not make assumptions about removing X number of bytes)
+        //
+        // let mh = Multihash::from_bytes(&hash.to_bytes())?;
+        // // dbg!(&mh.code());
+        // // dbg!(&mh.size());
+        // // dbg!(&mh.digest());
+        //
+        // TODO: re-implement how we store the multihash in the Hash type, or
+        // just alias to MultiHash w/some syntactic sugar methods
+        let mh = Multihash::from_bytes(&self.0).unwrap();
+        let _ = write!(f, "{:?}", &hex::encode(mh.digest()));
         Ok(())
     }
 }
+
 impl From<Vec<u8>> for Hash {
     fn from(vec: Vec<u8>) -> Self {
         Self(vec)
     }
 }
+
 impl From<&[u8]> for Hash {
     fn from(slice: &[u8]) -> Self {
         Self(slice.to_owned())
     }
 }
+
 impl From<&str> for Hash {
     fn from(str_ref: &str) -> Self {
         Self(hex::decode(str_ref).unwrap())
     }
 }
+
 impl Hash {
     /// Returns the bytes which constitute the multihash.
     pub fn to_bytes(&self) -> Vec<u8> {
