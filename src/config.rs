@@ -111,9 +111,10 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
 /// macro to write load_index, load_tag_index, load_blob_index, etc. ...
 macro_rules! load_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
-        /// $name loads the index from the config's datadir.
+        /// $name loads the index from the idxdir.
         pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
-            let index_path = self.datadir().join(&self.$idx_filename_varname);
+            let index_path = self.idxdir().join(&self.$idx_filename_varname);
+            info!("In config, index_path = {:?}", index_path);
             // read index file data or return None
             let index_data: Vec<u8> = match fs::read(index_path) {
                 Ok(data) => data,
@@ -130,7 +131,7 @@ macro_rules! load_index {
 
 impl Config {
     /// Returns the datadir WITHIN the base directory for blu. This is the
-    /// directory that holds the encrypted data blobs and index files.
+    /// directory that holds the encrypted data blobs.
     ///
     /// Probably not a great design, and I'm open to changing this in the
     /// future.
@@ -142,17 +143,28 @@ impl Config {
         self.basedir.join(rel_dir)
     }
 
+    /// Returns the .blu dir within the base directory. This holds the config,
+    /// and nested indexes and data dirs.
+    pub fn bludir(&self) -> PathBuf {
+        self.basedir.join(".blu")
+    }
+
+    /// Returns the directory used to hold the indexes.
+    pub fn idxdir(&self) -> PathBuf {
+        self.bludir().join("indexes")
+    }
+
     load_index!(load_blob_index, BlobIndex, blob_index_filename);
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
 
-    /// write_blob_index writes the blob index to the config's datadir.
+    /// write_blob_index writes the blob index to the idxdir.
     pub fn write_blob_index(
         &self,
         blob_index: &BlobIndex,
         bbox: &BlackBox,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let index_path = self.datadir().join(&self.blob_index_filename);
+        let index_path = self.idxdir().join(&self.blob_index_filename);
 
         // encrypt + compress + serialize index to buf
         let mut buf = vec![];
