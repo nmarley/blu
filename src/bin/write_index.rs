@@ -44,11 +44,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dbg!(&index);
 
     let outfile = args.outfile;
-    // writing index for testing
-    write_index_file(&index, &bbox, &outfile)?;
 
     // back out here since we pass a filename as a direct path
     env::set_current_dir(prev_dir)?;
+    match write_index_file(&index, &bbox, &outfile) {
+        Ok(num_bytes) => info!("Index written to {} ({} bytes)", &outfile, num_bytes),
+        Err(e) => error!("Error writing index: {}", e),
+    }
 
     Ok(())
 }
@@ -57,10 +59,15 @@ fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
     bbox: &BlackBox,
     outfile: P,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error>> {
+    // create parent dir(s) if necessary
+    if let Some(parent_dir) = outfile.as_ref().parent() {
+        fs::create_dir_all(parent_dir)?;
+    }
     let mut enc_idx_bytes = Vec::new();
     index.write(&mut enc_idx_bytes, bbox)?;
+    let size = enc_idx_bytes.len();
     let mut file = fs::File::create(outfile)?;
     file.write_all(&enc_idx_bytes)?;
-    Ok(())
+    Ok(size)
 }
