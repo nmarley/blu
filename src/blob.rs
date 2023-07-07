@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
+use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::dir::Manager;
 use crate::hash::{self, Hash};
@@ -11,7 +12,9 @@ use crate::io::{gen_std_bbserde, BlackBoxSerializable};
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
-const DEFAULT_BLOB_CAPACITY_BYTES: usize = 4_194_304;
+// Default chunk size (4096 * 16) * 128 will fit into a blob file by default
+// ... around 8MiB
+const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 
 /// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks (or unused blocks),
 /// etc.

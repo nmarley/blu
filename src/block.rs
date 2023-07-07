@@ -13,7 +13,11 @@ pub use chunkerator::Chunkerator;
 pub use index::PlainIndex;
 pub use index::INDEX_FILENAME;
 
-const BLOCK_SIZE: usize = 4096;
+/// Block size in bytes, most filesystems use 4k blocks
+pub const BLOCK_SIZE: usize = 4096;
+/// Default chunk size for encrypting+indexing, should be a multiple of block
+/// size
+pub const DEFAULT_CHUNK_SIZE: usize = BLOCK_SIZE << 4;
 
 #[cfg(test)]
 mod test {
@@ -31,7 +35,7 @@ mod test {
     #[test]
     fn read_blocks() {
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
-        let chunk_metas1 = super::ChunkMeta::read_from_disk(file1_path).unwrap();
+        let chunk_metas1 = ChunkMeta::read_from_disk(file1_path, 4096).unwrap();
         assert_eq!(chunk_metas1, vec![
             ChunkMeta {
                 hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
@@ -52,7 +56,7 @@ mod test {
         ]);
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
-        let chunk_metas2 = super::ChunkMeta::read_from_disk(file2_path).unwrap();
+        let chunk_metas2 = ChunkMeta::read_from_disk(file2_path, 4096).unwrap();
         assert_eq!(chunk_metas2, vec![
                 ChunkMeta {
                     hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
@@ -62,7 +66,7 @@ mod test {
         );
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
-        let chunk_metas3 = ChunkMeta::read_from_disk(file3_path).unwrap();
+        let chunk_metas3 = ChunkMeta::read_from_disk(file3_path, 4096).unwrap();
         // should be equal super::File objects
         assert_eq!(chunk_metas2, chunk_metas3);
     }
@@ -212,7 +216,8 @@ mod test {
 
     #[test]
     fn indexes() {
-        let index = PlainIndex::new(TEST_BLOCKS_DIR_T1).unwrap();
+        let index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T1, 4096).unwrap();
+
         assert_eq!(index.files, helper_files_map());
         assert_eq!(index.blocks, helper_blocks_map());
     }

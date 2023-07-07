@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
+use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::format::datetime_format;
 use crate::hash::Hash;
@@ -17,8 +18,6 @@ use super::ChunkMeta;
 use super::Chunkerator;
 use super::FileRef;
 // use super::fileref::FileRef;
-
-const BLOCK_SIZE: usize = 4096;
 
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
@@ -46,7 +45,16 @@ pub struct PlainIndex {
 impl PlainIndex {
     /// Create a new PlainIndex given a directory path.
     pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
-        let (files, blocks) = Self::build_index(dir)?;
+        Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE)
+    }
+
+    /// Create a new PlainIndex given a directory path and custom (non-default)
+    /// chunk size.
+    pub fn new_custom_chunk_size<P: AsRef<Path>>(
+        dir: P,
+        chunk_size: usize,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let (files, blocks) = Self::build_index(dir, chunk_size)?;
         Ok(Self {
             files,
             blocks,
@@ -56,9 +64,10 @@ impl PlainIndex {
         })
     }
 
-    /// Build a new PlainIndex given a directory path.
+    /// Build a new PlainIndex given a directory path and chunk size.
     fn build_index<P: AsRef<Path>>(
         dir: P,
+        chunk_size: usize,
     ) -> Result<(FileIndex, BlockIndex), Box<dyn std::error::Error>> {
         let mut files = HashMap::<Hash, FileRef>::new();
         let mut blocks = HashMap::<Hash, BlockRef>::new();
@@ -79,7 +88,7 @@ impl PlainIndex {
             // chunking, full file hashing
             let mut chunkmetas: Vec<ChunkMeta> = vec![];
             let mut hasher = Sha2_512::default();
-            let chunker = Chunkerator::new(elem.path(), BLOCK_SIZE)?;
+            let chunker = Chunkerator::new(elem.path(), chunk_size)?;
             for chunk in chunker {
                 chunkmetas.push(ChunkMeta::new(&chunk));
                 hasher.update(&chunk);
@@ -180,8 +189,9 @@ impl PlainIndex {
     pub fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
+        chunk_size: usize,
     ) -> Result<(Vec<FileRef>, Vec<BlockRef>), Box<dyn std::error::Error>> {
-        let new_index = Self::new(base_dir)?;
+        let new_index = Self::new_custom_chunk_size(base_dir, chunk_size)?;
 
         let mut to_delete: HashSet<Hash> = HashSet::new();
         let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
@@ -294,7 +304,8 @@ mod test {
     // - ensures that added filerefs and blockrefs are added to index
     #[test]
     fn update_index() {
-        let mut index = PlainIndex::new(TEST_BLOCKS_DIR_T5).unwrap();
+        let chunk_size = 4096;
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
 
         let before_filerefs = HashMap::from([
             (
@@ -660,7 +671,7 @@ mod test {
             ),
         ]);
 
-        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5).unwrap();
+        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
         // rename file6.txt back to file5.txt
         std::fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt")).unwrap();
         // restore file4.txt
@@ -721,7 +732,8 @@ mod test {
     const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
     #[test]
     fn update_index_paths() {
-        let mut index = PlainIndex::new(TEST_BLOCKS_DIR_T6).unwrap();
+        let chunk_size = 4096;
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
 
         let before_filerefs = HashMap::from([
             (
@@ -789,7 +801,7 @@ mod test {
         // rename to test
         std::fs::rename(&old_filename, &new_filename).unwrap();
         // run the update
-        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6).unwrap();
+        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
         // move it back
         std::fs::rename(&new_filename, &old_filename).unwrap();
 
