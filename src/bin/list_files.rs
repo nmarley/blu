@@ -1,0 +1,118 @@
+#![allow(clippy::uninlined_format_args)]
+
+use clap::Parser;
+use itertools::Itertools;
+use std::collections::HashMap;
+use std::env;
+use std::path::{Path, PathBuf};
+
+use blu::age::BlackBox;
+use blu::config;
+
+const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+
+#[derive(Parser)]
+pub struct Args {
+    pub dir: String,
+    #[arg(long)]
+    pub filter: Option<String>,
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    // move into the basedir for all operations, like `git -C <dir>`
+    env::set_current_dir(args.dir)?;
+    let dir = Path::new(".");
+
+    match args.filter {
+        Some(f) => {
+            println!("Got a filter: {}", f);
+        }
+        None => {
+            println!("No filter passed");
+        }
+    };
+
+    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+
+    let cfg = config::read_config(dir).map_err(|e| {
+        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
+        eprintln!("More info: {}", e);
+        e
+    })?;
+    let plain_index = cfg.load_plain_index(&bbox).unwrap();
+
+    // TODO: sort by file name? hash? should the order be deterministic?
+    // Since this returns a hash(ref) and we'd have to delve to get filename
+    // and make another pass, (also complicated since it's keyed on hash and
+    // multiple diverse filename "tags" can exist), let's make sure this is
+    // sorted by hash only. Then the bottom sort (below) can display paths in
+    // lexicographical order.
+
+    // TODO: maybe add this (sorted file hashes) to index API and add the test there?
+    let files_ref = plain_index.files_map_ref();
+    let file_hashes = files_ref.keys().sorted_unstable();
+
+    // TODO : consider paths index also?
+
+    // per hash file hash, list the data
+    for file_hash in file_hashes {
+        let fileref = files_ref.get(file_hash).unwrap();
+        let file_size = fileref.total_size();
+        let chunkmetas = &fileref.chunkmetas;
+
+        println!("  Hash: {:?}\n  Size: {}", file_hash, file_size);
+        println!("Chunks: {}", chunkmetas.len());
+
+        // Counting chunk size -- not really necessary and probably not good
+        // use of resources
+        let mut x: HashMap<usize, u32> = HashMap::new();
+        for cm in &chunkmetas[0..chunkmetas.len() - 1] {
+            // insert or update the hashmap
+            x.entry(cm.size).and_modify(|e| *e += 1).or_insert(1);
+        }
+        let chunk_size_str = match x.len() {
+            0 | 1 => format!("{}", chunkmetas[0].size),
+            _ => "variable".to_string(),
+        };
+        println!("Chunk size: {}", chunk_size_str);
+
+        // Here we will display paths in lexicographical order.
+        // TODO: probably also need to add this to the API (deterministic
+        // sorted paths)
+        let mut paths: Vec<&PathBuf> = fileref.paths.iter().collect();
+        paths.sort_unstable();
+
+        println!(" Paths: {}", paths.len());
+        for p in paths {
+            println!("    - {}", p.display());
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+/*
+  Hash: "laskjf;lbaksjd;lkjsdf;lkj"
+  Size: 2314         FileType: Regular File
+
+ Paths: 3
+    - src/bin/list_files.rs
+    - src/bin/hahaha
+    - dev/joker
+*/
+
+/*
+Something like this maybe:
+
+stat -x src/bin/list_files.rs
+  File: "src/bin/list_files.rs"
+  Size: 2314         FileType: Regular File
+  Mode: (0644/-rw-r--r--)         Uid: (  502/ nmarley)  Gid: (   20/   staff)
+Device: 1,4   Inode: 14796315    Links: 1
+Access: Mon Jul  3 16:04:54 2023
+Modify: Mon Jul  3 16:04:53 2023
+Change: Mon Jul  3 16:04:53 2023
+ Birth: Mon Jul  3 16:04:53 2023
+*/
