@@ -136,9 +136,10 @@ impl Config {
     /// Probably not a great design, and I'm open to changing this in the
     /// future.
     pub fn datadir(&self) -> PathBuf {
-        let rel_dir = match self.datadir.clone() {
-            Some(s) => s,
-            None => PathBuf::from(DEFAULT_DATADIR),
+        let rel_dir = match self.datadir {
+            Some(ref s) => s.as_path(),
+            // TODO: use bludir() + join
+            None => Path::new(DEFAULT_DATADIR),
         };
         self.basedir.join(rel_dir)
     }
