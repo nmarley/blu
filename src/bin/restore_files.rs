@@ -90,9 +90,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let mut offset = 0u64;
+        // slowness here ...
         for chunkmeta in fileref.chunkmetas.iter() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
                 // abort restore of this file, remove TEMP file and move on to next ...
+                //
+                // TODO: maybe don't abort (esp. for large files which would
+                // piss ppl off), and instead just write the other chunks and
+                // log the ones not found in the blob index. The files would be
+                // corrupted / not intact so we should report it, but could
+                // ostensibly be fixed w/some repair tool if the blobs can be
+                // found later.
                 eprintln!("Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}", chunkmeta.hash, file_hash);
                 continue; // next file
             }
