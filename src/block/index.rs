@@ -78,7 +78,6 @@ impl PlainIndex {
         info!("In build_index, dir={:?}", dir.as_ref());
 
         let bludir = dir.as_ref().join(".blu/");
-        // TODO: normalize paths by removing `dir` prefix from each elem walked
         info!("In build_index, bludir={:?}", bludir);
         log::logger().flush();
 
@@ -129,7 +128,13 @@ impl PlainIndex {
             let fileref = files
                 .entry(file_hash)
                 .or_insert_with(|| FileRef::new(&chunkmetas));
-            fileref.paths.insert(elem.into_path());
+
+            // normalize paths by removing `./` prefix
+            let mut path = elem.into_path();
+            if path.starts_with("./") {
+                path = path.strip_prefix("./")?.to_path_buf();
+            }
+            fileref.paths.insert(path);
         }
         Ok((files, blocks))
     }
