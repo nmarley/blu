@@ -264,9 +264,6 @@ impl<'a> EncBlobReader<'a> {
 pub struct BlobIndex {
     // map the hash of a chunk to the location of the data on disk (within the blob)
     map: HashMap<Hash, BlobBlockLocation>,
-    // Do not re-serialize to disk if the blob index wasn't modified.
-    #[serde(skip)]
-    modified: bool,
 }
 
 impl BlobIndex {
@@ -274,7 +271,6 @@ impl BlobIndex {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            modified: false,
         }
     }
 
@@ -283,7 +279,6 @@ impl BlobIndex {
     /// Generally the blob buffer will do this in the add_chunk and finalize methods.
     pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobBlockLocation) {
         self.map.insert(chunk_hash.clone(), location.clone());
-        self.modified = true;
     }
 
     /// Return whether the block is in the blob index or not.
