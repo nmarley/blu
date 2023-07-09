@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate log;
 
+use itertools::Itertools;
 use simplelog::*;
 use std::env;
 use std::path::Path;
@@ -29,6 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    info!("Started encrypt_files util");
+
     // move into the basedir for all operations, like `git -C <dir>`
     let basedir = &args.nth(1).unwrap();
     env::set_current_dir(basedir)?;
@@ -44,21 +47,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // dbg!(&cfg);
 
     let _datadir = cfg.datadir();
-    info!("In encrypt_files, datadir = {:?}", _datadir);
+    info!("datadir = {:?}", _datadir);
     // dbg!(&datadir);
 
-    info!("In encrypt_files, before plain index");
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
-    info!("In encrypt_files, got plain index");
-    // dbg!(&plain_index);
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?
 
     let mut blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
-    info!("In encrypt_files, got blob_index?");
+    info!(
+        "Blob index has {} blob files",
+        blob_index.count_blob_files()
+    );
+
     let mut blob_buf = BlobBuffer::new(cfg.datadir(), bbox.clone());
-    dbg!(&blob_buf);
 
     // TODO: determine whether to use underscore in e.g. block_hash or
     // blockhash, block_ref or blockref, and then stay consistent thru the
@@ -67,36 +70,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later
     let mut count_added = 0;
-    info!("In encrypt_files, iterating plain_index now");
-    for (blockhash, blockref) in plain_index.blocks_map_ref() {
-        // info!("In encrypt_files, blockhash = {:?}", &blockhash);
-        print!("\rcount={count_added}");
+    info!("iterating plain_index now");
 
-        // let block = index.get_block(blockref).unwrap();
-        // dbg!(&blockhash);
-        if blob_index.has_chunk(blockhash) {
-            // println!("already encrypted: {:?}", blockhash);
-            continue;
+    // Start with files, random blocks will make the data storage less organized and more scattered
+    // on disk. Async threads won't even help with bad design.
+
+    let files_map = plain_index.files_map_ref();
+    let file_hashes = files_map.keys().clone().sorted_unstable();
+
+    // for (blockhash, blockref) in plain_index.blocks_map_ref()
+    for file_hash in file_hashes {
+        info!("file_hash: {:?}", &file_hash.dbg_short(7));
+        let file_ref = files_map.get(file_hash).unwrap();
+        info!("chunks count: {}", file_ref.chunkmetas.len());
+        // print!("\rcount={count_added}");
+
+        for (count, cm) in file_ref.chunkmetas.iter().enumerate() {
+            info!("\t chunkmeta[{}]: {:?}", count, cm.hash.dbg_short(7));
+            if blob_index.has_chunk(&cm.hash) {
+                info!("already encrypted, moving on...");
+                continue;
+            }
+
+            let blockref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
+            let data = plain_index.read_block_bytes(blockref);
+
+            // NOTE: we probably want to somehow keep this around / add it as a
+            // checksum to ensure that the data is not corrupted
+            let block_hash2 = Hash::from(hash::multihash(&data).to_bytes());
+            assert_eq!(
+                &cm.hash, &block_hash2,
+                "blockhash mismatch (unresolvable black death of the universe error)"
+            );
+
+            // add it to the blob buffer
+            // info!("Adding chunk to blob buffer");
+            blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
+            count_added += 1;
+            // println!("========================================================================");
         }
-
-        // println!("NOT encrypted: {:?}, adding ...", blockhash);
-        let data = plain_index.read_block_bytes(blockref);
-        // println!("data: {:?}", data);
-
-        // NOTE: we probably want to somehow keep this around / add it as a
-        // checksum to ensure that the data is not corrupted
-        let block_hash2 = Hash::from(hash::multihash(&data).to_bytes());
-        assert_eq!(
-            blockhash, &block_hash2,
-            "blockhash mismatch (unresolvable black death of the universe error)"
-        );
-
-        // add it to the blob buffer
-        blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
-        count_added += 1;
-        // println!("========================================================================");
+        // println!();
     }
-    println!();
 
     println!("Added {} new chunks to blob buffer", count_added);
     if count_added > 0 {
