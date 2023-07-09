@@ -6,7 +6,7 @@ use super::ChunkMeta;
 
 /// FileRef is a container encapsulating a Vec<ChunkMeta> (collection of hashes
 /// of chunks read from a fs::File) and filesystem references to it (filenames)
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
+#[derive(PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct FileRef {
     // TODO: Should we add the full file hash here also? e.g.:
     // pub hash: Hash,
@@ -14,6 +14,17 @@ pub struct FileRef {
     pub chunkmetas: Vec<ChunkMeta>,
     pub paths: HashSet<PathBuf>,
     // TODO: filetype, tags, notes?
+}
+
+impl std::fmt::Debug for FileRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "FileRef {{ chunkmetas.len(): {}, paths: {:?} }}",
+            self.chunkmetas.len(),
+            self.paths
+        )
+    }
 }
 
 impl PartialOrd for FileRef {
