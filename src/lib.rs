@@ -46,6 +46,8 @@ pub mod hash;
 pub mod io;
 /// file magic helper
 pub mod magic;
+/// search index for filenames
+pub mod search;
 /// tag index, probably should rename this
 pub mod tagger;
 

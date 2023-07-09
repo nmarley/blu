@@ -1,5 +1,39 @@
 # dev notes
 
+## Roadmap
+
+### Vision
+
+An encrypted and de-duplicated file archival system, written in Rust. This project was inspired by balaji's comment in an interview that someday the "cloud will burst", meaning some state actor could leak any/all secrets stored on the cloud, in S3/Google Drive, etc. Nothing is secret/private if you aren't encrypting your data w/your own keys that you control.
+
+### Milestones
+
+Milestone: (Q3, 2023)
+
+- full search index for file paths and tags (not data itself)
+
+Milestone: (Q3, 2023)
+
+- multi-key encryption/recovery
+
+Milestone: (Q3, 2023)
+
+- async io for restore/encryption + benchmarks vs non-async
+
+Milestone: (Q4, 2023)
+
+- Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
+- Support for Cloud Backends - s3, Google Cloud Storage, Azure Blob Storage, digital ocean
+
+Milestone X: (Q4, 2023)
+
+- Add changelog / public release -- at this point all previous history will be squashed and archived away in a private repo
+- website / static site for project built
+
+Milestone: (Q1, 2024)
+
+- UI - likely web based, axum or actix
+
 ## Relevant notes
 
 - I think I figured out the reason for the jumping all over the place -- the `encrypt_files` util (as of commit `f6f59ae4115a1e99788c80f512d9d295a59b6502`) is iterating over block index (not files index) without ever consulting the order of the files -- not doing it in order, so _that's_ why it's encrypting chunks in random order. By keying off `plain_index` and iterating the chunk hashes _first_, we should be able to then get the location from teh block index and then encrypt as usual, but this time in order, which should greatly speed up our restores. This + async threads should work much nicer/quicker.
@@ -17,45 +51,18 @@
 
 - [ ] tokio for async
 
-- [x] Remove "./" prefix from indexes / all paths.
-    - done, 2023-07-04
-
 - [ ] Add and start to maintain a [changelog](https://keepachangelog.com/en/1.1.0/)
   - Yes, even now. For the changes below that are to-DONE, but I need/want to keep a record of it
 
 -- STREAM INDEXING TO DISK, DO NOT KEEP IT ALL IN MEMORY ... or do?
   - memory map it?
 
--- done, 2023-01-14
-- [x] restore (functionality / util) from given datadir + indexes
-  - [x] implement as separate util in src/bin/
-
-- [ ] filename search
-  -- consider https://github.com/BurntSushi/suffix for this
-
-- [x] split blob index + blob buffer out from BlobManager
-  - [x] blob index
-    - [x] implement
-    - [ ] test
-  - [x] blob buffer refactor
-  -- maps plain to encrypted -- built when files are encrypted and STREAMs the plain text thru to the encrypted data store -- be that local or s3/
-
 - [ ] status command
   -- which does what? Describe this.
   -- Could display files which are in the PlainIndex but not encrypted
   -- Could display stats, e.g. # files, # bytes de-duplicated (saved), x tags being used, etc.
 
-- [x] Implement document index conceptually separate from encryption/hash index
-  - [/] search tags / filenames
-  - [x] tag/untag files
-  - [x] list all tags
-  - [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
-
-- [x] 2022-03-22: block-level de-duplication -- v0.2.x branch is dedicated to this. I'm convinced this is the way forward.
-  - [x] 2022-05-07: This is mostly done, blob index and manager are finished. Just need to...
-  - [x] 2022-05-07: Add encryption (and possibly compression) to the blob before hashing/writing.
-  - [x] 2022-05-07: Add tests for BlobManager. Lots of tests. (won't do, this has been refactored away)
-    - [x] 2023-01-05: Reconsider this design (refactored)
+- [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
   See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
@@ -87,7 +94,7 @@ Filemagic lib: <https://docs.rs/filemagic/0.12.3/filemagic/struct.Magic.html>
 
 Add 24-word seed phrase gen / recovery for AGE keys. This will be part of the recovery kit.
 
-Add passphrase encryption for the on-disk private key storage, which must be unlocked before Blu can decrypt antyhing.
+Add passphrase encryption for the on-disk private key storage, which must be unlocked before Blu can decrypt anything.
 
 Priv key never leaves device (not in sync dir).
 
@@ -99,7 +106,7 @@ There should be a search function which searches filenames, tags, notes and retu
 
 ```sh
 blu init /  # should not be allowed
-# <== root filesystem backups are not supported due to the size and amount of OS backups, please extra space is needed for encryption and de-duplication. Please use a custom directory for specific files
+# <== root filesystem backups are not supported due to the size of OS backups, plus extra space is needed for encryption and de-duplication. Please use a standalone directory as the blu vault.
 
 blu init .  ./data  # should not be allowed
 # <== please use only 1 directory for a blu installation (you can have multiple, but they will need to be managed separately)
@@ -116,21 +123,3 @@ If a web-ui is added, probably would like to use Actix-Web. A new version was ju
 - Should there be a .bluignore, similar to .gitignore? Or within .blu, e.g. .blu/ignore?
 
 - Consider licensing as Apache + MIT dual license or similar
-
-### Old notes from main binary (pre-v0.2):
-
-// There are 2 operations:
-//     a. archive - encrypt+de-duplicate new files
-//     b. restore - restore from backup
-//
-// now, difference method depends on the operation...
-//
-// if we are doing in archive (encrypted any new files), then we want to get
-// the difference of:
-//
-// index - enc_idx
-// ... ignoring any extra encrypted files lying around.
-//
-// Likewise, a restore operation would be the opposite.
-// enc_idx - index
-// ... restore any left over, ignoring un-encrypted files lying around.
