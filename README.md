@@ -48,12 +48,13 @@ blu add ./
 blu restore .
 ```
 
-### Query
+### Search for all files w/tag? (combine w/the query command below):
 
 ```sh
-blu query --tags passport,US,Alice
+blu search --tag iptu
+blu search --tags passport,John,fra
 
-...
+blu query --tags passport,US,Alice
 ```
 
 
