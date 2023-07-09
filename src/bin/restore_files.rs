@@ -1,6 +1,10 @@
 #![allow(clippy::uninlined_format_args)]
 
+#[macro_use]
+extern crate log;
+
 use clap::Parser;
+use simplelog::*;
 use std::env;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
@@ -18,6 +22,16 @@ pub struct Args {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    CombinedLogger::init(vec![TermLogger::new(
+        LevelFilter::Info,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )])
+    .unwrap();
+
+    info!("Started restore_files util");
+
     let args = Args::parse();
     // move into the basedir for all operations, like `git -C <dir>`
     env::set_current_dir(args.dir)?;
