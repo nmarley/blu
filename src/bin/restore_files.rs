@@ -131,9 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dbg!(&blob_block_location_ref);
 
             // Decrypt the blob file and read the necessary data
-            let block_data = reader
-                .get_bytes(&chunkmeta.hash, &blob_block_location_ref)
-                .unwrap();
+            let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
             println!("Read {} bytes from blob file", block_data.len());
 
             fh.write_all_at(&block_data, offset)?;

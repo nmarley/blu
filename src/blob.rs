@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
-use crate::dir::Manager;
+use crate::dir::{self, Manager};
 use crate::hash::{self, Hash};
 use crate::io::{gen_std_bbserde, BlackBoxSerializable};
 
@@ -240,17 +240,27 @@ impl<'a> EncBlobReader<'a> {
     /// Get the bytes from the blob file at the specified position.
     pub fn get_bytes(
         &mut self,
-        hash: &Hash,
         location_ref: &BlobBlockLocation,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let full_data_ref = match self.data_cache.get(hash) {
-            Some(data) => data,
+        // TODO: hash table of paths to blob file hashes, so we don't have to
+        // call this shit every time
+        let hash = dir::hash_from_path(&location_ref.path)?;
+
+        let full_data_ref = match self.data_cache.get(&hash) {
+            Some(data) => {
+                info!(
+                    "Getting blob file {} from cache",
+                    location_ref.path.display()
+                );
+                data
+            }
             None => {
+                info!("Reading blob file: {}", location_ref.path.display());
                 let data = std::fs::read(&location_ref.path)?;
                 let data = self.bbox.decrypt(&data)?;
                 let data = decompress(&data)?;
-                self.data_cache.add(hash, data);
-                self.data_cache.get(hash).unwrap()
+                self.data_cache.add(&hash, data);
+                self.data_cache.get(&hash).unwrap()
             }
         };
 
