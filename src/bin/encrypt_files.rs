@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate log;
 
+use clap::Parser;
 use itertools::Itertools;
 use simplelog::*;
 use std::env;
@@ -15,6 +16,13 @@ use blu::hash::{self, Hash};
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
+#[derive(Parser)]
+pub struct Args {
+    pub dir: String,
+    #[arg(long)]
+    pub force_write_index: bool,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     CombinedLogger::init(vec![TermLogger::new(
         LevelFilter::Info,
@@ -24,18 +32,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )])
     .unwrap();
 
-    let mut args = env::args();
-    if args.len() == 1 {
-        eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
-        std::process::exit(1);
-    }
-
     info!("Started encrypt_files util");
 
+    let args = Args::parse();
     // move into the basedir for all operations, like `git -C <dir>`
-    let basedir = &args.nth(1).unwrap();
-    env::set_current_dir(basedir)?;
+    env::set_current_dir(args.dir)?;
     let dir = Path::new(".");
+
+    info!("force_write_index option: {}", args.force_write_index);
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
@@ -113,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Added {} new chunks to blob buffer", count_added);
-    if count_added > 0 {
+    if count_added > 0 || args.force_write_index {
         match blob_buf.finalize(&mut blob_index) {
             Ok(_) => println!("Finalized blob buffer!"),
             Err(e) => println!("Error finalizing blob buffer: {}", e),
