@@ -53,4 +53,13 @@ impl Hash {
     pub fn to_bytes(&self) -> Vec<u8> {
         self.0.to_vec()
     }
+
+    /// Return a short version of hash in hex
+    pub fn dbg_short(&self, len: usize) -> String {
+        let mh = Multihash::from_bytes(&self.0).unwrap();
+        hex::encode(mh.digest())
+            .chars()
+            .take(len)
+            .collect::<String>()
+    }
 }
