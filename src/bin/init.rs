@@ -29,7 +29,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(args.dir)?;
+    let dir_arg = args.dir;
+    env::set_current_dir(&dir_arg)?;
     let dir = Path::new(".");
 
     if config::read_config(dir).is_ok() {
@@ -39,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Config file does not exist. Creating new config file");
 
-    info!("Initializing new .blu dir in {:?}", dir);
+    info!("Initializing new .blu dir in {:?}", dir_arg);
     // create .blu + .blu/data dirs
     fs::create_dir_all(dir.join(".blu/data"))?;
 
