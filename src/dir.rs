@@ -72,6 +72,25 @@ impl Manager {
     }
 }
 
+/// extract the Hash part of the path and return it
+pub fn hash_from_path<P: AsRef<Path>>(path: P) -> Result<Hash, Box<dyn std::error::Error>> {
+    let file_name = path.as_ref().file_name().ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to extract file name from path",
+        ))
+    })?;
+
+    let path_str = file_name.to_str().ok_or_else(|| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to convert file name to str",
+        ))
+    })?;
+
+    Ok(Hash::from(path_str))
+}
+
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
