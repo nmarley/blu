@@ -259,10 +259,10 @@ impl<'a> EncBlobReader<'a> {
     }
 }
 
-/// BlobIndex maps the plain hashes to the encrypted blob files and positions within.
+/// BlobIndex maps the unencrypted chunk hashes to the encrypted blob files and positions within.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
-    // map the hash to the location of the data on disk
+    // map the hash of a chunk to the location of the data on disk (within the blob)
     map: HashMap<Hash, BlobBlockLocation>,
     // Do not re-serialize to disk if the blob index wasn't modified.
     #[serde(skip)]
