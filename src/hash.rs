@@ -25,7 +25,19 @@ impl std::fmt::Debug for Hash {
         // TODO: re-implement how we store the multihash in the Hash type, or
         // just alias to MultiHash w/some syntactic sugar methods
         let mh = Multihash::from_bytes(&self.0).unwrap();
-        let _ = write!(f, "{:?}", &hex::encode(mh.digest()));
+        let _ = write!(
+            f,
+            "Hash {{ code: {}, digest: {} }}",
+            mh.code(),
+            &hex::encode(mh.digest())
+        );
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Hash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let _ = write!(f, "{}", &hex::encode(&self.0));
         Ok(())
     }
 }
