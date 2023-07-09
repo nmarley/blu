@@ -8,7 +8,7 @@ use simplelog::*;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use blu::age::BlackBox;
 use blu::block::PlainIndex;
@@ -19,7 +19,7 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 #[derive(Parser)]
 pub struct Args {
     pub dir: String,
-    pub outfile: String,
+    pub outfile: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,24 +31,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )])
     .unwrap();
 
+    info!("Started write_index util");
+
     let args = Args::parse();
     // move into the basedir for all internal operations, like `git -C <dir>`
     let prev_dir = env::current_dir()?;
-    env::set_current_dir(args.dir)?;
+    env::set_current_dir(&args.dir)?;
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    info!("Writing index ...");
+    info!("Indexing {}", args.dir);
     let index = PlainIndex::new(dir)?;
-    info!("... done");
-    // dbg!(&index);
 
-    let outfile = args.outfile;
+    let outfile = match args.outfile {
+        Some(val) => PathBuf::from(val),
+        None => {
+            let index_path = Path::new(&args.dir).join(".blu/indexes/index.dat");
+            warn!(
+                "warn: no outfile given, using default path {}",
+                index_path.display()
+            );
+            index_path
+        }
+    };
 
     // back out here since we pass a filename as a direct path
     env::set_current_dir(prev_dir)?;
     match write_index_file(&index, &bbox, &outfile) {
-        Ok(num_bytes) => info!("Index written to {} ({} bytes)", &outfile, num_bytes),
+        Ok(num_bytes) => info!(
+            "Index written to {} ({} bytes)",
+            outfile.display(),
+            num_bytes
+        ),
         Err(e) => error!("Error writing index: {}", e),
     }
 
