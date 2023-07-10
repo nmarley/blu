@@ -10,6 +10,10 @@ use crate::io::{gen_std_bbserde, BlackBoxSerializable};
 /// default filename for the tag index file
 pub const TAG_INDEX_FILENAME: &str = "tags.dat";
 
+// TODO: advanced tag query syntax and method
+// e.g.: Show all BR passports for John, and all Carl's passports
+//        (br & passport & john) | (carl & passport)
+
 /// TagIndex is a struct that stores a mapping of tags to files and files to
 /// tags.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq, Default)]

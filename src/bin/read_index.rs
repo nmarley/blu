@@ -10,7 +10,7 @@ use blu::io::BlackBoxSerializable;
 // index types
 use blu::blob::BlobIndex;
 use blu::block::PlainIndex;
-use blu::tagger::TagIndex;
+use blu::tag::TagIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 

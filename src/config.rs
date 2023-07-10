@@ -6,7 +6,7 @@ use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::io::BlackBoxSerializable;
-use crate::tagger::{TagIndex, TAG_INDEX_FILENAME};
+use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
 // TODO: implement backends -- probably a trait
 /// Backend is the storage backend for blu. Currently only local filesystem is

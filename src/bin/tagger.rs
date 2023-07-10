@@ -6,7 +6,7 @@ use std::path::Path;
 use blu::age::BlackBox;
 use blu::config;
 use blu::io::BlackBoxSerializable;
-use blu::tagger::TagIndex;
+use blu::tag::TagIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 

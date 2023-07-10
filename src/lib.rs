@@ -49,7 +49,7 @@ pub mod magic;
 /// search index for filenames
 pub mod search;
 /// tag index, probably should rename this
-pub mod tagger;
+pub mod tag;
 
 /// cli interface, very immature, needs to be reworked
 pub mod cmds;
