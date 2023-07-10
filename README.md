@@ -57,6 +57,15 @@ blu search --tags passport,John,fra
 blu query --tags passport,US,Alice
 ```
 
+### Tags
+
+Add tag 'datasheet' to all files in /data/datasheets. Should not tag or add
+files which are not yet indexed.
+
+```sh
+blu tag --add --tag datasheet ./data/datasheets
+```
+
 
 ## License
 
