@@ -34,15 +34,6 @@ impl TagIndex {
         }
     }
 
-    /// Accept a string for a tag and return a sanitized version of it
-    fn sanitize_tag(tag: &str) -> String {
-        // lowercase and kebab-case the tag, trim all whitespace
-        tag.to_lowercase()
-            .trim()
-            .replace("  ", " ")
-            .replace(' ', "-")
-    }
-
     /// Return a list of tags for a given file hash
     /// TODO: should it be a hashset instead?
     pub fn get_tags(&self, hash: &Hash) -> Vec<String> {
@@ -73,7 +64,7 @@ impl TagIndex {
 
     /// Add a tag to a file hash
     pub fn add_tag(&mut self, hash: &Hash, tag: &str) {
-        let tag = &Self::sanitize_tag(tag);
+        let tag = &sanitize_tag(tag);
 
         self.file_tags
             .entry((*hash).clone())
@@ -87,7 +78,7 @@ impl TagIndex {
 
     /// Remove a tag from a file hash
     pub fn remove_tag(&mut self, hash: &Hash, tag: &str) {
-        let tag = &Self::sanitize_tag(tag);
+        let tag = &sanitize_tag(tag);
 
         self.file_tags.entry((*hash).clone()).and_modify(|tags| {
             tags.remove(tag);
@@ -117,11 +108,20 @@ impl TagIndex {
     }
 }
 
+/// Accept a string for a tag and return a sanitized version of it
+pub fn sanitize_tag(tag: &str) -> String {
+    // lowercase and kebab-case the tag, trim all whitespace
+    tag.to_lowercase()
+        .trim()
+        .replace("  ", " ")
+        .replace(' ', "-")
+}
+
 gen_std_bbserde!(TagIndex);
 
 #[cfg(test)]
 mod test {
-    use super::{HashSet, TagIndex};
+    use super::{sanitize_tag, HashSet, TagIndex};
     use crate::hash::Hash;
 
     #[test]
@@ -166,8 +166,8 @@ mod test {
     #[test]
     fn sanitize() {
         // lowercase and kebab-case the tag, trim all whitespace
-        assert_eq!(&TagIndex::sanitize_tag("  Test  Tag  "), "test-tag");
-        assert_eq!(&TagIndex::sanitize_tag("Peanut butter"), "peanut-butter");
+        assert_eq!(&sanitize_tag("  Test  Tag  "), "test-tag");
+        assert_eq!(&sanitize_tag("Peanut butter"), "peanut-butter");
     }
 
     #[test]
