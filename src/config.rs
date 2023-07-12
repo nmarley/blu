@@ -129,6 +129,26 @@ macro_rules! load_index {
     };
 }
 
+/// macro to write write_index, write_tag_index, write_blob_index, etc. ...
+macro_rules! write_index {
+    ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
+        /// $name writes the index to the idxdir.
+        pub fn $name(
+            &self,
+            idx: &$idx_struct_name,
+            bbox: &BlackBox,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            let index_path = self.idxdir().join(&self.$idx_filename_varname);
+            // encrypt + compress + serialize index to buf
+            let mut buf = vec![];
+            idx.write(&mut buf, bbox)?;
+            // write to file
+            std::fs::write(index_path, buf)?;
+            Ok(())
+        }
+    };
+}
+
 impl Config {
     /// Returns the datadir WITHIN the base directory for blu. This is the
     /// directory that holds the encrypted data blobs.
@@ -159,22 +179,9 @@ impl Config {
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
 
-    /// write_blob_index writes the blob index to the idxdir.
-    pub fn write_blob_index(
-        &self,
-        blob_index: &BlobIndex,
-        bbox: &BlackBox,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let index_path = self.idxdir().join(&self.blob_index_filename);
-
-        // encrypt + compress + serialize index to buf
-        let mut buf = vec![];
-        blob_index.write(&mut buf, bbox)?;
-        // write to file
-        std::fs::write(index_path, buf)?;
-
-        Ok(())
-    }
+    write_index!(write_blob_index, BlobIndex, blob_index_filename);
+    write_index!(write_tag_index, TagIndex, tag_index_filename);
+    write_index!(write_plain_index, PlainIndex, plain_index_filename);
 }
 
 #[cfg(test)]
