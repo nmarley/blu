@@ -24,15 +24,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_current_dir(args.dir)?;
     let dir = Path::new(".");
 
-    match args.filter {
-        Some(f) => {
-            println!("Got a filter: {}", f);
-        }
-        None => {
-            println!("No filter passed");
-        }
-    };
-
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
     let cfg = config::read_config(dir).map_err(|e| {
@@ -42,11 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
 
-    // TODO: sort by file name? hash? should the order be deterministic?
-    // Since this returns a hash(ref) and we'd have to delve to get filename
-    // and make another pass, (also complicated since it's keyed on hash and
-    // multiple diverse filename "tags" can exist), let's make sure this is
-    // sorted by hash only. Then the bottom sort (below) can display paths in
+    let tag_index = cfg.load_tag_index(&bbox).unwrap_or_default();
+
+    // TODO: sort by file name? hash? should the order be deterministic? Since
+    // this returns a hash(ref) and we'd have to delve to get filename and make
+    // another pass, (also complicated since it's keyed on hash and multiple
+    // diverse filename "tags" can exist), let's make sure this is sorted by
+    // hash only. Then the bottom sort (below) can display paths in
     // lexicographical order.
 
     // TODO: maybe add this (sorted file hashes) to index API and add the test there?
@@ -57,11 +50,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // per hash file hash, list the data
     for file_hash in file_hashes {
-        let fileref = files_ref.get(file_hash).unwrap();
-        let file_size = fileref.total_size();
-        let chunkmetas = &fileref.chunkmetas;
+        let file_ref = files_ref.get(file_hash).unwrap();
+        if let Some(ref filter) = args.filter {
+            let mut found_match = false;
+            // try and filter
+            if file_hash.to_string().contains(filter) {
+                found_match = true;
+                println!("Got a hash match!");
+            }
 
-        println!("  Hash: {:?}\n  Size: {}", file_hash, file_size);
+            // TODO: path index?
+            if file_ref.paths.iter().any(|p| {
+                p.to_string_lossy()
+                    .to_lowercase()
+                    .contains(&filter.to_lowercase())
+            }) {
+                found_match = true;
+                println!("Got a path match!");
+            }
+            if !found_match {
+                continue;
+            };
+        };
+
+        let file_size = file_ref.total_size();
+        let chunkmetas = &file_ref.chunkmetas;
+
+        println!("  Hash: {}", file_hash.dbg_short(15));
+        println!("  Size: {}", file_size);
         println!("Chunks: {}", chunkmetas.len());
 
         // Counting chunk size -- not really necessary and probably not good
@@ -80,8 +96,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Here we will display paths in lexicographical order.
         // TODO: probably also need to add this to the API (deterministic
         // sorted paths)
-        let mut paths: Vec<&PathBuf> = fileref.paths.iter().collect();
+        let mut paths: Vec<&PathBuf> = file_ref.paths.iter().collect();
         paths.sort_unstable();
+
+        let mut tags = tag_index.get_tags(file_hash);
+        tags.sort_unstable();
+        if !tags.is_empty() {
+            println!("  Tags: {}", paths.len());
+            for t in tags {
+                println!("    - {}", t);
+            }
+        }
 
         println!(" Paths: {}", paths.len());
         for p in paths {
