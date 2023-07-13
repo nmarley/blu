@@ -178,7 +178,6 @@ dependencies = [
  "bincode",
  "chrono",
  "clap",
- "filemagic",
  "flate2",
  "hex",
  "itertools",
@@ -411,16 +410,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3fcf0cee53519c866c09b5de1f6c56ff9d647101f81c1964fa632e148896cdf"
 dependencies = [
  "instant",
-]
-
-[[package]]
-name = "filemagic"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0ab576ac8d15cf0e281ae7d4b27cccce08486264c843aa19d624f741a7717ed"
-dependencies = [
- "bitflags",
- "libc",
 ]
 
 [[package]]

@@ -6,14 +6,6 @@ Based on directories in the typical \*nix hierarchical file system (HFS), this w
 
 All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by [@FiloSottile](https://twitter.com/FiloSottile) and [@Benjojo12](https://twitter.com/Benjojo12).
 
-## Prereqs
-
-Ubuntu:
-
-```sh
-apt install -y libmagic-dev
-```
-
 ## Usage
 
 ### Init
