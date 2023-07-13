@@ -49,11 +49,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut reader = EncBlobReader::new(&bbox);
 
-    for (file_hash, fileref) in plain_index.files_map_ref() {
+    for (file_hash, file_ref) in plain_index.files_map_ref() {
         println!("========================================================================");
         println!("Restoring file: {:?}", file_hash);
 
-        let file_size = fileref.total_size();
+        let file_size = file_ref.total_size();
         println!("Size: {}", file_size);
         println!("Filename(s):");
 
@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // exist with different filenames?  This might be a UX concern also.
 
         // check each file path and abort if there is a collision
-        for path in fileref.paths.iter() {
+        for path in file_ref.paths.iter() {
             println!("\t{:?}", path);
             // abort if file exists with this filename
             if std::path::Path::exists(path) {
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // after file restored to `restore_path`, create FS hard links to
         // `other_paths`
-        let mut path_iter = fileref.paths.iter();
+        let mut path_iter = file_ref.paths.iter();
         let restore_path = path_iter.next().unwrap();
         let other_paths = path_iter.collect::<Vec<_>>();
         println!(
@@ -105,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut offset = 0u64;
         // slowness here ...
-        for chunkmeta in fileref.chunkmetas.iter() {
+        for chunkmeta in file_ref.chunkmetas.iter() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
                 // abort restore of this file, remove TEMP file and move on to next ...
                 //

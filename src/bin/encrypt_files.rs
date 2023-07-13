@@ -67,10 +67,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut blob_buf = BlobBuffer::new(cfg.datadir(), bbox.clone());
 
-    // TODO: determine whether to use underscore in e.g. block_hash or
-    // blockhash, block_ref or blockref, and then stay consistent thru the
-    // codebase.
-
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later
     let mut count_added = 0;
@@ -82,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let files_map = plain_index.files_map_ref();
     let file_hashes = files_map.keys().clone().sorted_unstable();
 
-    // for (blockhash, blockref) in plain_index.blocks_map_ref()
+    // for (block_hash, block_ref) in plain_index.blocks_map_ref()
     for file_hash in file_hashes {
         info!("file_hash: {:?}", &file_hash.dbg_short(7));
         let file_ref = files_map.get(file_hash).unwrap();
@@ -96,15 +92,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            let blockref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
-            let data = plain_index.read_block_bytes(blockref);
+            let block_ref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
+            let data = plain_index.read_block_bytes(block_ref);
 
             // NOTE: we probably want to somehow keep this around / add it as a
             // checksum to ensure that the data is not corrupted
             let block_hash2 = Hash::from(hash::multihash(&data).to_bytes());
             assert_eq!(
                 &cm.hash, &block_hash2,
-                "blockhash mismatch (unresolvable black death of the universe error)"
+                "block_hash mismatch (unresolvable black death of the universe error)"
             );
 
             // add it to the blob buffer
