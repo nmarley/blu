@@ -40,6 +40,8 @@ Milestone: (Q1, 2024)
 
 ## TODO
 
+- [ ] remove hard-coded hashing algo and make it configurable -- also consider when changed, make sure new hashing algo doesn't conflict w/old, e.g. if sha3 is used then sha512, files shouldn't be considered "different" just b/c the hashes are different. if the old version was hashed sha512, that same algo should be used for any comparisons.
+
 - [ ] add a --verbose option to `list_files` which will show number of chunks a
   file has been broken into and the chunk size, maybe also whether it's been
   encrypted or not (but really this just depends on if a blob index exists ...)
