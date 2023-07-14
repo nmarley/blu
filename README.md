@@ -76,7 +76,13 @@ cargo run --bin tagger -- --tags sensor,fart-detector,methane,:hello,:silly,:far
 cargo run --bin tagger -- --data-hash-filter 1bfdefb1375aa14 --tags pinout,stm32,black-pill,:datasheet ./data/hw-ds
 ```
 
-Note that tags are processed in the order they are received in the tagspec. For example, the argument `--tags hello,world,:hello` will add tag `hello`, the `world,` then remove the `hello` tag, resulting in the tagged object NOT having the `hello` tag at the end of the command execution.
+### TagSpec
+
+Tagspec is just a way of passing any number of tags to an operation, as well as
+whether to remove or add any specific given tags. It consists of a string of
+comma-separated tags, ideally sanitized/normalized (but the tools should be
+written to sanitize all tag inputs regardless). If a tag has a leading colon
+character (`:`), it indicates that the tag should be removed instead of added.
 
 ## License
 
