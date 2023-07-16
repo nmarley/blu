@@ -11,13 +11,7 @@ An encrypted and de-duplicated file archival system, written in Rust. This proje
 Milestone: (Q3, 2023)
 
 - full search index for file paths and tags (not data itself)
-
-Milestone: (Q3, 2023)
-
 - multi-key encryption/recovery
-
-Milestone: (Q3, 2023)
-
 - async io for restore/encryption + benchmarks vs non-async
 
 Milestone: (Q4, 2023)
@@ -33,10 +27,6 @@ Milestone X: (Q4, 2023)
 Milestone: (Q1, 2024)
 
 - UI - likely web based, axum or actix
-
-## Relevant notes
-
-- I think I figured out the reason for the jumping all over the place -- the `encrypt_files` util (as of commit `f6f59ae4115a1e99788c80f512d9d295a59b6502`) is iterating over block index (not files index) without ever consulting the order of the files -- not doing it in order, so _that's_ why it's encrypting chunks in random order. By keying off `plain_index` and iterating the chunk hashes _first_, we should be able to then get the location from teh block index and then encrypt as usual, but this time in order, which should greatly speed up our restores. This + async threads should work much nicer/quicker.
 
 ## TODO
 
