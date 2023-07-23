@@ -1,14 +1,15 @@
+use core::fmt::Debug;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
-use crate::dir::{self, Manager};
 use crate::hash::{self, Hash};
 use crate::io::{gen_std_bbserde, BlackBoxSerializable};
+use crate::storage::{self, StorageBackend};
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
@@ -16,13 +17,17 @@ pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 // ... around 8MiB
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 
-/// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks (or unused blocks),
-/// etc.
-#[derive(Debug)]
-pub struct BlobBuffer {
-    // TODO: Remove this in favor of a trait / implementation?
-    //    e.g. the writer could be a FileBlobWriter, or a S3BlobWriter (CloudBlobWriter?), etc.
-    datadir: PathBuf,
+// backend::Local
+// backend::S3
+// backend::DO
+// backend::AzureBlob
+// backend::GCS
+
+/// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks
+/// (or unused blocks), etc.
+// #[derive(Debug)]
+pub struct BlobBuffer<'a> {
+    storage_backend: &'a (dyn StorageBackend + 'a),
 
     // encryption
     bbox: BlackBox,
@@ -34,16 +39,20 @@ pub struct BlobBuffer {
     positions: HashMap<Hash, BlobBlockLocation>,
 }
 
-impl BlobBuffer {
+// StorageBackend
+impl<'a> BlobBuffer<'a> {
     /// Create a new BlobBuffer with the default capacity
-    pub fn new<P: AsRef<Path>>(dir: P, bbox: BlackBox) -> Self {
-        Self::with_capacity(dir, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
+    pub fn new(backend: &'a (dyn StorageBackend + 'a), bbox: BlackBox) -> Self {
+        Self::with_capacity(backend, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
     }
     /// Create a new BlobBuffer with a specified capacity
-    pub fn with_capacity<P: AsRef<Path>>(dir: P, bbox: BlackBox, capacity: usize) -> Self {
-        let datadir = dir.as_ref().to_path_buf();
+    pub fn with_capacity(
+        backend: &'a (dyn StorageBackend + 'a),
+        bbox: BlackBox,
+        capacity: usize,
+    ) -> Self {
         Self {
-            datadir,
+            storage_backend: backend,
             bbox,
             data: vec![],
             blob_capacity: capacity,
@@ -99,10 +108,7 @@ impl BlobBuffer {
     fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let raw_bytes = data;
         let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
-        let dir_manager = Manager::new(&self.datadir);
-        // TODO: not a fan of this design ... :/
-        // maybe move dir_manager to BlobBuffer?
-        dir_manager.write_data(&blobfile_hash, raw_bytes)
+        self.storage_backend.write_data(&blobfile_hash, raw_bytes)
     }
 
     // TODO: rename this
@@ -165,6 +171,15 @@ pub struct BlobBlockLocation {
     position: Position,
 }
 
+// NOTE: path should not have .blu or .blu/data in it
+// BlobBlockLocation {
+//     path: "./.blu/data/9/93c/93c98/93c982e79bcd6d4b32c24af6c4b88c9f9483ab88363a7bd2ae5a1b6da83af1c9163696d946de18ee10510563d3d42e20c52d5b78044a08929ecd2d756d8816d0",
+//     position: Position {
+//         offset: 65536,
+//         size: 65536,
+//     },
+// }
+
 /// DataCache caches the data from a decrypted blob file.
 ///
 /// This is used to avoid decrypting the same blob file multiple times.
@@ -222,18 +237,19 @@ impl DataCache {
     }
 }
 
-/// EncBlobReader reads encrypted blobs from disk.
-#[derive(Debug)]
-pub struct EncBlobReader<'a> {
+/// EncBlobReader reads encrypted blobs from storage.
+pub struct EncBlobReader<'a, 'b> {
     data_cache: DataCache,
     bbox: &'a BlackBox,
+    backend: &'b (dyn StorageBackend + 'b),
 }
-impl<'a> EncBlobReader<'a> {
+impl<'a, 'b> EncBlobReader<'a, 'b> {
     /// Create a new EncBlobReader.
-    pub fn new(bbox: &'a BlackBox) -> Self {
+    pub fn new(bbox: &'a BlackBox, backend: &'b (dyn StorageBackend + 'b)) -> Self {
         Self {
             data_cache: DataCache::new(10),
             bbox,
+            backend,
         }
     }
 
@@ -244,7 +260,7 @@ impl<'a> EncBlobReader<'a> {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         // TODO: hash table of paths to blob file hashes, so we don't have to
         // call this shit every time
-        let hash = dir::hash_from_path(&location_ref.path)?;
+        let hash = storage::hash_from_path(&location_ref.path)?;
 
         let full_data_ref = match self.data_cache.get(&hash) {
             Some(data) => {
@@ -255,9 +271,12 @@ impl<'a> EncBlobReader<'a> {
                 data
             }
             None => {
-                info!("Reading blob file: {}", location_ref.path.display());
-                let data = std::fs::read(&location_ref.path)?;
-                let data = self.bbox.decrypt(&data)?;
+                info!(
+                    "Reading blob file from backend: {}",
+                    location_ref.path.display()
+                );
+                let data = &self.backend.read_data(&location_ref.path)?;
+                let data = self.bbox.decrypt(data)?;
                 let data = decompress(&data)?;
                 self.data_cache.add(&hash, data);
                 self.data_cache.get(&hash).unwrap()
@@ -329,22 +348,28 @@ gen_std_bbserde!(BlobIndex);
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
+    use crate::storage::Local;
 
     const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     // helper func used in tests below
-    fn test_blobbuf() -> (BlobBuffer, BlobIndex) {
+    fn temp_local_backend() -> Local {
+        let datadir = tempdir().unwrap();
+        Local::new(datadir)
+    }
+
+    fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
         ];
-        let datadir = tempdir().unwrap();
         let mut blob_index = BlobIndex::new();
-        let mut blob_buf = BlobBuffer::new(&datadir, bbox);
+        let mut blob_buf = BlobBuffer::new(backend, bbox);
         // load w/some data
         for v in vec.iter_mut() {
             blob_buf.add_chunk(v, &mut blob_index).unwrap();
@@ -354,7 +379,8 @@ mod test {
 
     #[test]
     fn new() {
-        let (mut blob_buf, mut idx) = test_blobbuf();
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend);
         blob_buf.finalize(&mut idx).unwrap();
         assert_eq!(idx.count_blob_files(), 1);
         assert_eq!(idx.count_chunks_indexed(), 3);
@@ -372,9 +398,10 @@ mod test {
             vec![0xde, 0xad],
         ];
         let datadir = tempdir().unwrap();
+        let backend = Local::new(&datadir);
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut blob_index = BlobIndex::new();
-        let mut blob_buf = BlobBuffer::with_capacity(&datadir, bbox, 3);
+        let mut blob_buf = BlobBuffer::with_capacity(&backend, bbox, 3);
         // load w/some data
         for v in vec.iter_mut() {
             blob_buf.add_chunk(v, &mut blob_index).unwrap();
@@ -385,7 +412,8 @@ mod test {
 
     #[test]
     fn blob() {
-        let (mut blob_buf, mut _idx) = test_blobbuf();
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut _idx) = test_blobbuf(&backend);
         // TODO: Test the interface, not the implementation
         let (data, positions) = blob_buf._eject_blob();
         assert_eq!(

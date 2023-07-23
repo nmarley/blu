@@ -6,19 +6,11 @@ use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::io::BlackBoxSerializable;
+use crate::storage::{Local, StorageBackend};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
-// TODO: implement backends -- probably a trait
-/// Backend is the storage backend for blu. Currently only local filesystem is
-/// supported.
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize, Eq)]
-pub enum Backend {
-    /// Local filesystem
-    #[default]
-    Local,
-    /// Amazon S3
-    S3,
-}
+/// Backend config structures, one for each supported backend.
+pub mod backend;
 
 // for now locked to just Age keys, for simplicity
 /// KeyType is the type of key used to encrypt/decrypt data. Currently only Age
@@ -41,21 +33,11 @@ pub struct KeyID {
     public_key: String, // TODO: Vec<u8> ?
 }
 
-const DEFAULT_DATADIR: &str = ".blu/data";
-// TODO: also, don't worry for now, this is not MVP. For now we can hard-code
-// paths in data_key_files instead.
-//
-// TODO: how to do this w/const? possible or nah?
-// const DEFAULT_DATA_KEY_FILES: &'static str = "$HOME/.blu/secrets/blu.key";
-//                                              "$HOME/.blu/secrets/blu.pub";
-// std::env::get("HOME")
-
 /// Config is the configuration for blu. It is stored in the .blu directory in
 /// the config.json file.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(default)]
 pub struct Config {
-    backend: Backend,
     blu_version: String,
     data_key_files: Vec<String>,
 
@@ -63,9 +45,8 @@ pub struct Config {
     #[serde(skip)]
     basedir: PathBuf,
 
-    // The datadir should hold encrypted data and metadata. Priv keys should
-    // never be stored here, even encrypted.
-    datadir: Option<PathBuf>,
+    /// Storage backend for encrypted data blobs
+    backend: backend::BackendConfig,
 
     // should blu delete Encrypted from filesystem, if the plain version was deleted?
     prune_deleted: bool,
@@ -80,11 +61,10 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            backend: Backend::default(),
+            backend: backend::BackendConfig::default(),
             blu_version: env!("CARGO_PKG_VERSION").to_string(),
             data_key_files: vec![],
             basedir: PathBuf::from("."),
-            datadir: Some(DEFAULT_DATADIR.into()),
             prune_deleted: false,
             prune_dangling: false,
             plain_index_filename: INDEX_FILENAME.into(),
@@ -150,20 +130,6 @@ macro_rules! write_index {
 }
 
 impl Config {
-    /// Returns the datadir WITHIN the base directory for blu. This is the
-    /// directory that holds the encrypted data blobs.
-    ///
-    /// Probably not a great design, and I'm open to changing this in the
-    /// future.
-    pub fn datadir(&self) -> PathBuf {
-        let rel_dir = match self.datadir {
-            Some(ref s) => s.as_path(),
-            // TODO: use bludir() + join
-            None => Path::new(DEFAULT_DATADIR),
-        };
-        self.basedir.join(rel_dir)
-    }
-
     /// Returns the .blu dir within the base directory. This holds the config,
     /// and nested indexes and data dirs.
     pub fn bludir(&self) -> PathBuf {
@@ -182,11 +148,23 @@ impl Config {
     write_index!(write_blob_index, BlobIndex, blob_index_filename);
     write_index!(write_tag_index, TagIndex, tag_index_filename);
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
+
+    /// Initializes the storage backend based on `backend` field in config.
+    pub fn init_storage_backend(
+        &self,
+    ) -> Result<Box<dyn StorageBackend>, Box<dyn std::error::Error>> {
+        match &self.backend {
+            backend::BackendConfig::Local(local_backend) => {
+                Ok(Box::new(Local::new(&local_backend.path)))
+            }
+            _ => Err("Unsupported backend".into()),
+        }
+    }
 }
 
 #[cfg(test)]
 pub(crate) mod test {
-    use super::{Backend, BlackBox, Config};
+    use super::{BlackBox, Config};
     use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_AGE_SECRET_KEY_PATH};
 
     const TEST_DIR_T0: &str = "test/old/t0/";
@@ -203,7 +181,6 @@ pub(crate) mod test {
         assert_eq!(
             cfg,
             Config {
-                backend: Backend::Local,
                 basedir: TEST_DIR_T1.into(),
                 blu_version: "0.0.1".to_string(),
                 data_key_files: vec![TEST_AGE_SECRET_KEY_PATH.to_string()],

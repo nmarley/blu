@@ -47,7 +47,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
     let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
 
-    let mut reader = EncBlobReader::new(&bbox);
+    let backend = cfg.init_storage_backend()?;
+
+    // NOTE:
+    //     `*` derefs the `Box<dyn StorageBackend>`
+    //     BlobBuffer::new expects a `&dyn StorageBackend`
+    let mut reader = EncBlobReader::new(&bbox, &(*backend));
 
     for (file_hash, file_ref) in plain_index.files_map_ref() {
         println!("========================================================================");

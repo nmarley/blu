@@ -50,10 +50,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     // dbg!(&cfg);
 
-    let _datadir = cfg.datadir();
-    info!("datadir = {:?}", _datadir);
-    // dbg!(&datadir);
-
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
@@ -65,7 +61,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         blob_index.count_blob_files()
     );
 
-    let mut blob_buf = BlobBuffer::new(cfg.datadir(), bbox.clone());
+    let backend = cfg.init_storage_backend()?;
+
+    // NOTE:
+    //     `*` derefs the `Box<dyn StorageBackend>`
+    //     BlobBuffer::new expects a `&dyn StorageBackend`
+    let mut blob_buf = BlobBuffer::new(&(*backend), bbox.clone());
 
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later

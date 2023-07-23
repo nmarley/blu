@@ -36,8 +36,6 @@ pub mod clapargs;
 pub mod compression;
 /// configuration file and related methods
 pub mod config;
-/// dir probably needs to be moved to blobbuffer / encrypted storage
-pub mod dir;
 /// format contains a format fn for datetime (chrono/serde)
 pub mod format;
 /// wrapper around Vec<u8> for cryptographic hashes
@@ -46,6 +44,8 @@ pub mod hash;
 pub mod io;
 /// search index for filenames
 pub mod search;
+/// storage backends and hash to path translation methods
+pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
 
