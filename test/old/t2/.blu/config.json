@@ -1,5 +1,8 @@
 {
-  "backend": "Local",
+  "backend": {
+    "type": "local",
+    "path": ".blu/data"
+  },
   "blu_version": "0.0.1",
   "data_key_files": ["test/blu_secrets/blu.key"],
   "metadata_key_id": {
