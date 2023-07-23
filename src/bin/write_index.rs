@@ -34,15 +34,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Started write_index util");
 
     let args = Args::parse();
-    // move into the basedir for all internal operations, like `git -C <dir>`
-    let prev_dir = env::current_dir()?;
-    env::set_current_dir(&args.dir)?;
-    let dir = Path::new(".");
-
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    info!("Indexing {}", args.dir);
-    let index = PlainIndex::new(dir)?;
-
     let outfile = match args.outfile {
         Some(val) => PathBuf::from(val),
         None => {
@@ -54,6 +45,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             index_path
         }
     };
+
+    // test ability to write index file before further processing
+    check_outfile_writable(&outfile)?;
+
+    // move into the basedir for all internal operations, like `git -C <dir>`
+    let prev_dir = env::current_dir()?;
+    env::set_current_dir(&args.dir).map_err(|e| -> Box<dyn std::error::Error> {
+        format!("unable to chdir to '{}': {}", &args.dir, e).into()
+    })?;
+    let dir = Path::new(".");
+
+    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    info!("Indexing {}", args.dir);
+    let index = PlainIndex::new(dir)?;
 
     // back out here since we pass a filename as a direct path
     env::set_current_dir(prev_dir)?;
@@ -69,15 +74,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn check_outfile_writable<P: AsRef<Path>>(outfile: P) -> Result<(), Box<dyn std::error::Error>> {
+    // create parent dir(s) if necessary
+    if let Some(parent_dir) = outfile.as_ref().parent() {
+        fs::create_dir_all(parent_dir)?;
+    }
+
+    fs::File::create(&outfile).map_err(|e| -> Box<dyn std::error::Error> {
+        format!(
+            "unable to write to outfile '{}': {}",
+            outfile.as_ref().display(),
+            e
+        )
+        .into()
+    })?;
+
+    Ok(())
+}
+
 fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
     bbox: &BlackBox,
     outfile: P,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    // create parent dir(s) if necessary
-    if let Some(parent_dir) = outfile.as_ref().parent() {
-        fs::create_dir_all(parent_dir)?;
-    }
     let mut enc_idx_bytes = Vec::new();
     index.write(&mut enc_idx_bytes, bbox)?;
     let size = enc_idx_bytes.len();
