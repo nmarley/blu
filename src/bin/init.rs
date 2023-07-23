@@ -41,16 +41,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Config file does not exist. Creating new config file");
 
     info!("Initializing new .blu dir in {:?}", dir_arg);
-    // create .blu + .blu/data dirs
-    fs::create_dir_all(dir.join(".blu/data"))?;
+    // create .blu dir
+    fs::create_dir_all(dir.join(".blu/"))?;
 
     // write an empty .blu/config.json file
     let mut file = fs::File::create(dir.join(".blu/config.json"))?;
-    file.write_all(b"{}")?;
 
-    // mkdir .blu
-    // mkdir .blu/data
-    // touch .blu/config.json <-- ??
+    let cfg = config::Config::default();
+    // dbg!(&cfg);
+
+    let mut cfg_bytes = serde_json::to_vec_pretty(&cfg)?;
+    // Add a newline b/c POSIX and also more tidy and neat. Remember these will
+    // be read and edited by humans.
+    let _ = cfg_bytes.write(&[0x0a])?;
+    file.write_all(&cfg_bytes)?;
+
+    info!("Wrote new .blu/config.json file");
 
     Ok(())
 }
