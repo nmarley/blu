@@ -23,7 +23,7 @@ pub struct Args {
     tag_action: TagAction,
     #[arg(long)]
     pub data_hash_filter: Option<String>,
-    #[arg(long, default_value = "true")]
+    #[arg(long, default_value = "false")]
     pub dry_run: bool,
 }
 
