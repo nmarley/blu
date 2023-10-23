@@ -1,6 +1,12 @@
+// TODO: prep for std removal from library if possible
+// #![cfg_attr(not(test), no_std)]
+
 use flate2::bufread::{GzDecoder, GzEncoder};
 use flate2::Compression;
 use std::io::{self, Read};
+
+// TODO: std is necessary for io::Read, unfortunately. Also std::io::Result has
+// no `core` equivalent.
 
 pub(crate) fn compress(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut gz = GzEncoder::new(data, Compression::fast());
