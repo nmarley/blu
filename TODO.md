@@ -17,6 +17,8 @@
 
 - [ ] Separate std/fs implementation from API. Tools can use std::fs, try to avoid in lib (accept bytes instead of filename, etc.)
 
+- [ ] Multiple backends to allow for redundant backups. E.g. I can have both a local and S3 backend. Or and s3 and a Azure blob storage. Any combination.
+
 - [x] Config backends
 
 - [ ] Deletes, e.g. full data deletes. Also managing "plain index" deletes vs "full deletes" (deletes the encrypted chunks from blob files, or at least marks them for deletion). Which leads to ...
