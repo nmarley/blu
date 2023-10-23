@@ -1,7 +1,7 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
+// Note: this is not finished or stable.
+//
+// I believe this was supposed to be a frontend for the full-text-search index
+// for filenames.
 
 use clap::Parser;
 use simplelog::*;
@@ -17,7 +17,7 @@ use blu::search::SearchIndex;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 #[derive(Parser)]
-pub struct Args {
+pub struct SearchFilesArgs {
     pub dir: String,
     pub needle: String,
 }
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Started search_files util");
 
-    let args = Args::parse();
+    let args = SearchFilesArgs::parse();
     // move into the basedir for all internal operations, like `git -C <dir>`
     let _prev_dir = env::current_dir()?;
     env::set_current_dir(&args.dir)?;

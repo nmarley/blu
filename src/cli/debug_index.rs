@@ -1,19 +1,13 @@
-#![allow(clippy::uninlined_format_args)]
-
 use std::env;
 use std::path::Path;
 
-use blu::block::PlainIndex;
+use crate::block::PlainIndex;
+use crate::cli::clapargs::DebugIndexArgs;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args();
-    if args.len() == 1 {
-        eprintln!("usage: {} <dir-to-index>", args.next().unwrap());
-        std::process::exit(1);
-    }
-
+/// Probably old and should be removed. Debug plain index or something
+pub fn debug_index(args: DebugIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     // move into the basedir for all operations, like `git -C <dir>`
-    let basedir = &args.nth(1).unwrap();
+    let basedir = args.dir;
     env::set_current_dir(basedir)?;
     let index_dir = Path::new(".");
 

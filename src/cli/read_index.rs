@@ -1,35 +1,20 @@
-#![allow(clippy::uninlined_format_args)]
-
-use clap::Parser;
 use std::fs;
 
 // encryption/serialization stuff
-use blu::age::BlackBox;
-use blu::io::BlackBoxSerializable;
+use crate::age::BlackBox;
+use crate::io::BlackBoxSerializable;
 
 // index types
-use blu::blob::BlobIndex;
-use blu::block::PlainIndex;
-use blu::tag::TagIndex;
+use crate::blob::BlobIndex;
+use crate::block::PlainIndex;
+use crate::tag::TagIndex;
+
+use crate::cli::clapargs::{IndexType, ReadIndexArgs};
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct Args {
-    #[clap(value_enum)]
-    pub index_type: IndexType,
-    pub file: String,
-}
-
-#[derive(clap::ValueEnum, Clone, Debug)]
-pub enum IndexType {
-    Plain,
-    Blob,
-    Tag,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// Read and print individual index files, for debugging
+pub fn read_index(args: ReadIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     let index_file = &args.file;
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);

@@ -1,39 +1,19 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
-
-use clap::Parser;
-use simplelog::*;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use blu::age::BlackBox;
-use blu::block::PlainIndex;
-use blu::io::BlackBoxSerializable;
+use crate::age::BlackBox;
+use crate::block::PlainIndex;
+use crate::cli::clapargs::WriteIndexArgs;
+use crate::io::BlackBoxSerializable;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct Args {
-    pub dir: String,
-    pub outfile: Option<String>,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
+/// Write the index to a local file
+pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started write_index util");
 
-    let args = Args::parse();
     let outfile = match args.outfile {
         Some(val) => PathBuf::from(val),
         None => {

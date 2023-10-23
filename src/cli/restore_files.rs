@@ -1,38 +1,18 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
-
-use clap::Parser;
-use simplelog::*;
 use std::env;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-use blu::age::BlackBox;
-use blu::blob::EncBlobReader;
-use blu::config;
+use crate::age::BlackBox;
+use crate::blob::EncBlobReader;
+use crate::cli::clapargs::RestoreFilesArgs;
+use crate::config;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct Args {
-    pub dir: String,
-    pub restore_paths: Vec<String>,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
+/// Restore plain-text files from the archive, requires index + necessary encrypted blobs
+pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
 
-    let args = Args::parse();
     // move into the basedir for all operations, like `git -C <dir>`
     env::set_current_dir(args.dir)?;
     let dir = Path::new(".");

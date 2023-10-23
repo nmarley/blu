@@ -1,41 +1,13 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
-
-use clap::{Args as ClapArgs, Parser};
-use simplelog::*;
 use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use blu::age::BlackBox;
-use blu::config;
-use blu::hash::{multihash, Hash};
-use blu::tag::sanitize_tag;
-
-#[derive(Parser)]
-pub struct Args {
-    // dir OR file -- will probably change this to use `-C` option (like git)
-    pub dest: String,
-    #[command(flatten)]
-    tag_action: TagAction,
-    #[arg(long)]
-    pub data_hash_filter: Option<String>,
-    #[arg(long, default_value = "false")]
-    pub dry_run: bool,
-}
-
-#[derive(ClapArgs)]
-#[group(required = true, multiple = false)]
-pub struct TagAction {
-    #[arg(long, conflicts_with = "remove_all_tags")]
-    pub tags: Option<String>,
-
-    #[arg(long, conflicts_with = "tags")]
-    pub remove_all_tags: bool,
-}
+use crate::age::BlackBox;
+use crate::cli::clapargs::TaggerArgs;
+use crate::config;
+use crate::hash::{multihash, Hash};
+use crate::tag::sanitize_tag;
 
 // Here we implement a tagspec, which are that tags with a leading colon char `:` prefix will be
 // removed, like pushing git branches
@@ -47,18 +19,10 @@ pub struct TagAction {
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
+/// Manipulate tags on data
+pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started tagger util");
 
-    let args = Args::parse();
     let _prev_dir = env::current_dir()?;
 
     if args.dry_run {
