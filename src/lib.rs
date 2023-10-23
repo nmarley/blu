@@ -18,9 +18,6 @@
 //! [@FiloSottile](https://twitter.com/FiloSottile) and
 //! [@Benjojo12](https://twitter.com/Benjojo12).
 
-use clap::Parser;
-use std::{env, process};
-
 #[macro_use]
 extern crate log;
 
@@ -30,8 +27,10 @@ pub mod age;
 pub mod blob;
 /// block handles block-based indexing
 pub mod block;
-/// clap handles command line parsing
-pub mod clapargs;
+/// cli is the cli and subcommands
+pub mod cli;
+// clap handles command line parsing
+// pub mod clapargs;
 /// helper functions for (de+)compression
 pub mod compression;
 /// configuration file and related methods
@@ -48,64 +47,3 @@ pub mod search;
 pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
-
-/// cli interface, very immature, needs to be reworked
-pub mod cmds;
-
-use crate::age::BlackBox;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
-
-// also: consider an internal webserver which serves up the UI for blu
-
-/// run the main 'blu' binary. Not sure this makes sense to exist anymore.
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: clapargs::Args = clapargs::Args::parse();
-
-    // TODO: use pwd
-    let dir = env::var("BLU_DIR").unwrap_or_else(|_| {
-        println!("error: required env var BLU_DIR is not set");
-        process::exit(1);
-    });
-    dbg!(&dir);
-
-    let cfg = config::read_config(&dir)?;
-    dbg!(&cfg);
-
-    let bbox = load_key();
-    dbg!(&bbox);
-    // let mut index = match cfg.load_plain_index(&bbox) {
-    //     None => Index::new(&dir)?,
-    //     Some(idx) => idx,
-    // };
-    // let mut index = Index::new(dir)?;
-
-    match args.action {
-        // There are 2 basic operations:
-        //     a. archive - encrypt+de-duplicate new files
-        //     b. restore - restore from backup
-        //
-        clapargs::Action::Add => {
-            cmds::add();
-        }
-        clapargs::Action::Init => {
-            cmds::init();
-        }
-        clapargs::Action::Restore => {
-            cmds::restore();
-        }
-        clapargs::Action::ListTags => {
-            cmds::list_tags(&cfg, &bbox);
-        }
-        _ => {
-            unimplemented!();
-        }
-    };
-
-    Ok(())
-}
-
-// TODO: Rename/multi keys
-fn load_key() -> BlackBox {
-    BlackBox::new(&[TEST_AGE_SECRET_KEY])
-}

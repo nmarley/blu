@@ -2,13 +2,13 @@
 
 ### Release
 
+- [x] Merge all src/bin/ files into a single binary? (not really usable as separate ones is it?)
+
 - [ ] Draft initial intro / release post
 
 - [ ] Set up GitHub Actions CI (along w/something for aarch64, maybe BuildJet?)
 
 - [ ] Prep README w/CI/Build badges, header image, use cases, maybe a quicktime GIF/screen recording of the CLI in action?
-
-- [ ] Merge all src/bin/ files into a single binary? (not really usable as separate ones is it?)
 
 - Encryption part has to be solid. Maybe send Filippo an email asking his thoughts?
 

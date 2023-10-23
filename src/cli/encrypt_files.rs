@@ -1,40 +1,19 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
-
-use clap::Parser;
 use itertools::Itertools;
-use simplelog::*;
 use std::env;
 use std::path::Path;
 
-use blu::age::BlackBox;
-use blu::blob::BlobBuffer;
-use blu::config;
-use blu::hash::{self, Hash};
+use crate::age::BlackBox;
+use crate::blob::BlobBuffer;
+use crate::cli::clapargs::EncryptFilesArgs;
+use crate::config;
+use crate::hash::{self, Hash};
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct Args {
-    pub dir: String,
-    #[arg(long)]
-    pub force_write_index: bool,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
+/// Encrypt the plain text files in the index
+pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started encrypt_files util");
 
-    let args = Args::parse();
     // move into the basedir for all operations, like `git -C <dir>`
     env::set_current_dir(args.dir)?;
     let dir = Path::new(".");
@@ -79,6 +58,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let files_map = plain_index.files_map_ref();
     let file_hashes = files_map.keys().clone().sorted_unstable();
+    // let mut file_hashes: Vec<Hash> = files_map.keys().clone().collect();
+    // file_hashes.sort_unstable();
 
     for file_hash in file_hashes {
         info!("file_hash: {:?}", &file_hash.dbg_short(7));

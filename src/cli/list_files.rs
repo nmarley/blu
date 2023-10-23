@@ -1,25 +1,16 @@
-#![allow(clippy::uninlined_format_args)]
-
-use clap::Parser;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use blu::age::BlackBox;
-use blu::config;
+use crate::age::BlackBox;
+use crate::cli::clapargs::ListFilesArgs;
+use crate::config;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct Args {
-    pub dir: String,
-    #[arg(long)]
-    pub filter: Option<String>,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+/// List files in the index, optionally filtered
+pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     // move into the basedir for all operations, like `git -C <dir>`
     env::set_current_dir(args.dir)?;
     let dir = Path::new(".");

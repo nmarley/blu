@@ -1,35 +1,17 @@
-#![allow(clippy::uninlined_format_args)]
-
-#[macro_use]
-extern crate log;
-
-use clap::Parser;
-use simplelog::*;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use blu::config;
+use crate::cli::clapargs::InitArgs;
+use crate::config;
 
-#[derive(Parser)]
-pub struct Args {
-    pub dir: String,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
-    let args = Args::parse();
-
+/// initialize the .blu repository
+pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     // move into the basedir for all operations, like `git -C <dir>`
     let dir_arg = args.dir;
+    dbg!(&dir_arg);
+
     env::set_current_dir(&dir_arg)?;
     let dir = Path::new(".");
 
