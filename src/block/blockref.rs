@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use crate::hash::Hash;
+use crate::io::Position;
 
 // blockref -> option<enc hash>
 //          -> set of references to chunk on disk
@@ -9,23 +10,19 @@ use crate::hash::Hash;
 #[derive(Default, Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct BlockRef {
     // on-disk locations where this block can be read if necessary
-    pub references: HashSet<FileRefLocationIndex>,
+    pub references: HashMap<Hash, Position>,
 }
 
 impl BlockRef {
     pub fn new() -> Self {
         Self {
-            references: HashSet::new(),
+            references: HashMap::new(),
         }
     }
-}
 
-/// FileRefLocationIndex gives the location of a chunk within a FileRef
-/// (identified by file hash), with a byte offset and number of bytes to be
-/// read.
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Ord, PartialOrd, Eq, Hash)]
-pub struct FileRefLocationIndex {
-    pub file_hash: Hash,
-    pub offset: usize,
-    pub size: usize,
+    // old: return Option<Position> (rv from self.references.remove(file_hash))
+    pub fn delete_fileref(&mut self, file_hash: &Hash) -> bool {
+        let _opt_pos = self.references.remove(file_hash);
+        self.references.is_empty()
+    }
 }

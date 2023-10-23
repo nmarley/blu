@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
-use super::chunkerator::Chunkerator;
 use crate::hash::{self, Hash};
 
 // ChunkMeta is the hash of a chunk of data and the size of the data, before hashing
@@ -22,16 +20,5 @@ impl ChunkMeta {
 
     pub fn to_bytes(&self) -> Vec<u8> {
         self.hash.to_bytes()
-    }
-
-    // TODO: consider removing this if not used.
-    // currently (2023-06-29) only used in tests.
-    pub fn read_from_disk<P: AsRef<Path>>(
-        filepath: P,
-        chunk_size: usize,
-    ) -> Result<Vec<Self>, Box<dyn std::error::Error>> {
-        let chunker = Chunkerator::new(filepath, chunk_size)?;
-        let chunkmetas: Vec<Self> = chunker.into_iter().map(|e| Self::new(&e)).collect();
-        Ok(chunkmetas)
     }
 }

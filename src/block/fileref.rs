@@ -8,12 +8,8 @@ use super::ChunkMeta;
 /// of chunks read from a fs::File) and filesystem references to it (filenames)
 #[derive(PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct FileRef {
-    // TODO: Should we add the full file hash here also? e.g.:
-    // pub hash: Hash,
-    // TODO: ask OpenAI / GPT3 the above ^^^
     pub chunkmetas: Vec<ChunkMeta>,
     pub paths: HashSet<PathBuf>,
-    // TODO: filetype, tags, notes?
 }
 
 impl std::fmt::Debug for FileRef {
@@ -40,9 +36,9 @@ impl Ord for FileRef {
 }
 
 impl FileRef {
-    pub fn new(f: &[ChunkMeta]) -> Self {
+    pub fn new(f: Vec<ChunkMeta>) -> Self {
         Self {
-            chunkmetas: f.to_vec(),
+            chunkmetas: f,
             paths: HashSet::new(),
         }
     }
