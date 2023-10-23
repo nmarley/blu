@@ -26,6 +26,7 @@ mod test {
 
     use super::{BlockRef, ChunkMeta, FileRef, FileRefLocationIndex, PlainIndex};
     use crate::hash::Hash;
+    use crate::io::Position;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
     // -rw-r--r-- 1 joshua staff 16384 Mar 22 15:32 file1.txt

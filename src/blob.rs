@@ -8,7 +8,7 @@ use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::hash::{self, Hash};
-use crate::io::{gen_std_bbserde, BlackBoxSerializable};
+use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
 use crate::storage::{self, StorageBackend};
 
 /// the default on-disk filename for the blob index
@@ -154,21 +154,13 @@ impl<'a> BlobBuffer<'a> {
     }
 }
 
-/// Position is the offset and size of a chunk of data within a bigger blob of
-/// data.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
-pub struct Position {
-    // where to start reading
-    offset: usize,
-    // how many bytes to read
-    size: usize,
-}
-
 /// BlobBlockLocation is a path to a blob file and a position (offset/size)
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct BlobBlockLocation {
     path: PathBuf,
-    position: Position,
+    // TODO: not pub
+    /// Blah blah make this private again
+    pub position: Position,
 }
 
 // NOTE: path should not have .blu or .blu/data in it
