@@ -135,8 +135,8 @@ impl<'a> BlobBuffer<'a> {
     // Do not use, for testing only.
     // TODO: Remove this entirely
     fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobBlockLocation>) {
-        let data = std::mem::take(&mut self.data);
-        let pos = std::mem::take(&mut self.positions);
+        let data = core::mem::take(&mut self.data);
+        let pos = core::mem::take(&mut self.positions);
         self.reset();
         (data, pos)
     }
