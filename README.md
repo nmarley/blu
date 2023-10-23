@@ -6,6 +6,16 @@ Based on directories in the typical \*nix hierarchical file system (HFS), this w
 
 All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by [@FiloSottile](https://twitter.com/FiloSottile) and [@Benjojo12](https://twitter.com/Benjojo12).
 
+## Encrypted & De-duplicated File Archival System in Rust
+
+- Encryption-Centric Design: Developed with the premise of "own your encryption keys", ensuring data privacy against potential cloud breaches.
+- Cryptographic Hashing: Files are uniquely identified using cryptographic hashes rather than filenames, enhancing data integrity and security.
+- Intelligent De-duplication: Implemented chunking to de-duplicate files based on contiguous byte sequences, optimizing storage efficiency.
+- Robust Encryption: Utilizes the age encryption scheme with age keys (related to ed25519) for reliable asymmetric encryption.
+- Storage Flexibility: Equipped with a modular backend, currently featuring an S3 adapter for cloud storage.
+- Comprehensive Metadata Handling: Stores plaintext metadata, including filenames and tags, locally. Metadata uploads are encrypted to ensure confidentiality.
+- Integrated Tagging System: Includes a tagging system and tag index, allowing users to organize and locate their data efficiently.
+
 ## Usage
 
 ### Init
