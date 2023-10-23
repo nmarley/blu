@@ -101,12 +101,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .write(true)
             .create(true)
             .open(restore_path)?;
-        match fh.set_len(file_size) {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Unable to set length of new sparse file: {:?}", e);
-            }
-        }
+        let _ = fh
+            .set_len(file_size)
+            .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
 
         let mut offset = 0u64;
         // slowness here ...
