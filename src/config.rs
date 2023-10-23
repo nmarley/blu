@@ -6,7 +6,7 @@ use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::io::BlackBoxSerializable;
-use crate::storage::{Local, StorageBackend};
+use crate::storage::{AmazonS3, Local, StorageBackend};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
 /// Backend config structures, one for each supported backend.
@@ -148,10 +148,15 @@ impl Config {
     pub fn init_storage_backend(
         &self,
     ) -> Result<Box<dyn StorageBackend>, Box<dyn std::error::Error>> {
-        match &self.backend {
-            backend::BackendConfig::Local(local_backend) => {
+        match self.backend {
+            backend::BackendConfig::Local(ref local_backend) => {
                 Ok(Box::new(Local::new(&local_backend.path)))
             }
+            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(AmazonS3::new(
+                &s3_backend.bucket,
+                s3_backend.prefix.clone(),
+            ))),
+            #[allow(unreachable_patterns)]
             _ => Err("Unsupported backend".into()),
         }
     }

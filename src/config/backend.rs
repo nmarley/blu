@@ -44,9 +44,9 @@ pub struct LocalConfig {
 // roles) rather than storing them here in the config file.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 pub struct S3Config {
-    _bucket: String,
-    _prefix: Option<String>,
-    _access_key: Option<String>,
-    _secret_key: Option<String>,
-    _region: Option<String>,
+    /// The s3 bucket to store the data
+    pub bucket: String,
+    /// An optional prefix for the s3 object key
+    pub prefix: Option<String>,
+    // pub region: Option<String>,
 }
