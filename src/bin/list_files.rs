@@ -68,6 +68,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 found_match = true;
                 println!("Got a path match!");
             }
+
+            if tag_index
+                .get_tags(file_hash)
+                .iter()
+                .any(|t| t.contains(&filter.to_lowercase()))
+            {
+                found_match = true;
+                println!("Got a tag match!");
+            }
+
             if !found_match {
                 continue;
             };

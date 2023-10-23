@@ -1,4 +1,5 @@
 use crate::age::BlackBox;
+use serde::{Deserialize, Serialize};
 use std::io;
 
 /// BlackBoxSerializable is a trait for serializing and deserializing structs to
@@ -68,3 +69,13 @@ macro_rules! gen_std_bbserde {
 }
 
 pub(crate) use gen_std_bbserde;
+
+/// Position is the offset and size of a chunk of data within a bigger data
+/// block.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
+pub struct Position {
+    /// Offset is where to start reading
+    pub offset: usize,
+    /// Size is how many bytes to read
+    pub size: usize,
+}

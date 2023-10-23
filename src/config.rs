@@ -90,21 +90,16 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
 
 /// macro to write load_index, load_tag_index, load_blob_index, etc. ...
 macro_rules! load_index {
+    // TODO: implement as independent fn in Config, then wrap with impl version pass in path
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
         /// $name loads the index from the idxdir.
         pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             info!("In config, index_path = {:?}", index_path);
             // read index file data or return None
-            let index_data: Vec<u8> = match fs::read(index_path) {
-                Ok(data) => data,
-                Err(_) => return None,
-            };
+            let index_data: Vec<u8> = fs::read(index_path).ok()?;
             // deserialize + decompress + decrypt index or return None
-            match $idx_struct_name::read(&index_data[..], bbox) {
-                Ok(index) => Some(index),
-                Err(_e) => None,
-            }
+            $idx_struct_name::read(&index_data[..], bbox).ok()
         }
     };
 }

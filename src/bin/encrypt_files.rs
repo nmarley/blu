@@ -73,18 +73,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut count_added = 0;
     info!("iterating plain_index now");
 
-    // Start with files, random blocks will make the data storage less organized and more scattered
-    // on disk. Async threads won't even help with bad design.
+    // Start with files, random blocks will make the data storage less organized
+    // and more scattered on disk. Async threads won't even help with bad
+    // design.
 
     let files_map = plain_index.files_map_ref();
     let file_hashes = files_map.keys().clone().sorted_unstable();
 
-    // for (block_hash, block_ref) in plain_index.blocks_map_ref()
     for file_hash in file_hashes {
         info!("file_hash: {:?}", &file_hash.dbg_short(7));
         let file_ref = files_map.get(file_hash).unwrap();
         info!("chunks count: {}", file_ref.chunkmetas.len());
-        // print!("\rcount={count_added}");
 
         for (count, cm) in file_ref.chunkmetas.iter().enumerate() {
             info!("\t chunkmeta[{}]: {:?}", count, cm.hash.dbg_short(7));
@@ -108,9 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // info!("Adding chunk to blob buffer");
             blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
             count_added += 1;
-            // println!("========================================================================");
         }
-        // println!();
     }
 
     println!("Added {} new chunks to blob buffer", count_added);

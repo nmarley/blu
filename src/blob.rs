@@ -8,7 +8,7 @@ use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::hash::{self, Hash};
-use crate::io::{gen_std_bbserde, BlackBoxSerializable};
+use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
 use crate::storage::{self, StorageBackend};
 
 /// the default on-disk filename for the blob index
@@ -154,21 +154,13 @@ impl<'a> BlobBuffer<'a> {
     }
 }
 
-/// Position is the offset and size of a chunk of data within a bigger blob of
-/// data.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
-pub struct Position {
-    // where to start reading
-    offset: usize,
-    // how many bytes to read
-    size: usize,
-}
-
 /// BlobBlockLocation is a path to a blob file and a position (offset/size)
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct BlobBlockLocation {
     path: PathBuf,
-    position: Position,
+    // TODO: not pub
+    /// Blah blah make this private again
+    pub position: Position,
 }
 
 // NOTE: path should not have .blu or .blu/data in it
@@ -203,16 +195,13 @@ impl DataCache {
 
     /// Get the data from the cache, if it exists.
     pub fn get(&mut self, hash: &Hash) -> Option<&Vec<u8>> {
-        match self.map.get(hash) {
-            None => None,
-            Some(data) => {
-                // update the positions for lru
-                let pos = self.lru.iter().position(|x| x == hash).unwrap();
-                let hash = self.lru.remove(pos);
-                self.lru.push(hash);
-                Some(data)
-            }
-        }
+        self.map.get(hash).map(|data| {
+            // update the positions for lru
+            let pos = self.lru.iter().position(|x| x == hash).unwrap();
+            let hash = self.lru.remove(pos);
+            self.lru.push(hash);
+            data
+        })
     }
 
     /// Add the data to the cache.
@@ -291,8 +280,17 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
 /// BlobIndex maps the unencrypted chunk hashes to the encrypted blob files and positions within.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
-    // map the hash of a chunk to the location of the data on disk (within the blob)
-    map: HashMap<Hash, BlobBlockLocation>,
+    // TODO: not pub
+    /// map the hash of a chunk to the location of the data on disk (within the
+    /// blob)
+    pub map: HashMap<Hash, BlobBlockLocation>,
+    // TODO: not pub
+    /// blob path => set of chunk hashes for chunks contained within the blob
+    pub path_index: HashMap<PathBuf, HashSet<Hash>>,
+    // TODO: not pub
+    /// A set of paths to delete from storage backend, which have been removed
+    /// from the map and path_index already
+    pub paths_to_delete: HashSet<PathBuf>,
 }
 
 impl BlobIndex {
@@ -300,6 +298,8 @@ impl BlobIndex {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            path_index: HashMap::new(),
+            paths_to_delete: HashSet::new(),
         }
     }
 
@@ -307,7 +307,37 @@ impl BlobIndex {
     ///
     /// Generally the blob buffer will do this in the add_chunk and finalize methods.
     pub fn add_chunk_location(&mut self, chunk_hash: &Hash, location: &BlobBlockLocation) {
+        // insert into chunk -> location map
         self.map.insert(chunk_hash.clone(), location.clone());
+        // add to path index (for tracking which chunks are in which blobs)
+        let entry = self
+            .path_index
+            .entry(location.path.clone())
+            .or_insert_with(HashSet::new);
+        entry.insert(chunk_hash.clone());
+    }
+
+    /// Delete a chunk from index.
+    pub fn delete_chunk(&mut self, chunk_hash: &Hash) -> Result<(), Box<dyn std::error::Error>> {
+        // get location (blob file path)
+        let location = self
+            .map
+            .get(chunk_hash)
+            .ok_or("chunk not found in blob index")?;
+        // remove from path index (for tracking which chunks are in which blobs)
+        let is_empty = match self.path_index.get_mut(&location.path) {
+            Some(entry) => {
+                entry.remove(chunk_hash);
+                entry.is_empty()
+            }
+            None => false,
+        };
+        if is_empty {
+            self.path_index.remove(&location.path);
+        }
+        let location = self.map.remove(chunk_hash).ok_or("should never get here")?;
+        self.paths_to_delete.insert(location.path);
+        Ok(())
     }
 
     /// Return whether the block is in the blob index or not.
