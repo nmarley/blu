@@ -1,39 +1,20 @@
-// Note: this is not finished or stable.
-//
-// I believe this was supposed to be a frontend for the full-text-search index
-// for filenames.
-
-use clap::Parser;
-use simplelog::*;
 use std::env;
 use std::path::Path;
 
-use blu::age::BlackBox;
-use blu::config;
-// use blu::io::BlackBoxSerializable;
-use blu::search::SearchIndex;
-// use blu::tag::TagIndex;
+use crate::age::BlackBox;
+use crate::cli::clapargs::SearchFilesArgs;
+use crate::config;
+use crate::search::SearchIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
-#[derive(Parser)]
-pub struct SearchFilesArgs {
-    pub dir: String,
-    pub needle: String,
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Info,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
+/// Search files was I believe supposed to be a frontend for the
+/// full-text-search index for filenames.
+///
+/// Note: this is likely not finished or stable.
+pub fn search_files(args: SearchFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started search_files util");
 
-    let args = SearchFilesArgs::parse();
     // move into the basedir for all internal operations, like `git -C <dir>`
     let _prev_dir = env::current_dir()?;
     env::set_current_dir(&args.dir)?;

@@ -1,6 +1,6 @@
 use clap::Parser;
 
-/// Blu - de-duplicated file archival system w/encrypted cloud backup
+/// blu - de-duplicated file archival system w/encrypted cloud backup
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -22,15 +22,19 @@ pub enum Action {
     RestoreFiles(RestoreFilesArgs),
     /// List files in the index, optionally filtered
     ListFiles(ListFilesArgs),
-    /// Still got the ol' tagger on it, see?
+    /// Manipulate tags on files
     Tagger(TaggerArgs),
     /// Print (debug) the index
     ReadIndex(ReadIndexArgs),
+    // #[command(hide = true)]
     /// Probably old, needs removed at this point
     DebugIndex(DebugIndexArgs),
-    // #[command(hide = true)]
-    // /// Print (debug) the index. Deprecated.
-    // PrintIndex,
+    /// Defrag consolidates encrypted blob files
+    DefragBlobs(DefragBlobsArgs),
+    /// Delete data from index and mark associated encrypted blobs as deleted
+    DeleteFiles(DeleteFilesArgs),
+    /// Full-text search on filenames, maybe tags (TBD)
+    SearchFiles(SearchFilesArgs),
 }
 
 #[allow(missing_docs)]
@@ -113,4 +117,30 @@ pub enum IndexType {
 #[derive(Parser, Debug, Clone)]
 pub struct DebugIndexArgs {
     pub dir: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct DefragBlobsArgs {
+    pub blob_index_path: String,
+
+    #[arg(long, default_value = "false")]
+    pub dry_run: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct DeleteFilesArgs {
+    pub dir: String,
+    #[arg(long)]
+    pub filter: Option<String>,
+    #[arg(long, default_value = "false")]
+    pub dry_run: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct SearchFilesArgs {
+    pub dir: String,
+    pub needle: String,
 }
