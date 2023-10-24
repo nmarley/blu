@@ -2,8 +2,6 @@
 
 ### Release
 
-- [x] Merge all src/bin/ files into a single binary? (not really usable as separate ones is it?)
-
 - [ ] Draft initial intro / release post
 
 - [ ] Set up GitHub Actions CI (along w/something for aarch64, maybe BuildJet?)
@@ -15,11 +13,10 @@
 
 ### Functionality
 
-- [ ] Separate std/fs implementation from API. Tools can use std::fs, try to avoid in lib (accept bytes instead of filename, etc.)
-
 - [ ] Multiple backends to allow for redundant backups. E.g. I can have both a local and S3 backend. Or and s3 and a Azure blob storage. Any combination.
+    - [ ] Should encrypt-files have a --no-local flag or something? Default to local?
 
-- [x] Config backends
+- [ ] Separate std/fs implementation from API. Tools can use std::fs, try to avoid in lib (accept bytes instead of filename, etc.)
 
 - [ ] Deletes, e.g. full data deletes. Also managing "plain index" deletes vs "full deletes" (deletes the encrypted chunks from blob files, or at least marks them for deletion). Which leads to ...
 - [ ] Blob defragmentation... e.g. when enough pieces of a blob file are marked for deletion, collect the remaining pieces and group them up all together in a new blob file. Should be fast, Just a straight copy TBH, and then the old blobs (the entire files) get marked for deletion and removed from the blob index. Might need a deletion staging area to ensure the blob index isn't bloated w/old stuff and also lets the "deletion backend sync" happen at a later time. This "deletion backend sync" will involve work on backends as well, basically it ensures that full blobfiles marked for deletion are removed from the storage backends. Obviously it should be after all other syncs (of new/fresh blobfiles) happen first, w/o errors, since those new pieces could contain valid chunks from old blob files.

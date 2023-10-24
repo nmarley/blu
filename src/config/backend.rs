@@ -4,8 +4,7 @@ use std::path::PathBuf;
 
 const DEFAULT_DATADIR: &str = ".blu/data";
 
-/// Storage backend config for blu. Currently only local filesystem is
-/// supported.
+/// Storage backend config for blu.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(tag = "type")]
 pub enum BackendConfig {
@@ -33,10 +32,7 @@ pub struct LocalConfig {
     pub path: PathBuf,
 }
 
-/// Configuration for the Amazon S3 backend. Not implemented, currently a
-/// placeholder.
-// TODO: maybe rename to 'AmazonS3' to avoid confusion for less technical
-// users
+/// Configuration for the Amazon S3 backend.
 //
 // Note: We have to be careful with storing sensitive data like AWS access keys
 // and secret keys in plaintext. It might be better to use AWS's built-in
