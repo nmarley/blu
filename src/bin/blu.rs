@@ -1,8 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
 
-#[macro_use]
-extern crate log;
-
 use clap::Parser;
 use simplelog::*;
 
