@@ -63,6 +63,7 @@ pub struct EncryptFilesArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct RestoreFilesArgs {
+    #[arg(long, required = true)]
     pub restore_paths: Vec<String>,
 }
 
