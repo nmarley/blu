@@ -33,7 +33,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     //     BlobBuffer::new expects a `&dyn StorageBackend`
     let mut reader = EncBlobReader::new(&bbox, &(*backend));
 
-    for (file_hash, file_ref) in plain_index.files_map_ref() {
+    'outer: for (file_hash, file_ref) in plain_index.files_map_ref() {
         println!("========================================================================");
         println!("Restoring file: {:?}", file_hash);
 
@@ -41,16 +41,19 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         println!("Size: {}", file_size);
         println!("Filename(s):");
 
-        // TODO: consider multiple paths... what to do if different paths
-        // exist with different filenames?  This might be a UX concern also.
+        // TODO: consider multiple paths... what to do if the same path exists
+        // with different filenames?  This might be a UX concern also.
 
         // check each file path and abort if there is a collision
+        //
+        // BUG(2023-10-29): OOPS! The 'continue' should be for the outer loop,
+        // not the inner one.
         for path in file_ref.paths.iter() {
             println!("\t{:?}", path);
             // abort if file exists with this filename
             if std::path::Path::exists(path) {
                 eprintln!("Unable to restore file: There already exists in the filesystem a file at the path: {:?}", path);
-                continue; // next file
+                continue 'outer; // next file
             }
         }
 
