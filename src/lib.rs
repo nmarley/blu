@@ -29,8 +29,6 @@ pub mod blob;
 pub mod block;
 /// cli is the cli and subcommands
 pub mod cli;
-// clap handles command line parsing
-// pub mod clapargs;
 /// helper functions for (de+)compression
 pub mod compression;
 /// configuration file and related methods
