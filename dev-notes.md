@@ -6,27 +6,38 @@
 
 An encrypted and de-duplicated file archival system, written in Rust. This project was inspired by balaji's comment in an interview that someday the "cloud will burst", meaning some state actor could leak any/all secrets stored on the cloud, in S3/Google Drive, etc. Nothing is secret/private if you aren't encrypting your data w/your own keys that you control.
 
+### Project Guidelines
+
+- The CLI should only use `--long-args` and not short ones like `-c`.
+
 ### Milestones
-
-Milestone: (Q3, 2023)
-
-- full search index for file paths and tags (not data itself)
-- multi-key encryption/recovery
-- async io for restore/encryption + benchmarks vs non-async
 
 Milestone: (Q4, 2023)
 
+- Multi-key encryption/recovery (envelope encryption scheme w/DEKs, KEKs)
+    See also:
+    - <https://cloud.google.com/kms/docs/envelope-encryption>
+    - <https://stackoverflow.com/questions/72570215/data-encryption-keys-and-key-encryption-keys>
+
+- Support for Cloud Backends
+    - [x] S3
+    - [ ] Google Cloud Storage
+    - [ ] Azure Blob Storage
+    - [ ] Digital Ocean
+- Multi-backend support
+
+Hopefully also (might be a bit much):
+
+- Full search index for file paths and tags (not data itself)
 - Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
-- Support for Cloud Backends - s3, Google Cloud Storage, Azure Blob Storage, digital ocean
-
-Milestone X: (Q4, 2023)
-
-- Add changelog / public release -- at this point all previous history will be squashed and archived away in a private repo
-- website / static site for project built
 
 Milestone: (Q1, 2024)
 
 - UI - likely web based, axum or actix
+- Static site for project created + online
+- Add changelog / public release -- at this point all previous history will be squashed and archived away in a private repo
+- Async io for restore/encryption + benchmarks vs non-async
+
 
 ## Understand
 
