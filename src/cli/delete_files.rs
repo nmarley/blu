@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
@@ -13,10 +12,6 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 
 /// Delete data from index and mark associated encrypted blobs as deleted.
 pub fn delete_files(args: DeleteFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(&args.dir).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("unable to chdir to '{}': {}", &args.dir, e).into()
-    })?;
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);

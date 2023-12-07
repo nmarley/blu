@@ -1,6 +1,5 @@
 use std::collections::HashSet;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -23,31 +22,29 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started tagger util");
 
-    let _prev_dir = env::current_dir()?;
-
     if args.dry_run {
         info!("Got dry_run flag -- will not write tag index");
     }
 
-    info!("Got blu dest: {}", &args.dest);
+    info!("Got args: {:?}", &args);
 
-    // determine BASEDIR by walking the given DEST until we reach a .blu dir, or none.
-    let basedir = find_blu_basedir(&args.dest)
-        .expect("Unable to find a valid .blu base dir from the given path");
+    let basedir = Path::new(".");
+
     info!("Got blu BASEDIR: {}", basedir.display());
     // determine DEST Path relative to BASEDIR
-    let mut rel_path = Path::new(&args.dest).strip_prefix(&basedir)?;
+
+    // TODO: for each dest given ...
+    // for path in args.dest {
+    let mut rel_path = Path::new(&args.dest).strip_prefix(basedir)?;
+    // }
+
     if Path::new("").eq(rel_path) {
         rel_path = Path::new(".");
     }
     info!("Got relative path: {}", rel_path.display(),);
 
-    // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(&basedir)?;
-    let dir = Path::new(".");
-
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(basedir).map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e
@@ -149,26 +146,4 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
-}
-
-// note: how would git do it? Either search up from CURRENT pwd, or ... use the
-// -C option.
-fn find_blu_basedir<P: AsRef<Path>>(dest: P) -> Option<PathBuf> {
-    let mut d = dest.as_ref().to_path_buf();
-    // if !d.is_dir() {
-    //     d = d.parent().unwrap().to_path_buf();
-    // }
-
-    if d.join(".blu").exists() {
-        return Some(d);
-    }
-
-    while let Some(parent) = d.parent() {
-        if parent.join(".blu").exists() {
-            return Some(parent.to_path_buf());
-        }
-        d = parent.to_path_buf();
-    }
-
-    None
 }

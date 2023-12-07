@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,10 +13,12 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started write_index util");
 
+    let dir = Path::new(".");
+
     let outfile = match args.outfile {
         Some(val) => PathBuf::from(val),
         None => {
-            let index_path = Path::new(&args.dir).join(".blu/indexes/index.dat");
+            let index_path = Path::new(dir).join(".blu/indexes/index.dat");
             warn!(
                 "warn: no outfile given, using default path {}",
                 index_path.display()
@@ -29,19 +30,11 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     // test ability to write index file before further processing
     check_outfile_writable(&outfile)?;
 
-    // move into the basedir for all internal operations, like `git -C <dir>`
-    let prev_dir = env::current_dir()?;
-    env::set_current_dir(&args.dir).map_err(|e| -> Box<dyn std::error::Error> {
-        format!("unable to chdir to '{}': {}", &args.dir, e).into()
-    })?;
-    let dir = Path::new(".");
-
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    info!("Indexing {}", args.dir);
+    info!("Indexing {:?}", dir);
     let index = PlainIndex::new(dir)?;
 
     // back out here since we pass a filename as a direct path
-    env::set_current_dir(prev_dir)?;
     match write_index_file(&index, &bbox, &outfile) {
         Ok(num_bytes) => info!(
             "Index written to {} ({} bytes)",

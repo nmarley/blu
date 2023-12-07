@@ -4,6 +4,10 @@ use clap::Parser;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
+    /// The target folder for blu to run/operate in, like `git -C`
+    #[arg(long, default_value = ".")]
+    pub bludir: String,
+
     /// The subcommand to run
     #[command(subcommand)]
     pub action: Action,
@@ -46,14 +50,12 @@ pub struct InitArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct WriteIndexArgs {
-    pub dir: String,
     pub outfile: Option<String>,
 }
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct EncryptFilesArgs {
-    pub dir: String,
     #[arg(long)]
     pub force_write_index: bool,
 }
@@ -61,14 +63,12 @@ pub struct EncryptFilesArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct RestoreFilesArgs {
-    pub dir: String,
     pub restore_paths: Vec<String>,
 }
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct ListFilesArgs {
-    pub dir: String,
     #[arg(long)]
     pub filter: Option<String>,
 }
@@ -115,9 +115,7 @@ pub enum IndexType {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct DebugIndexArgs {
-    pub dir: String,
-}
+pub struct DebugIndexArgs {}
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
@@ -131,7 +129,6 @@ pub struct DefragBlobsArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct DeleteFilesArgs {
-    pub dir: String,
     #[arg(long)]
     pub filter: Option<String>,
     #[arg(long, default_value = "false")]
@@ -141,6 +138,5 @@ pub struct DeleteFilesArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct SearchFilesArgs {
-    pub dir: String,
     pub needle: String,
 }

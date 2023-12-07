@@ -1,4 +1,3 @@
-use std::env;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
@@ -13,8 +12,8 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
 
-    // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(args.dir)?;
+    // TODO: use args.restore_paths
+
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);

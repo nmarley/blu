@@ -1,4 +1,3 @@
-use std::env;
 use std::path::Path;
 
 use crate::age::BlackBox;
@@ -15,9 +14,6 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 pub fn search_files(args: SearchFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started search_files util");
 
-    // move into the basedir for all internal operations, like `git -C <dir>`
-    let _prev_dir = env::current_dir()?;
-    env::set_current_dir(&args.dir)?;
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);

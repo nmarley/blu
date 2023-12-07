@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use std::env;
 use std::path::Path;
 
 use crate::age::BlackBox;
@@ -14,8 +13,6 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started encrypt_files util");
 
-    // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(args.dir)?;
     let dir = Path::new(".");
 
     info!("force_write_index option: {}", args.force_write_index);

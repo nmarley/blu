@@ -1,6 +1,5 @@
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::age::BlackBox;
@@ -11,10 +10,7 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 
 /// List files in the index, optionally filtered
 pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // move into the basedir for all operations, like `git -C <dir>`
-    env::set_current_dir(args.dir)?;
     let dir = Path::new(".");
-
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
     let cfg = config::read_config(dir).map_err(|e| {
