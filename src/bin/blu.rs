@@ -7,7 +7,14 @@ use std::path::{Path, PathBuf};
 
 use blu::cli::{self, clapargs};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{}", e);
+        std::process::exit(1);
+    }
+}
+
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     CombinedLogger::init(vec![TermLogger::new(
         LevelFilter::Debug,
         Config::default(),
