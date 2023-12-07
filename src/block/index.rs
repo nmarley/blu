@@ -112,9 +112,7 @@ impl PlainIndex {
             // block index
             let mut offset = 0;
             for cm_ref in chunkmetas.iter() {
-                let blockref = blocks
-                    .entry(cm_ref.hash.clone())
-                    .or_insert_with(BlockRef::new);
+                let blockref = blocks.entry(cm_ref.hash.clone()).or_default();
                 blockref.references.insert(
                     file_hash.clone(),
                     Position {

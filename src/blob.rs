@@ -310,10 +310,7 @@ impl BlobIndex {
         // insert into chunk -> location map
         self.map.insert(chunk_hash.clone(), location.clone());
         // add to path index (for tracking which chunks are in which blobs)
-        let entry = self
-            .path_index
-            .entry(location.path.clone())
-            .or_insert_with(HashSet::new);
+        let entry = self.path_index.entry(location.path.clone()).or_default();
         entry.insert(chunk_hash.clone());
     }
 
