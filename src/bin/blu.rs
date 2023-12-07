@@ -60,6 +60,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // use crate::age::BlackBox;
     // const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
+    // TODO: catch any errors from these that bubble up and display msg here
     #[allow(unreachable_patterns)]
     match args.action {
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),

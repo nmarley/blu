@@ -77,6 +77,7 @@ pub struct ListFilesArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct TaggerArgs {
     // dir OR file -- will probably change this to use `-C` option (like git)
+    // pub dest: Vec<String>,
     pub dest: String,
     #[command(flatten)]
     pub tag_action: TagAction,

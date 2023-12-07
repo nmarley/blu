@@ -33,6 +33,7 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::Config::default();
     // dbg!(&cfg);
 
+    // TODO: yaml? toml?
     let mut cfg_bytes = serde_json::to_vec_pretty(&cfg)?;
     // Add a newline b/c POSIX and also more tidy and neat. Remember these will
     // be read and edited by humans.
