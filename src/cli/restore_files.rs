@@ -9,10 +9,10 @@ use crate::config;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
 
-    // TODO: use args.restore_paths
+    // TODO: use args.restore_paths to filter files instead of restoring all
 
     let dir = Path::new(".");
 
@@ -45,9 +45,6 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         // with different filenames?  This might be a UX concern also.
 
         // check each file path and abort if there is a collision
-        //
-        // BUG(2023-10-29): OOPS! The 'continue' should be for the outer loop,
-        // not the inner one.
         for path in file_ref.paths.iter() {
             println!("\t{:?}", path);
             // abort if file exists with this filename
