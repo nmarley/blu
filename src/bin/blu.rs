@@ -60,23 +60,20 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // use crate::age::BlackBox;
     // const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
-    // TODO: catch any errors from these that bubble up and display msg here
-    #[allow(unreachable_patterns)]
     match args.action {
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
-        clapargs::Action::Init(a) => cli::init(a),
+        clapargs::Action::Init(_a) => {
+            unreachable!("shouldn't get here")
+        }
         clapargs::Action::ListFiles(a) => cli::list_files(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
         clapargs::Action::SearchFiles(a) => cli::search_files(a),
         clapargs::Action::Tagger(a) => cli::tagger(a),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
-        _ => {
-            unimplemented!();
-        }
     }
 }
 
