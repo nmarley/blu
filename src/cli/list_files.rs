@@ -75,7 +75,7 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>>
 
         println!("  Hash: {}", file_hash.dbg_short(15));
         println!("  Size: {}", file_size);
-        println!("Chunks: {}", chunkmetas.len());
+        // println!("Chunks: {}", chunkmetas.len());
 
         // Counting chunk size -- not really necessary and probably not good
         // use of resources
@@ -88,7 +88,13 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>>
             0 | 1 => format!("{}", chunkmetas[0].size),
             _ => "variable".to_string(),
         };
-        println!("Chunk size: {}", chunk_size_str);
+        // println!("Chunk size: {}", chunk_size_str);
+        println!(
+            "Chunks: {}, Size: {}, Final chunk size: {}",
+            chunkmetas.len(),
+            chunk_size_str,
+            chunkmetas[chunkmetas.len() - 1].size
+        );
 
         // Here we will display paths in lexicographical order.
         // TODO: probably also need to add this to the API (deterministic
