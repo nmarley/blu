@@ -16,6 +16,8 @@ pub struct Args {
 /// The possible subcommands to be run from blu-cli
 #[derive(Debug, clap::Subcommand, Clone)]
 pub enum Action {
+    /// Add
+    Add(AddArgs),
     /// Initialize
     Init(InitArgs),
     /// Write index
@@ -45,6 +47,12 @@ pub enum Action {
 #[derive(Parser, Debug, Clone)]
 pub struct InitArgs {
     pub dir: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct AddArgs {
+    pub add_paths: Vec<String>,
 }
 
 #[allow(missing_docs)]

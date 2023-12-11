@@ -61,6 +61,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     match args.action {
+        clapargs::Action::Add(a) => cli::add(a),
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),

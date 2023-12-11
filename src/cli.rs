@@ -1,5 +1,7 @@
 /// clapargs for CLI args
 pub mod clapargs;
+
+mod add;
 mod debug_index;
 mod defrag_blobs;
 mod delete_files;
@@ -12,6 +14,7 @@ mod search_files;
 mod tagger;
 mod write_index;
 
+pub use add::add;
 pub use debug_index::debug_index;
 pub use defrag_blobs::defrag_blobs;
 pub use delete_files::delete_files;
