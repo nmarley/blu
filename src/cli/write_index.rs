@@ -47,7 +47,9 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn check_outfile_writable<P: AsRef<Path>>(outfile: P) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn check_outfile_writable<P: AsRef<Path>>(
+    outfile: P,
+) -> Result<(), Box<dyn std::error::Error>> {
     // create parent dir(s) if necessary
     if let Some(parent_dir) = outfile.as_ref().parent() {
         fs::create_dir_all(parent_dir)?;
@@ -65,7 +67,7 @@ fn check_outfile_writable<P: AsRef<Path>>(outfile: P) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn write_index_file<P: AsRef<Path>>(
+pub(crate) fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
     bbox: &BlackBox,
     outfile: P,

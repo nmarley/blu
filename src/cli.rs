@@ -23,3 +23,5 @@ pub use restore_files::restore_files;
 pub use search_files::search_files;
 pub use tagger::tagger;
 pub use write_index::write_index;
+
+pub(crate) use write_index::{check_outfile_writable, write_index_file};
