@@ -22,12 +22,6 @@ use super::FileRef;
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.1";
 
-/// FileIndex is a map of file hash to fileref
-type FileIndex = HashMap<Hash, FileRef>;
-// TODO: maybe rename this now since we are using chunks and not blocks?
-/// BlockIndex is a map of chunk hash to blockref
-type BlockIndex = HashMap<Hash, BlockRef>;
-
 /// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
 /// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
 /// by the hash of the block's contents.
@@ -56,86 +50,107 @@ impl PlainIndex {
         dir: P,
         chunk_size: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let (files, blocks) = Self::build_index(dir, chunk_size)?;
-        Ok(Self {
+        let mut idx = Self::new_empty();
+        idx.add(dir, Some(chunk_size))?;
+        Ok(idx)
+    }
+
+    /// Add entries to the PlainIndex given a file/dir path and chunk size.
+    pub fn add<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        chunk_size: Option<usize>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let chunk_size = match chunk_size {
+            Some(cs) => cs,
+            None => DEFAULT_CHUNK_SIZE,
+        };
+        info!("In add, path={:?}", path.as_ref());
+
+        match path.as_ref() {
+            p if p.is_file() => {
+                // add file element
+                self.hash_and_add_file(p, chunk_size)?;
+            }
+            p if p.is_dir() => {
+                // walk dir and add each file element
+                for entry in WalkDir::new(p)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| !e.path().starts_with(".blu/"))
+                    .filter(|e| e.path().is_file())
+                {
+                    self.hash_and_add_file(entry.path(), chunk_size)?;
+                }
+            }
+            p => {
+                // skip if non-file and non-dir
+                info!("skipping non-file and non-dir {:?}", p);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Lower-level internal method to hash a file and add to the file and
+    /// block indexes.
+    fn hash_and_add_file<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        chunk_size: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // chunking, full file hashing
+        let mut chunkmetas: Vec<ChunkMeta> = vec![];
+        let mut hasher = Sha2_512::default();
+        let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
+        for chunk in chunker {
+            chunkmetas.push(ChunkMeta::new(&chunk));
+            hasher.update(&chunk);
+        }
+        let file_mh = Code::Sha2_512.wrap(hasher.finalize())?;
+        let file_hash = Hash::from(file_mh.to_bytes());
+
+        // block index
+        let mut offset = 0;
+        for cm_ref in chunkmetas.iter() {
+            let blockref = self.blocks.entry(cm_ref.hash.clone()).or_default();
+            blockref.references.insert(
+                file_hash.clone(),
+                Position {
+                    size: cm_ref.size,
+                    offset,
+                },
+            );
+            offset += cm_ref.size;
+        }
+
+        // normalize paths by removing `./` prefix
+        let mut path = path.as_ref().to_path_buf();
+        if path.starts_with("./") {
+            path = path.strip_prefix("./")?.to_path_buf();
+        }
+
+        // add path to this hash in file index
+        self.files
+            .entry(file_hash)
+            .or_insert_with(|| FileRef::new(chunkmetas))
+            .paths
+            .insert(path);
+
+        Ok(())
+    }
+
+    /// Create a new, empty PlainIndex.
+    pub fn new_empty() -> Self {
+        let files: HashMap<Hash, FileRef> = HashMap::new();
+        let blocks: HashMap<Hash, BlockRef> = HashMap::new();
+        Self {
             files,
             blocks,
             version: CURRENT_INDEX_VERSION.to_string(),
             created_at: now(),
             updated_at: now(),
-        })
-    }
-
-    /// Build a new PlainIndex given a directory path and chunk size.
-    fn build_index<P: AsRef<Path>>(
-        dir: P,
-        chunk_size: usize,
-    ) -> Result<(FileIndex, BlockIndex), Box<dyn std::error::Error>> {
-        let mut files = HashMap::<Hash, FileRef>::new();
-        let mut blocks = HashMap::<Hash, BlockRef>::new();
-
-        info!("In build_index, dir={:?}", dir.as_ref());
-
-        let bludir = dir.as_ref().join(".blu/");
-        info!("In build_index, bludir={:?}", bludir);
-        log::logger().flush();
-
-        // TODO: Specify which "data dir" this refers to. In this case, the main directory with the
-        // files to be indexed, not the .blu/data dir.
-        info!("Walking data dir ...");
-        log::logger().flush();
-
-        for elem in WalkDir::new(&dir).into_iter().filter_map(|e| e.ok()) {
-            info!("elem={:?}", elem);
-            log::logger().flush();
-            // skip special .blu dir
-            #[allow(clippy::needless_borrow)]
-            if elem.path().starts_with(&bludir) {
-                continue;
-            }
-            // TODO: allow symlinks?
-            if !elem.file_type().is_file() {
-                continue;
-            }
-
-            // chunking, full file hashing
-            let mut chunkmetas: Vec<ChunkMeta> = vec![];
-            let mut hasher = Sha2_512::default();
-            let chunker = Chunkerator::new(elem.path(), chunk_size)?;
-            for chunk in chunker {
-                chunkmetas.push(ChunkMeta::new(&chunk));
-                hasher.update(&chunk);
-            }
-            let file_mh = Code::Sha2_512.wrap(hasher.finalize())?;
-            let file_hash = Hash::from(file_mh.to_bytes());
-
-            // block index
-            let mut offset = 0;
-            for cm_ref in chunkmetas.iter() {
-                let blockref = blocks.entry(cm_ref.hash.clone()).or_default();
-                blockref.references.insert(
-                    file_hash.clone(),
-                    Position {
-                        size: cm_ref.size,
-                        offset,
-                    },
-                );
-                offset += cm_ref.size;
-            }
-
-            // file index
-            let fileref = files
-                .entry(file_hash)
-                .or_insert_with(|| FileRef::new(chunkmetas));
-
-            // normalize paths by removing `./` prefix
-            let mut path = elem.into_path();
-            if path.starts_with("./") {
-                path = path.strip_prefix("./")?.to_path_buf();
-            }
-            fileref.paths.insert(path);
         }
-        Ok((files, blocks))
     }
 
     /// Returns the number of unique bytes indexed.
