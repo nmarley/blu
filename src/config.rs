@@ -95,7 +95,7 @@ macro_rules! load_index {
         /// $name loads the index from the idxdir.
         pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
-            info!("In config, index_path = {:?}", index_path);
+            // info!("In config, index_path = {:?}", index_path);
             // read index file data or return None
             let index_data: Vec<u8> = fs::read(index_path).ok()?;
             // deserialize + decompress + decrypt index or return None
