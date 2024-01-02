@@ -63,7 +63,7 @@ pub fn path_for(hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
     // use multihash lib to properly separate multihash header code and size
     // (do not make assumptions about removing X number of bytes)
 
-    let mh = Multihash::from_bytes(&hash.to_bytes())?;
+    let mh: Multihash<64> = Multihash::from_bytes(&hash.to_bytes())?;
     // dbg!(&mh.code());
     // dbg!(&mh.size());
     // dbg!(&mh.digest());

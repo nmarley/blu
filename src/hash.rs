@@ -1,11 +1,18 @@
-use multihash::{Code, Multihash, MultihashDigest};
+use multihash::Multihash;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
+
+// See:
+// https://github.com/multiformats/multicodec/blob/master/table.csv
+pub(crate) const SHA2_512: u64 = 0x13;
 
 /// Returns a multihash of the given data. Currently uses the sha-512 hash.
 ///
 /// This is a bad design and should be more flexible in the hash to be used.
-pub fn multihash(data: &[u8]) -> Multihash {
-    Code::Sha2_512.digest(data)
+pub fn multihash(data: &[u8]) -> Multihash<64> {
+    let digest_bytes = sha512(data);
+
+    Multihash::wrap(SHA2_512, &digest_bytes).unwrap()
 }
 
 /// Hash is a Vec<u8> type alias with syntactic sugar to allow easier debugging
@@ -24,7 +31,7 @@ impl std::fmt::Debug for Hash {
         //
         // TODO: re-implement how we store the multihash in the Hash type, or
         // just alias to MultiHash w/some syntactic sugar methods
-        let mh = Multihash::from_bytes(&self.0).unwrap();
+        let mh: Multihash<64> = Multihash::from_bytes(&self.0).unwrap();
         let _ = write!(
             f,
             "Hash {{ code: {}, digest: {} }}",
@@ -68,10 +75,16 @@ impl Hash {
 
     /// Return a short version of hash in hex
     pub fn dbg_short(&self, len: usize) -> String {
-        let mh = Multihash::from_bytes(&self.0).unwrap();
+        let mh: Multihash<64> = Multihash::from_bytes(&self.0).unwrap();
         hex::encode(mh.digest())
             .chars()
             .take(len)
             .collect::<String>()
     }
+}
+
+pub(crate) fn sha512(data: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha512::new();
+    hasher.update(data);
+    hasher.finalize().to_vec()
 }
