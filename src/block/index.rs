@@ -66,7 +66,12 @@ impl PlainIndex {
             Some(cs) => cs,
             None => DEFAULT_CHUNK_SIZE,
         };
-        info!("In add, path={:?}", path.as_ref());
+        // info!("In add, path={:?}", path.as_ref());
+
+        // filter all '.blu' files + dirs
+        if path.as_ref().starts_with(".blu/") || path.as_ref().starts_with("./.blu/") {
+            return Err("cannot add .blu files or dirs".into());
+        }
 
         match path.as_ref() {
             p if p.is_file() => {
@@ -79,6 +84,7 @@ impl PlainIndex {
                     .into_iter()
                     .filter_map(|e| e.ok())
                     .filter(|e| !e.path().starts_with(".blu/"))
+                    .filter(|e| !e.path().starts_with("./.blu/"))
                     .filter(|e| e.path().is_file())
                 {
                     self.hash_and_add_file(entry.path(), chunk_size)?;
@@ -315,6 +321,19 @@ impl PlainIndex {
         }
 
         Ok((deleted_filerefs, deleted_blockrefs))
+    }
+
+    /// Traverse filerefs and build a hashmap of <path, file hash>
+    pub fn build_path_index(&self) -> HashMap<PathBuf, Hash> {
+        let mut map: HashMap<PathBuf, Hash> = HashMap::new();
+
+        for (file_hash, fileref) in &self.files {
+            for path in &fileref.paths {
+                map.insert(path.clone(), file_hash.clone());
+            }
+        }
+
+        map
     }
 }
 
