@@ -5,6 +5,9 @@
 // https://doc.rust-lang.org/rustc/lints/groups.html
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::needless_lifetimes)]
+// I don't agree w/this lint from 1.75.0. Specifically I want to be able to
+// define module exports at the end of the file, even after a test body
+#![allow(clippy::items_after_test_module)]
 
 //! Blu is an encrypted and de-duplicated file archival system.
 //!
