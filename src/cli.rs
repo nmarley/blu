@@ -11,6 +11,7 @@ mod list_files;
 mod read_index;
 mod restore_files;
 mod search_files;
+mod status;
 mod tagger;
 mod write_index;
 
@@ -24,6 +25,7 @@ pub use list_files::list_files;
 pub use read_index::read_index;
 pub use restore_files::restore_files;
 pub use search_files::search_files;
+pub use status::status;
 pub use tagger::tagger;
 pub use write_index::write_index;
 

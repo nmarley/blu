@@ -41,6 +41,8 @@ pub enum Action {
     DeleteFiles(DeleteFilesArgs),
     /// Full-text search on filenames, maybe tags (TBD)
     SearchFiles(SearchFilesArgs),
+    /// Status command, show changes not in index (and not encrypted?)
+    Status(StatusArgs),
 }
 
 #[allow(missing_docs)]
@@ -149,4 +151,22 @@ pub struct DeleteFilesArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct SearchFilesArgs {
     pub needle: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct StatusArgs {
+    #[clap(value_enum)]
+    #[arg(long = "type")]
+    pub status_check_type: Option<StatusCheckType>,
+}
+
+/// Type of status check to run. Deep means hash every file, shallow will use
+/// filenames(+sizes?) and assume nothing has changed.
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum StatusCheckType {
+    /// Deep check means hash every file
+    Deep,
+    /// Shallow check means use file path (+size?) to determine changes
+    Shallow,
 }
