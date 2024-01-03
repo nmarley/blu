@@ -13,8 +13,6 @@
 
 ### Functionality
 
-- [ ] list-files and tagger both have a filter option, but have different names. It should be unified (either `--filter` or `--data-filter`), not different ones
-
 - [ ] Design + implement an envelope encryption scheme w/DEKs, KEKs, that allow multiple users to access a piece of data. DEK should be linked to the plain-text chunks so as to prevent re-encrypting the same data and to prevent issues w/users not having access to certain DEKs to decrypt files that should have access to.
   - [ ] Access scheme should be validated/built out according to existing DEKs and the data, _then_ map which users have access to which DEKs. A separate user/DEK map shouldn't exist for reasons of skew -- it could get outta skew and then expectations don't match reality.
   - [ ] And honestly, users should have access to KEKs, not DEKs, but same principle applies.
