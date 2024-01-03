@@ -1,11 +1,10 @@
 use std::collections::HashSet;
 use std::path::Path;
-use walkdir::WalkDir;
 
 use crate::age::BlackBox;
 use crate::cli::clapargs::TaggerArgs;
 use crate::config;
-use crate::hash::{multihash, Hash};
+use crate::hash::Hash;
 use crate::tag::sanitize_tag;
 
 // Here we implement a tagspec, which are that tags with a leading colon char `:` prefix will be
@@ -25,23 +24,15 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.dry_run {
         info!("Got dry_run flag -- will not write tag index");
     }
-
-    info!("Got args: {:?}", &args);
+    // info!("Got args: {:?}", &args);
 
     let basedir = Path::new(".");
+    // info!("Got blu BASEDIR: {}", basedir.display());
 
-    info!("Got blu BASEDIR: {}", basedir.display());
-    // determine DEST Path relative to BASEDIR
-
-    // TODO: for each dest given ...
-    // for path in args.dest {
-    let mut rel_path = Path::new(&args.dest).strip_prefix(basedir)?;
-    // }
-
-    if Path::new("").eq(rel_path) {
-        rel_path = Path::new(".");
+    if args.data_hash_filter.is_empty() {
+        info!("Aborting, no file hashes provided");
+        return Err("no file hashes provided".into());
     }
-    info!("Got relative path: {}", rel_path.display(),);
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let cfg = config::read_config(basedir).map_err(|e| {
@@ -68,11 +59,13 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut unique_hashes: HashSet<Hash> = HashSet::new();
-    if let Some(data_hash) = args.data_hash_filter {
-        // println!("data_hash(filter): {}", data_hash);
-        for hash in files_map.keys() {
-            // println!("hash.to_string(): {}", hash);
-            if hash.to_string().contains(&data_hash) {
+    // TODO: consider disambiguating hash filters if a short hash prefix might
+    // identify multiple files, sorta like git does
+    for hash in files_map.keys() {
+        // in theory the provided file hash list will be smaller than the number
+        // of entries in the index
+        for h in &args.data_hash_filter {
+            if hash.to_string().contains(h) {
                 println!(
                     "Got a hash match on data hash filter: {}",
                     hash.dbg_short(9)
@@ -80,38 +73,11 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
                 unique_hashes.insert(hash.clone());
             }
         }
-    } else {
-        // now WALK all files/dirs within rel_path -- that could be either a
-        // file or a dir these will be the targets to find (match) from the
-        // index and perform tag operations on
-        for elem in WalkDir::new(rel_path).into_iter().filter_map(|e| e.ok()) {
-            // ignore internal .blu data + config
-            if elem.path().starts_with("./.blu") {
-                continue;
-            }
-            // skip non-files (dirs)
-            if !elem.file_type().is_file() {
-                continue;
-            }
-
-            // TODO: now suck 'em up and match on the index -- files hash only, no chunks
-            /*
-            let mut hasher = Sha2_512::default();
-            let chunker = Chunkerator::new(elem.path(), CHUNK_SIZE)?;
-            for chunk in chunker {
-                hasher.update(&chunk);
-            }
-            let file_mh = Code::Sha2_512.wrap(hasher.finalize())?;
-            let file_hash = Hash::from(file_mh.to_bytes());
-            */
-            let file_data = std::fs::read(elem.path())?;
-            let file_mh = multihash(&file_data);
-            let file_hash = Hash::from(file_mh.to_bytes());
-            println!("file_hash = {}", file_hash.dbg_short(7));
-            unique_hashes.insert(file_hash);
-        }
     }
 
+    // TODO: consider no-op if no action needs to be done (e.g. adding a tag
+    // that already exists, or dropping all tags even when none exist), instead
+    // of writing the tag index regardless
     for hash in unique_hashes.iter() {
         if !files_map.contains_key(hash) {
             continue;

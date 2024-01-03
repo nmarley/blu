@@ -87,13 +87,10 @@ pub struct ListFilesArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct TaggerArgs {
-    // dir OR file -- will probably change this to use `-C` option (like git)
-    // pub dest: Vec<String>,
-    pub dest: String,
     #[command(flatten)]
     pub tag_action: TagAction,
-    #[arg(long)]
-    pub data_hash_filter: Option<String>,
+    #[arg(long, required = true)]
+    pub data_hash_filter: Vec<String>,
     #[arg(long, default_value = "false")]
     pub dry_run: bool,
 }
