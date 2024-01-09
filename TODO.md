@@ -55,8 +55,8 @@
 
 - [ ] multi-key encryption/recovery. How to handle this?
 
-Other storage backends such as s3, etc. Current version only implements local disk!
-- [ ] s3
+Other storage backends such as s3, etc.
+- [x] s3
 - [ ] digital ocean one?
 - [ ] Google Cloud?
 - [ ] Azure?
