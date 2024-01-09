@@ -39,8 +39,6 @@
 - [ ] add to Hash type and allow for different multihashes?
   -- thinking on this, multihash is really just hash digest itself + type of hash algo
 
-- [ ] upgrade multihash crate (a bit of work for v0.19, maybe an hour or 2)
-
 - [ ] tokio for async
 
 - [ ] Add and start to maintain a [changelog](https://keepachangelog.com/en/1.1.0/)
@@ -49,11 +47,6 @@
 -- STREAM INDEXING TO DISK, DO NOT KEEP IT ALL IN MEMORY ... or do?
   - memory map it?
 
-- [ ] status command
-  -- which does what? Describe this.
-  -- Could display files which are in the PlainIndex but not encrypted
-  -- Could display stats, e.g. # files, # bytes de-duplicated (saved), x tags being used, etc.
-
 - [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
 
 - [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
@@ -61,8 +54,8 @@
 
 - [ ] multi-key encryption/recovery. How to handle this?
 
-Other storage backends such as s3, etc. Current version only implements local disk!
-- [ ] s3
+Other storage backends such as s3, etc.
+- [x] s3
 - [ ] digital ocean one?
 - [ ] Google Cloud?
 - [ ] Azure?
