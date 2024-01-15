@@ -252,6 +252,29 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    // Now show encrypted status ... but the thing is, _files_ are not encrypted, but rather the chunks
+    // are. So we need to iterate over the chunks and see if they are encrypted or not.
+    let blob_index = match cfg.load_blob_index(&bbox) {
+        Some(idx) => idx,
+        None => {
+            println!("no blob index found, assuming no files are encrypted");
+            return Ok(());
+        }
+    };
+
+    let count_encrypted_chunks = index
+        .blocks
+        .iter()
+        .filter(|(block_hash, _blockref)| blob_index.map.contains_key(block_hash))
+        .count();
+    let total_chunks = index.blocks.len();
+    let encrypted_pct = (count_encrypted_chunks as f64 / total_chunks as f64) * 100.0;
+
+    println!(
+        "{} of {} chunks in index are encrypted ({:.2}%)",
+        count_encrypted_chunks, total_chunks, encrypted_pct
+    );
+
     Ok(())
 }
 
