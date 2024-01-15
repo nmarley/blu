@@ -74,7 +74,7 @@ pub struct EncryptFilesArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct RestoreFilesArgs {
     #[arg(long, required = true)]
-    pub restore_paths: Vec<String>,
+    pub file_hashes: Vec<String>,
 }
 
 #[allow(missing_docs)]

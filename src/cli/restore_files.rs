@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
@@ -5,14 +6,14 @@ use crate::age::BlackBox;
 use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::config;
+use crate::hash::Hash;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
-
-    // TODO: use args.restore_paths to filter files instead of restoring all
+    info!("Got file_hashes: {:?}", args.file_hashes);
 
     let dir = Path::new(".");
 
@@ -25,6 +26,7 @@ pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::
     })?;
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
     let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
+    let files_map = plain_index.files_map_ref();
 
     let backend = cfg.init_storage_backend()?;
 
@@ -33,11 +35,37 @@ pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::
     //     BlobBuffer::new expects a `&dyn StorageBackend`
     let mut reader = EncBlobReader::new(&bbox, &(*backend));
 
-    'outer: for (file_hash, file_ref) in plain_index.files_map_ref() {
+    // info!("Got file_hashes: {:?}", args.file_hashes);
+    let mut unique_hashes: HashSet<Hash> = HashSet::new();
+    // TODO: consider disambiguating hash filters if a short hash prefix might
+    // identify multiple files, sorta like git does
+    for hash in files_map.keys() {
+        // in theory the provided file hash list will be smaller than the number
+        // of entries in the index
+        for h in &args.file_hashes {
+            // TODO: better than this.
+            if hash.to_string().contains(h) {
+                println!("Got a match on file hash: {}", hash.dbg_short(9));
+                unique_hashes.insert(hash.clone());
+            }
+        }
+    }
+
+    'outer: for file_hash in unique_hashes.into_iter() {
         println!("========================================================================");
         println!("Restoring file: {:?}", file_hash);
+        let fileref = match plain_index.get_fileref_ref(&file_hash) {
+            Some(fileref) => fileref,
+            None => {
+                eprintln!(
+                    "Unable to restore file: File hash not found in plain index: {:?}",
+                    file_hash
+                );
+                continue; // next file
+            }
+        };
 
-        let file_size = file_ref.total_size();
+        let file_size = fileref.total_size();
         println!("Size: {}", file_size);
         println!("Filename(s):");
 
@@ -45,7 +73,7 @@ pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::
         // with different filenames?  This might be a UX concern also.
 
         // check each file path and abort if there is a collision
-        for path in file_ref.paths.iter() {
+        for path in fileref.paths.iter() {
             println!("\t{:?}", path);
             // abort if file exists with this filename
             if std::path::Path::exists(path) {
@@ -61,7 +89,7 @@ pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::
 
         // after file restored to `restore_path`, create FS hard links to
         // `other_paths`
-        let mut path_iter = file_ref.paths.iter();
+        let mut path_iter = fileref.paths.iter();
         let restore_path = path_iter.next().unwrap();
         let other_paths = path_iter.collect::<Vec<_>>();
         println!(
@@ -86,7 +114,7 @@ pub fn restore_files(_args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::
 
         let mut offset = 0u64;
         // slowness here ...
-        for chunkmeta in file_ref.chunkmetas.iter() {
+        for chunkmeta in fileref.chunkmetas.iter() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
                 // abort restore of this file, remove TEMP file and move on to next ...
                 //
