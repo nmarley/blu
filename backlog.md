@@ -1,5 +1,6 @@
 ## backlog
 
+- [ ] TOML instead of JSON for the config file format
 
 - [ ] multi-backends at once:
 
