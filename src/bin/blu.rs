@@ -73,7 +73,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::ListFiles(a) => cli::list_files(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
-        clapargs::Action::SearchFiles(a) => cli::search_files(a),
+        clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
         clapargs::Action::Tagger(a) => cli::tagger(a),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),

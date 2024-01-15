@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::age::BlackBox;
-use crate::cli::clapargs::SearchFilesArgs;
+use crate::cli::clapargs::SearchArgs;
 use crate::config;
 use crate::hash::Hash;
 use crate::search::SearchIndex;
@@ -13,8 +13,8 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 /// full-text-search index for filenames.
 ///
 /// Note: this is likely not finished or stable.
-pub fn search_files(args: SearchFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Started search_files util");
+pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Started search util");
 
     let dir = Path::new(".");
 

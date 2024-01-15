@@ -39,8 +39,8 @@ pub enum Action {
     DefragBlobs(DefragBlobsArgs),
     /// Delete data from index and mark associated encrypted blobs as deleted
     DeleteFiles(DeleteFilesArgs),
-    /// Full-text search on filenames, maybe tags (TBD)
-    SearchFiles(SearchFilesArgs),
+    /// Search filenames, tags
+    Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
 }
@@ -146,7 +146,7 @@ pub struct DeleteFilesArgs {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct SearchFilesArgs {
+pub struct SearchArgs {
     pub needle: String,
 }
 
