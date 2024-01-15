@@ -38,14 +38,14 @@ impl MySuffixTable {
     }
 }
 
-/// SearchIndex is a struct that stores a mapping of suffix arrays to filenames.
+/// FilenameSearchIndex is a struct that stores a mapping of suffix arrays to filenames.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SearchIndex {
+pub struct FilenameSearchIndex {
     suffix_filenames: HashMap<MySuffixTable, Hash>,
 }
 
-impl SearchIndex {
-    /// Create a new SearchIndex
+impl FilenameSearchIndex {
+    /// Create a new FilenameSearchIndex
     pub fn new() -> Self {
         Self {
             suffix_filenames: HashMap::new(),
@@ -71,7 +71,7 @@ impl SearchIndex {
     }
 }
 
-impl Default for SearchIndex {
+impl Default for FilenameSearchIndex {
     fn default() -> Self {
         Self::new()
     }
@@ -81,7 +81,7 @@ impl Default for SearchIndex {
 mod test {
     use std::collections::HashSet;
 
-    use super::SearchIndex;
+    use super::FilenameSearchIndex;
     use crate::hash::Hash;
 
     #[test]
@@ -95,7 +95,7 @@ mod test {
             ("test/blocks/t4/article1_fr.txt", Hash::from("1340ff5c624b6ee1d0ac5f62cd4b810e27520b5ed81df05a62990df8d19d4d7fe341a3d27d51b9fdc571fb02aaffc08f7ee9c9016e8f3e1807a8e12923a8cff87853")),
         ];
 
-        let mut idx = SearchIndex::new();
+        let mut idx = FilenameSearchIndex::new();
         for (filename, hash) in pairs {
             idx.add_filename(filename, &hash);
         }

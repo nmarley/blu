@@ -5,7 +5,7 @@ use crate::age::BlackBox;
 use crate::cli::clapargs::SearchArgs;
 use crate::config;
 use crate::hash::Hash;
-use crate::search::SearchIndex;
+use crate::search::FilenameSearchIndex;
 
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
@@ -28,7 +28,7 @@ pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
     // TODO: load search index here ... (once implemented)
     //   for now, just create a new one every time and then search
     let index = cfg.load_plain_index(&bbox).unwrap();
-    let mut search_index = SearchIndex::new();
+    let mut search_index = FilenameSearchIndex::new();
 
     let files_map = index.files_map_ref();
     for (file_hash, file_ref) in files_map {
