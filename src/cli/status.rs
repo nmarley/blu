@@ -22,6 +22,7 @@ use walkdir::WalkDir;
 use crate::age::BlackBox;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::{StatusArgs, StatusCheckType};
+use crate::cli::output::FileDisplay;
 use crate::config;
 use crate::hash::{self, Hash};
 
@@ -80,8 +81,8 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let mut vec_new_files: Vec<FileReference> = Vec::new();
-    let mut vec_removed_files: Vec<FileReference> = Vec::new();
+    let mut vec_new_files: Vec<FileDisplay> = Vec::new();
+    let mut vec_removed_files: Vec<FileDisplay> = Vec::new();
     let mut vec_size_mismatch: Vec<FileSizeMismatch> = Vec::new();
     let mut vec_paths_updated: HashSet<FileUpdatedPaths> = HashSet::new();
 
@@ -107,7 +108,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                         };
                         let mh = hash::multihash(&bytes);
                         let hash = Hash::from(mh.to_bytes());
-                        vec_new_files.push(FileReference {
+                        vec_new_files.push(FileDisplay {
                             hash,
                             size: *s,
                             paths: vec![p.clone()],
@@ -153,7 +154,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                             continue;
                         }
                     };
-                    vec_removed_files.push(FileReference {
+                    vec_removed_files.push(FileDisplay {
                         hash: file_hash.clone(),
                         size: fileref.total_size(),
                         paths: fileref.paths.iter().cloned().collect(),
@@ -181,7 +182,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     None => {
                         // File does NOT exist in index, therefore it's new
-                        vec_new_files.push(FileReference {
+                        vec_new_files.push(FileDisplay {
                             hash: file_hash.clone(),
                             size: fileref.total_size(),
                             paths: fileref.paths.iter().cloned().collect(),
@@ -207,7 +208,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                     None => {
                         // File does NOT exist in FS, therefore it has been
                         // removed.
-                        vec_removed_files.push(FileReference {
+                        vec_removed_files.push(FileDisplay {
                             hash: file_hash.clone(),
                             size: fileref.total_size(),
                             paths: fileref.paths.iter().cloned().collect(),
@@ -276,24 +277,6 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     Ok(())
-}
-
-#[derive(Clone, Debug)]
-pub struct FileReference {
-    pub hash: Hash,
-    pub size: u64,
-    pub paths: Vec<PathBuf>,
-}
-
-impl std::fmt::Display for FileReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display_hash = self.hash.dbg_short(7);
-        write!(
-            f,
-            "hash: {}, size: {}, paths: {:?}",
-            display_hash, self.size, self.paths,
-        )
-    }
 }
 
 #[derive(Clone, Debug)]

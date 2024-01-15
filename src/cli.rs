@@ -1,5 +1,7 @@
 /// clapargs for CLI args
 pub mod clapargs;
+/// unified CLI output structs for all CLI modules
+pub mod output;
 
 mod add;
 mod debug_index;
