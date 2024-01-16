@@ -43,6 +43,8 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+    /// Remove command, remove files or paths from index
+    Remove(RemoveArgs),
 }
 
 #[allow(missing_docs)]
@@ -55,6 +57,16 @@ pub struct InitArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct AddArgs {
     pub add_paths: Vec<String>,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+#[group(required = true, multiple = false)]
+pub struct RemoveArgs {
+    #[arg(long, conflicts_with = "hashes")]
+    pub paths: Vec<String>,
+    #[arg(long, conflicts_with = "paths")]
+    pub hashes: Vec<String>,
 }
 
 #[allow(missing_docs)]
