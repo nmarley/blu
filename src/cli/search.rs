@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::age::BlackBox;
 use crate::cli::clapargs::SearchArgs;
+use crate::cli::output::FileDisplay;
 use crate::config;
 use crate::hash::Hash;
 use crate::search::FilenameSearchIndex;
@@ -28,28 +29,34 @@ pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut filename_search_index = FilenameSearchIndex::new();
     let files_map = index.files_map_ref();
     for (file_hash, file_ref) in files_map {
-        // info!("file_hash: {}", file_hash.dbg_short(7));
         for path in file_ref.paths.iter() {
             filename_search_index.add_filename(path.to_str().unwrap(), file_hash);
         }
     }
 
-    let search_result = filename_search_index.search(&args.needle);
-    info!("Got {} result(s)", search_result.len());
-    for file_hash in search_result.iter() {
-        info!("{:?}", file_hash);
-        // let file_ref = files_map.get(file_hash).unwrap();
-        // info!("{:?}", file_ref);
+    let mut search_results: HashSet<Hash> = HashSet::new();
+    for file_hash in filename_search_index.search(&args.needle) {
+        search_results.insert(file_hash.clone());
     }
 
     // load tag index
     if let Some(tag_index) = cfg.load_tag_index(&bbox) {
-        let tag_search_result: HashSet<&Hash> = tag_index.search(&args.needle).collect();
-        dbg!(&tag_search_result);
+        for file_hash in tag_index.search(&args.needle) {
+            search_results.insert(file_hash.clone());
+        }
     };
 
-    // TODO: unify the results above and use a FileDisplay to display the
-    // output, kinda status does
+    // now print search results
+    println!("Got {} result(s):\n", search_results.len());
+    for file_hash in search_results {
+        let file_ref = files_map.get(&file_hash).unwrap();
+        let display = FileDisplay {
+            hash: file_hash.clone(),
+            size: file_ref.total_size(),
+            paths: Vec::from_iter(file_ref.paths.iter().cloned()),
+        };
+        println!("{}", display);
+    }
 
     Ok(())
 }
