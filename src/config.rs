@@ -34,17 +34,20 @@ pub struct KeyID {
 }
 
 /// Config is the configuration for blu. It is stored in the .blu directory in
-/// the config.json file.
+/// the config.(json|toml) file.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(default)]
 pub struct Config {
+    // TODO: idk if this is used at all ...
     blu_version: String,
+    // TODO: remove this, unused (but just for now?)
     data_key_files: Vec<String>,
 
     // base dir
     #[serde(skip)]
     basedir: PathBuf,
 
+    // TODO: multiple backends
     /// Storage backend for encrypted data blobs
     backend: backend::BackendConfig,
 
@@ -77,13 +80,32 @@ impl Default for Config {
 /// read_config reads the config from the .blu directory in the base_dir.
 pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
     let cfg_dir = base_dir.as_ref().join(".blu");
-    let config_filename = cfg_dir.join("config.json");
+    let config_toml = cfg_dir.join("config.toml");
+    // TODO: remove deprecated JSON configs in v0.5.x
+    let config_json = cfg_dir.join("config.json");
 
     // Avoid toctou race condition
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
-    let cfg_data = fs::read_to_string(config_filename)?;
 
-    let mut cfg: Config = serde_json::from_str(&cfg_data)?;
+    let mut cfg: Config = match fs::read_to_string(config_toml) {
+        Ok(toml_str) => match toml::from_str(&toml_str) {
+            Ok(toml_cfg) => toml_cfg,
+            Err(e) => return Err(e.into()),
+        },
+        Err(_) => {
+            match fs::read_to_string(config_json) {
+                Ok(json_str) => match serde_json::from_str(&json_str) {
+                    Ok(json_cfg) => {
+                        println!("WARNING: using deprecated JSON config file, please update to TOML format");
+                        json_cfg
+                    }
+                    Err(e) => return Err(e.into()),
+                },
+                Err(_) => return Err("Could not read either TOML or JSON config file".into()),
+            }
+        }
+    };
+
     cfg.basedir = base_dir.as_ref().to_path_buf();
     Ok(cfg)
 }
