@@ -1,21 +1,21 @@
 ## backlog
 
-- [ ] TOML instead of JSON for the config file format
+- [x] TOML instead of JSON for the config file format
+
+- v0.5.x
+    - [ ] Remove JSON format configs
 
 - [ ] multi-backends at once:
 
 ```sh
-  "backends": [
-    {
-      "type": "local",
-      "path": ".blu/data"
-    },
-    {
-      "type": "s3",
-      "bucket": "lasjkdf"
-      "prefix": "blakhsl"
-    }
-  ],
+[[backends]]
+type = "local"
+path = ".blu/data"
+
+[[backends]]
+type = "s3"
+bucket = "bucket-name"
+prefix = "some/prefix/here"
 ```
 
 - [ ] Multiple backends to allow for redundant backups. E.g. I can have both a local and S3 backend. Or and s3 and a Azure blob storage. Any combination.
