@@ -4,6 +4,7 @@
 
 - v0.5.x
     - [ ] Remove JSON format configs
+        - `<config.json yj -jt >config.toml`
 
 - [ ] multi-backends at once:
 
