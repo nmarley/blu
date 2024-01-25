@@ -64,4 +64,4 @@ Other storage backends such as s3, etc.
 
 - [ ] Consider if there should be a .bluignore, similar to .gitignore? Or within .blu, e.g. .blu/ignore?
 
-- [ ] Consider licensing as Apache + MIT dual license or similar
+- [x] Consider licensing as Apache + MIT dual license or similar
