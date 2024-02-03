@@ -32,15 +32,11 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Initializing new .blu dir in {:?}", bludir);
     fs::create_dir_all(bludir)?;
 
-    // write an empty .blu/config.json file
-    let mut file = fs::File::create(dir.join(".blu/config.json"))?;
+    // write an empty .blu/config.toml file
+    let mut file = fs::File::create(dir.join(".blu/config.toml"))?;
     let cfg = config::Config::default();
 
-    // TODO: yaml? toml?
-    let mut cfg_bytes = serde_json::to_vec_pretty(&cfg)?;
-    // Add a newline b/c POSIX and also more tidy and neat. Remember these will
-    // be read and edited by humans.
-    let _ = cfg_bytes.write(&[0x0a])?;
+    let cfg_bytes = toml::to_string_pretty(&cfg)?.into_bytes();
     file.write_all(&cfg_bytes)?;
 
     // write an empty index file
