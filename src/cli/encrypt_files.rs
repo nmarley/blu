@@ -58,11 +58,13 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
     // let mut file_hashes: Vec<Hash> = files_map.keys().clone().collect();
     // file_hashes.sort_unstable();
 
+    // TODO: consider rayon for parallelizing this
     for file_hash in file_hashes {
         info!("file_hash: {:?}", &file_hash.dbg_short(7));
         let file_ref = files_map.get(file_hash).unwrap();
         info!("chunks count: {}", file_ref.chunkmetas.len());
 
+        // TODO: possible to do nested parallel iteration?
         for (count, cm) in file_ref.chunkmetas.iter().enumerate() {
             info!("\t chunkmeta[{}]: {:?}", count, cm.hash.dbg_short(7));
             if blob_index.has_chunk(&cm.hash) {
