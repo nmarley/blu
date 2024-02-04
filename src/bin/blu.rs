@@ -66,10 +66,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
-        clapargs::Action::Init(a) => {
-            println!("warning: --bludir arg used with init, ignoring");
-            cli::init(a)
-        }
+        clapargs::Action::Init(a) => cli::init(a),
         clapargs::Action::ListFiles(a) => cli::list_files(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
