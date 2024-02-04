@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use blu::cli::{self, clapargs};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     if let Err(e) = run() {
         eprintln!("{}", e);
         std::process::exit(1);
