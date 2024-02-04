@@ -6,6 +6,8 @@
 
 An encrypted and de-duplicated file archival system, written in Rust. This project was inspired by balaji's comment in an interview that someday the "cloud will burst", meaning some state actor could leak any/all secrets stored on the cloud, in S3/Google Drive, etc. Nothing is secret/private if you aren't encrypting your data w/your own keys that you control.
 
+Note on encryption(2024-02-04): Ideally this will be future proof and therefore quantum-resistant, so once a reliable Kyber implementation exists in Rust, I would like to move to that. I will be closely following Filippo Valsorda's (author of age) work in the space and probably using whatever he recommends. He himself is waiting for a NIST standard to emerge so hopefully that will be settled on soon-ish (mid-late 2024?).
+
 ### Project Guidelines
 
 - The CLI should only use `--long-args` and not short ones like `-c`.
