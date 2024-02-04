@@ -27,7 +27,7 @@ blu init .
 ### Config
 
 ```sh
-vi .blu/config.json
+vi .blu/config.toml
 ```
 
 ### Add
