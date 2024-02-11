@@ -62,18 +62,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     match args.action {
-        clapargs::Action::Add(a) => cli::add(a),
+        clapargs::Action::Add(a) => cli::add(a).await,
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),
-        clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
+        clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a).await,
         clapargs::Action::Init(a) => cli::init(a).await,
         clapargs::Action::ListFiles(a) => cli::list_files(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a).await,
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
         clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
-        clapargs::Action::Tagger(a) => cli::tagger(a),
+        clapargs::Action::Tagger(a) => cli::tagger(a).await,
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
     }
 }

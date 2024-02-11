@@ -18,7 +18,7 @@ use crate::tag::sanitize_tag;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Manipulate tags on data
-pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started tagger util");
 
     if args.dry_run {
@@ -105,7 +105,7 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.dry_run {
         println!("DRY-RUN: Refusing to write tag index");
     } else {
-        match cfg.write_tag_index(&tag_index, &bbox) {
+        match cfg.write_tag_index(&tag_index, &bbox).await {
             Ok(_) => println!("Wrote tag index!"),
             Err(e) => println!("Error writing tag index: {}", e),
         }

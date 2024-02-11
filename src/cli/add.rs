@@ -7,7 +7,7 @@ use crate::config;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Add local files to the index
-pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     info!("Started add");
@@ -34,7 +34,7 @@ pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
         plain_index.add(p, None)?;
     }
 
-    cfg.write_plain_index(&plain_index, &bbox)?;
+    cfg.write_plain_index(&plain_index, &bbox).await?;
 
     Ok(())
 }

@@ -10,7 +10,7 @@ use crate::hash::{self, Hash};
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Encrypt the plain text files in the index
-pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started encrypt_files util");
 
     let dir = Path::new(".");
@@ -96,7 +96,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
             Ok(_) => println!("Finalized blob buffer!"),
             Err(e) => println!("Error finalizing blob buffer: {}", e),
         }
-        match cfg.write_blob_index(&blob_index, &bbox) {
+        match cfg.write_blob_index(&blob_index, &bbox).await {
             Ok(_) => println!("Wrote blob index!"),
             Err(e) => println!("Error writing blob index: {}", e),
         }

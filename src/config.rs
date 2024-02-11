@@ -130,17 +130,21 @@ macro_rules! load_index {
 macro_rules! write_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
         /// $name writes the index to the idxdir.
-        pub fn $name(
+        pub async fn $name(
             &self,
             idx: &$idx_struct_name,
             bbox: &BlackBox,
         ) -> Result<(), Box<dyn std::error::Error>> {
+            use tokio::fs::File;
+            use tokio::io::AsyncWriteExt;
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             // encrypt + compress + serialize index to buf
             let mut buf = vec![];
             idx.write(&mut buf, bbox)?;
             // write to file
-            std::fs::write(index_path, buf)?;
+            let mut file = File::create(index_path).await?;
+            file.write_all(&buf).await?;
+            file.flush().await?;
             Ok(())
         }
     };
