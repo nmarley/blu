@@ -22,7 +22,7 @@ impl Local {
 
 impl StorageBackend for Local {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = std::fs::read(path)?;
+        let data = fs::read(path)?;
         Ok(data)
     }
 
