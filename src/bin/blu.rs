@@ -9,13 +9,13 @@ use blu::cli::{self, clapargs};
 
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run() {
+    if let Err(e) = run().await {
         eprintln!("{}", e);
         std::process::exit(1);
     }
 }
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     CombinedLogger::init(vec![TermLogger::new(
         LevelFilter::Debug,
         Config::default(),
@@ -69,7 +69,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
         clapargs::Action::Init(a) => cli::init(a),
         clapargs::Action::ListFiles(a) => cli::list_files(a),
-        clapargs::Action::ReadIndex(a) => cli::read_index(a),
+        clapargs::Action::ReadIndex(a) => cli::read_index(a).await,
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
         clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
