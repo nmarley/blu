@@ -1,14 +1,18 @@
-// TODO: remove these when s3 adapter is complete/ready to use
-#![allow(dead_code)]
-#![allow(unused_variables)]
+// // TODO: remove these when s3 adapter is complete/ready to use
+// #![allow(dead_code)]
+// #![allow(unused_variables)]
 use aws_sdk_s3::operation::{
     get_object::{GetObjectError, GetObjectOutput},
     put_object::{PutObjectError, PutObjectOutput},
 };
+use aws_sdk_s3::Client;
 use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use std::path::{Path, PathBuf};
-use tokio_stream::StreamExt;
+// use tokio_stream::StreamExt;
+// NEW v
+// use tokio::io::AsyncReadExt;
+// use aws_sdk_s3::primitives::ByteStream;
 
 use crate::hash::Hash;
 
@@ -19,7 +23,7 @@ use super::StorageBackend;
 pub struct AmazonS3 {
     bucket: String,
     prefix: PathBuf,
-    client: aws_sdk_s3::Client,
+    client: Client,
 }
 
 impl AmazonS3 {
@@ -27,7 +31,7 @@ impl AmazonS3 {
     /// optional prefix.
     pub fn new<P: AsRef<Path>>(bucket: &str, prefix: Option<P>) -> Self {
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let (config, client) = runtime.block_on(async {
+        let (_config, client) = runtime.block_on(async {
             let config = aws_config::load_from_env().await;
             let client = aws_sdk_s3::Client::new(&config);
             (config, client)
@@ -63,7 +67,7 @@ impl StorageBackend for AmazonS3 {
             Ok::<GetObjectOutput, SdkError<GetObjectError, HttpResponse>>(object)
         })?;
 
-        let (buf, byte_count) = runtime.block_on(async {
+        let (buf, _byte_count) = runtime.block_on(async {
             let mut buf: Vec<u8> = vec![];
             let mut byte_count = 0_usize;
             while let Some(bytes) = object.body.try_next().await? {
