@@ -17,6 +17,7 @@
 ///       being used, etc.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -99,7 +100,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
                         // w/index
                         //
                         // calculates hash here
-                        let bytes = match std::fs::read(p) {
+                        let bytes = match fs::read(p).await {
                             Ok(b) => b,
                             Err(e) => {
                                 println!("unable to read file {:?}: {}", p, e);

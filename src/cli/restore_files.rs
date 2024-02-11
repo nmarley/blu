@@ -1,6 +1,7 @@
 use std::collections::HashSet;
-use std::os::unix::fs::FileExt;
+use std::io::SeekFrom;
 use std::path::Path;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::age::BlackBox;
 use crate::blob::EncBlobReader;
@@ -104,12 +105,14 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
         //    from our block data (decrypted the encrypted blobs).
         // create sparse file that's X bytes long
         println!("Creating sparse file of size: {}", file_size);
-        let fh = std::fs::OpenOptions::new()
+        let mut fh = tokio::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(restore_path)?;
+            .open(restore_path)
+            .await?;
         let _ = fh
             .set_len(file_size)
+            .await
             .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
 
         let mut offset = 0u64;
@@ -143,7 +146,8 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
             let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
             println!("Read {} bytes from blob file", block_data.len());
 
-            fh.write_all_at(&block_data, offset)?;
+            fh.seek(SeekFrom::Start(offset)).await?;
+            fh.write_all(&block_data).await?;
             println!(
                 "Wrote {} bytes to file {:?}",
                 block_data.len(),
