@@ -126,6 +126,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bddcadddf5e9015d310179a59bb28c4d4b9920ad0f11e8e14dbadf654890c9a6"
 
 [[package]]
+name = "async-trait"
+version = "0.1.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c980ee35e870bd1a4d2c8294d4c04d0499e67bca1e4b5cefcc693c2fa00caea9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.48",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -592,6 +603,7 @@ name = "blu"
 version = "0.4.3"
 dependencies = [
  "age",
+ "async-trait",
  "aws-config",
  "aws-sdk-s3",
  "aws-smithy-runtime-api",
