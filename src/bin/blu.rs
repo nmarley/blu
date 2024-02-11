@@ -42,7 +42,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let abspath = match std::fs::canonicalize(&blu_basedir) {
+    let abspath = match tokio::fs::canonicalize(&blu_basedir).await {
         Ok(path) => path,
         Err(_e) => {
             // likely won't ever happen ...
@@ -96,17 +96,17 @@ fn find_blu_basedir<P: AsRef<Path>>(dest: P) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod test {
-    use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
+    use tokio::fs;
 
     macro_rules! test_find_blu_basedir {
         ($name:ident, $in:expr, $out:expr) => {
-            #[test]
-            fn $name() {
+            #[tokio::test]
+            async fn $name() {
                 let root = tempdir().unwrap();
                 let path = root.path().join($in);
-                let rv = fs::create_dir_all(&path);
+                let rv = fs::create_dir_all(&path).await;
                 assert!(rv.is_ok(), "Couldn't create test directories");
 
                 let expected = $out.map(|pb| root.path().join(pb).to_path_buf());
