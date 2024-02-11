@@ -63,18 +63,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.action {
         clapargs::Action::Add(a) => cli::add(a).await,
-        clapargs::Action::DebugIndex(a) => cli::debug_index(a),
-        clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
-        clapargs::Action::DeleteFiles(a) => cli::delete_files(a),
+        clapargs::Action::DebugIndex(a) => cli::debug_index(a).await,
+        clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a).await,
+        clapargs::Action::DeleteFiles(a) => cli::delete_files(a).await,
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a).await,
         clapargs::Action::Init(a) => cli::init(a).await,
-        clapargs::Action::ListFiles(a) => cli::list_files(a),
+        clapargs::Action::ListFiles(a) => cli::list_files(a).await,
         clapargs::Action::ReadIndex(a) => cli::read_index(a).await,
-        clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
-        clapargs::Action::Search(a) => cli::search(a),
-        clapargs::Action::Status(a) => cli::status(a),
+        clapargs::Action::RestoreFiles(a) => cli::restore_files(a).await,
+        clapargs::Action::Search(a) => cli::search(a).await,
+        clapargs::Action::Status(a) => cli::status(a).await,
         clapargs::Action::Tagger(a) => cli::tagger(a).await,
-        clapargs::Action::WriteIndex(a) => cli::write_index(a),
+        clapargs::Action::WriteIndex(a) => cli::write_index(a).await,
     }
 }
 

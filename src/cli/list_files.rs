@@ -9,7 +9,7 @@ use crate::config;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// List files in the index, optionally filtered
-pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 

@@ -31,7 +31,7 @@ const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Show the local status of the blu vault
-pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     // info!("Started status util");
     let dir = Path::new(".");
 

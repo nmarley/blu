@@ -4,7 +4,7 @@ use crate::block::PlainIndex;
 use crate::cli::clapargs::DebugIndexArgs;
 
 /// Probably old and should be removed. Debug plain index or something
-pub fn debug_index(_args: DebugIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn debug_index(_args: DebugIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
 
     let index = PlainIndex::new(dir)?;

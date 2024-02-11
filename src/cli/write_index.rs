@@ -1,6 +1,6 @@
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::age::BlackBox;
 use crate::block::PlainIndex;
@@ -10,7 +10,7 @@ use crate::io::BlackBoxSerializable;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Write the index to a local file
-pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started write_index util");
 
     let dir = Path::new(".");
@@ -47,7 +47,7 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-pub(crate) fn check_outfile_writable<P: AsRef<Path>>(
+pub(crate) async fn check_outfile_writable<P: AsRef<Path>>(
     outfile: P,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // create parent dir(s) if necessary
@@ -67,7 +67,7 @@ pub(crate) fn check_outfile_writable<P: AsRef<Path>>(
     Ok(())
 }
 
-pub(crate) fn write_index_file<P: AsRef<Path>>(
+pub(crate) async fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
     bbox: &BlackBox,
     outfile: P,
@@ -75,7 +75,7 @@ pub(crate) fn write_index_file<P: AsRef<Path>>(
     let mut enc_idx_bytes = Vec::new();
     index.write(&mut enc_idx_bytes, bbox)?;
     let size = enc_idx_bytes.len();
-    let mut file = fs::File::create(outfile)?;
-    file.write_all(&enc_idx_bytes)?;
+    let mut file = fs::File::create(outfile).await?;
+    file.write_all(&enc_idx_bytes).await?;
     Ok(size)
 }

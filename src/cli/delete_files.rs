@@ -11,7 +11,7 @@ const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key")
 // be used for getting hashesfrom files)
 
 /// Delete data from index and mark associated encrypted blobs as deleted.
-pub fn delete_files(args: DeleteFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);

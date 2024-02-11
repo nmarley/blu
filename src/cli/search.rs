@@ -11,7 +11,7 @@ use crate::search::FilenameSearchIndex;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Search for filenames or tags
-pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
     // info!("Started search util");
 
     let dir = Path::new(".");

@@ -11,7 +11,7 @@ use crate::hash::Hash;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
     info!("Got file_hashes: {:?}", args.file_hashes);
 
