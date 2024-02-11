@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use crate::age::BlackBox;
 use crate::block::PlainIndex;
@@ -28,14 +28,14 @@ pub async fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error:
     };
 
     // test ability to write index file before further processing
-    check_outfile_writable(&outfile)?;
+    check_outfile_writable(&outfile).await?;
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     info!("Indexing {:?}", dir);
     let index = PlainIndex::new(dir)?;
 
     // back out here since we pass a filename as a direct path
-    match write_index_file(&index, &bbox, &outfile) {
+    match write_index_file(&index, &bbox, &outfile).await {
         Ok(num_bytes) => info!(
             "Index written to {} ({} bytes)",
             outfile.display(),
@@ -52,17 +52,19 @@ pub(crate) async fn check_outfile_writable<P: AsRef<Path>>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // create parent dir(s) if necessary
     if let Some(parent_dir) = outfile.as_ref().parent() {
-        fs::create_dir_all(parent_dir)?;
+        fs::create_dir_all(parent_dir).await?;
     }
 
-    fs::File::create(&outfile).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "unable to write to outfile '{}': {}",
-            outfile.as_ref().display(),
-            e
-        )
-        .into()
-    })?;
+    fs::File::create(&outfile)
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            format!(
+                "unable to write to outfile '{}': {}",
+                outfile.as_ref().display(),
+                e
+            )
+            .into()
+        })?;
 
     Ok(())
 }

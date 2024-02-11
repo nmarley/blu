@@ -43,10 +43,10 @@ pub async fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     // write an empty index file
     let index_path = dir.join(".blu/indexes/index.dat");
     // test ability to write index file before further processing
-    check_outfile_writable(&index_path)?;
+    check_outfile_writable(&index_path).await?;
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     let index = PlainIndex::new_empty();
-    match write_index_file(&index, &bbox, &index_path) {
+    match write_index_file(&index, &bbox, &index_path).await {
         Ok(_num_bytes) => info!("Wrote new index to {}", index_path.display()),
         Err(e) => error!("Error writing index: {}", e),
     }
