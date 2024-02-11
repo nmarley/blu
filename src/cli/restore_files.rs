@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::io::SeekFrom;
 use std::path::Path;
+use tokio::fs;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::age::BlackBox;
@@ -158,7 +159,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
 
         // hard links for the same data with multiple filenames
         for other in other_paths.iter() {
-            match std::fs::hard_link(restore_path, other) {
+            match fs::hard_link(restore_path, other).await {
                 Ok(_) => {
                     println!("Created hard link: {:?}", other);
                 }
