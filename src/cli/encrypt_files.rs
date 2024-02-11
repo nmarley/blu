@@ -73,7 +73,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::er
             }
 
             let block_ref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
-            let data = plain_index.read_block_bytes(block_ref);
+            let data = plain_index.read_block_bytes(block_ref).await;
 
             // NOTE: we probably want to somehow keep this around / add it as a
             // checksum to ensure that the data is not corrupted

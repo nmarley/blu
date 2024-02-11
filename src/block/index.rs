@@ -3,8 +3,10 @@ use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -215,15 +217,16 @@ impl PlainIndex {
 
     // TODO: Should this be block hash instead?
     /// Read the bytes from disk and return them for a given blockref.
-    pub fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
+    pub async fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
         let (file_hash, disk_index) = blockref.references.iter().next().unwrap();
         let fileref = self.get_fileref_ref(file_hash).unwrap();
         let filename = fileref.get_a_path();
 
-        let mut f = std::fs::File::open(filename).unwrap();
+        // TODO: don't unwrap
+        let mut f = fs::File::open(filename).await.unwrap();
         let mut buf: Vec<u8> = vec![0; disk_index.size];
-        let _seekptr = f.seek(SeekFrom::Start(disk_index.offset as u64)).unwrap();
-        f.read_exact(&mut buf).unwrap();
+        let _ = f.seek(SeekFrom::Start(disk_index.offset as u64)).await;
+        f.read_exact(&mut buf).await.unwrap();
         buf
     }
 
