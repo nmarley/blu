@@ -352,6 +352,7 @@ fn now() -> chrono::NaiveDateTime {
 mod test {
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
+    use tokio::fs;
 
     use super::{BlockRef, ChunkMeta, FileRef, PlainIndex, Position};
     use crate::hash::Hash;
@@ -386,8 +387,8 @@ mod test {
     // - ensures that pathbufs are updated
     // - ensures that deleted filerefs and blockrefs are removed from index
     // - ensures that added filerefs and blockrefs are added to index
-    #[test]
-    fn update_index() {
+    #[tokio::test]
+    async fn update_index() {
         let chunk_size = 4096;
         let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
 
@@ -572,21 +573,23 @@ mod test {
 
         // rename file5.txt to file6.txt
         let dir_path = Path::new(TEST_BLOCKS_DIR_T5);
-        std::fs::rename(dir_path.join("file5.txt"), dir_path.join("file6.txt")).unwrap();
+        fs::rename(dir_path.join("file5.txt"), dir_path.join("file6.txt"))
+            .await
+            .unwrap();
 
         // remove file4.txt
-        let file4_buf = std::fs::read(dir_path.join("file4.txt")).unwrap();
-        std::fs::remove_file(dir_path.join("file4.txt")).unwrap();
+        let file4_buf = fs::read(dir_path.join("file4.txt")).await.unwrap();
+        fs::remove_file(dir_path.join("file4.txt")).await.unwrap();
 
         // change content of file3.txt
-        let file3_buf = std::fs::read(dir_path.join("file3.txt")).unwrap();
+        let file3_buf = fs::read(dir_path.join("file3.txt")).await.unwrap();
         let mut e_buf = vec![b'e'; 4095];
         e_buf.push(b'\n');
-        std::fs::write(dir_path.join("file3.txt"), e_buf).unwrap();
+        fs::write(dir_path.join("file3.txt"), e_buf).await.unwrap();
 
         // remove file_f.txt
-        let file_f_buf = std::fs::read(dir_path.join("file_f.txt")).unwrap();
-        std::fs::remove_file(dir_path.join("file_f.txt")).unwrap();
+        let file_f_buf = fs::read(dir_path.join("file_f.txt")).await.unwrap();
+        fs::remove_file(dir_path.join("file_f.txt")).await.unwrap();
 
         let after_filerefs = HashMap::from([
             (
@@ -739,13 +742,21 @@ mod test {
 
         let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
         // rename file6.txt back to file5.txt
-        std::fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt")).unwrap();
+        fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt"))
+            .await
+            .unwrap();
         // restore file4.txt
-        std::fs::write(dir_path.join("file4.txt"), file4_buf).unwrap();
+        fs::write(dir_path.join("file4.txt"), file4_buf)
+            .await
+            .unwrap();
         // restore file3.txt
-        std::fs::write(dir_path.join("file3.txt"), file3_buf).unwrap();
+        fs::write(dir_path.join("file3.txt"), file3_buf)
+            .await
+            .unwrap();
         // restore file_f.txt
-        std::fs::write(dir_path.join("file_f.txt"), file_f_buf).unwrap();
+        fs::write(dir_path.join("file_f.txt"), file_f_buf)
+            .await
+            .unwrap();
         // NOTE: DO NOT put any tests between the index.update() call and the
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
@@ -790,8 +801,8 @@ mod test {
     // TODO: this is tested above, so can probably remove this test and reserve
     // t6 for something else.
     const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
-    #[test]
-    fn update_index_paths() {
+    #[tokio::test]
+    async fn update_index_paths() {
         let chunk_size = 4096;
         let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
 
@@ -847,11 +858,11 @@ mod test {
         let old_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hi.txt");
         let new_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hello.txt");
         // rename to test
-        std::fs::rename(&old_filename, &new_filename).unwrap();
+        fs::rename(&old_filename, &new_filename).await.unwrap();
         // run the update
         let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
         // move it back
-        std::fs::rename(&new_filename, &old_filename).unwrap();
+        fs::rename(&new_filename, &old_filename).await.unwrap();
 
         assert_eq!(index.files, after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
