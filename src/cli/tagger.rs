@@ -35,7 +35,7 @@ pub async fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> 
     }
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let cfg = config::read_config(basedir).map_err(|e| {
+    let cfg = config::read_config(basedir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e

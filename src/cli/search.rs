@@ -17,7 +17,7 @@ pub async fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> 
     let dir = Path::new(".");
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e

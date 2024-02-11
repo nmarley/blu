@@ -21,7 +21,7 @@ pub async fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // TODO: await/async config module
-    if config::read_config(dir).is_ok() {
+    if config::read_config(dir).await.is_ok() {
         info!("Config file exists. Nothing to do.");
         return Ok(());
     }

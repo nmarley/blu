@@ -36,7 +36,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
     // info!("Started status util");
     let dir = Path::new(".");
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e

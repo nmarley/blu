@@ -17,7 +17,7 @@ pub async fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("no paths given".into());
     }
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e
