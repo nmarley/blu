@@ -31,7 +31,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         None => {
             match args.action {
                 // init can run without all these other checks ...
-                clapargs::Action::Init(a) => return cli::init(a),
+                clapargs::Action::Init(a) => return cli::init(a).await,
                 _ => {
                     return Err(
                         "fatal: not a blu repository (or any of the parent directories): .blu"
@@ -67,7 +67,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
-        clapargs::Action::Init(a) => cli::init(a),
+        clapargs::Action::Init(a) => cli::init(a).await,
         clapargs::Action::ListFiles(a) => cli::list_files(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a).await,
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
