@@ -7,43 +7,35 @@ use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
 use aws_sdk_s3::{Client, Error};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use std::path::{Path, PathBuf};
-// use tokio_stream::StreamExt;
-// NEW v
 use tokio::io::AsyncReadExt;
-// use aws_sdk_s3::primitives::ByteStream;
 
 use crate::hash::Hash;
 
 use super::StorageBackend;
 
 /// Amazon S3 storage backend
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AmazonS3 {
     bucket: String,
-    prefix: PathBuf,
+    prefix: Option<PathBuf>,
     client: Client,
 }
 
 impl AmazonS3 {
     /// Create a new Amazon S3 storage backend with the given bucket name and
     /// optional prefix.
-    pub async fn new<P: AsRef<Path>>(bucket: &str, prefix: Option<P>) -> Self {
+    pub async fn new(bucket: &str, prefix: Option<&str>) -> Self {
         let config = aws_config::load_from_env().await;
         let client = Client::new(&config);
 
-        let prefix = match prefix {
-            Some(ref p) => p.as_ref().to_path_buf(),
-            None => Path::new("").to_path_buf(),
-        };
-        info!("prefix = {}", prefix.display());
-
         Self {
             bucket: bucket.to_owned(),
-            prefix,
+            prefix: prefix.map(|e| PathBuf::from(e.to_owned())),
             client,
         }
     }
 
+    /// Get an object from the S3 bucket
     pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, Error> {
         let key = &(match self.prefix {
             Some(ref prefix) => Path::new(&prefix)
@@ -74,7 +66,7 @@ impl AmazonS3 {
 #[async_trait]
 impl StorageBackend for AmazonS3 {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let key = self.prefix.join(path);
+        let key = self.prefix.clone().unwrap_or_default().join(path);
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let mut object = runtime.block_on(async {
@@ -102,27 +94,14 @@ impl StorageBackend for AmazonS3 {
     }
 
     async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let key = self.prefix.join(path);
-
-        let object = self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(key.to_string_lossy().to_string())
-            .send()
-            .await?;
-
-        let mut buf: Vec<u8> = vec![];
-        while let Some(bytes) = object.body.try_next().await? {
-            buf.extend_from_slice(&bytes);
-        }
-
-        Ok(buf)
+        let key = path.to_string_lossy().to_string();
+        let data = self.get_object(&key).await?;
+        Ok(data)
     }
 
     fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = super::path_for(hash)?;
-        let key = self.prefix.join(&path);
+        let key = self.prefix.clone().unwrap_or_default().join(&path);
         info!("key = {}", key.display());
 
         let body = ByteStream::from(data.to_vec());
@@ -143,33 +122,7 @@ impl StorageBackend for AmazonS3 {
     }
 }
 
-// s3agent.rs
-// use aws_sdk_s3::primitives::ByteStream;
-// use aws_sdk_s3::{Client, Error};
-// use std::path::Path;
-// use tokio::io::AsyncReadExt;
-//
-// #[derive(Clone, Debug)]
-// pub struct S3Agent {
-//     bucket: String,
-//     prefix: Option<String>,
-//     client: Client,
-// }
-//
-// // see:
-// // https://docs.aws.amazon.com/sdk-for-rust/latest/dg/rust_s3_code_examples.html
-//
 // impl S3Agent {
-//     pub async fn new(bucket: &str, prefix: Option<&str>) -> Self {
-//         let config = aws_config::load_from_env().await;
-//         let client = aws_sdk_s3::Client::new(&config);
-//
-//         Self {
-//             bucket: bucket.to_owned(),
-//             prefix: prefix.map(|e| e.to_owned()),
-//             client,
-//         }
-//     }
 //
 //     pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, Error> {
 //         let key = &(match self.prefix {

@@ -173,17 +173,16 @@ impl Config {
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
     /// Initializes the storage backend based on `backend` field in config.
-    pub fn init_storage_backend(
+    pub async fn init_storage_backend(
         &self,
     ) -> Result<Box<dyn StorageBackend>, Box<dyn std::error::Error>> {
         match self.backend {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(Box::new(Local::new(&local_backend.path)))
             }
-            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(AmazonS3::new(
-                &s3_backend.bucket,
-                s3_backend.prefix.clone(),
-            ))),
+            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(
+                AmazonS3::new(&s3_backend.bucket, s3_backend.prefix.as_deref()).await,
+            )),
             #[allow(unreachable_patterns)]
             _ => Err("Unsupported backend".into()),
         }

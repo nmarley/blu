@@ -32,7 +32,7 @@ pub async fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::erro
     // Let's just use the First-Fit Decreasing (FFD) algorithm and call it good
     // (enough).
 
-    // let backend = cfg.init_storage_backend()?;
+    // let backend = cfg.init_storage_backend().await?;
 
     for (blob_path, set_chunk_hashes) in blob_index.path_index.iter() {
         let mut blob_size = 0_usize;

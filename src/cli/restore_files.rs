@@ -30,7 +30,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
     let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
     let files_map = plain_index.files_map_ref();
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = cfg.init_storage_backend().await?;
 
     // NOTE:
     //     `*` derefs the `Box<dyn StorageBackend>`

@@ -37,7 +37,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::er
         blob_index.count_blob_files()
     );
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = cfg.init_storage_backend().await?;
 
     // NOTE:
     //     `*` derefs the `Box<dyn StorageBackend>`
