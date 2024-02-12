@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use multihash::Multihash;
 use std::path::{Path, PathBuf};
 
@@ -36,6 +37,7 @@ use crate::hash::Hash;
 /// chosen based on the provided hash. It returns a `Result` which, on success,
 /// contains the `PathBuf` where the data is stored. On failure, it returns an
 /// error.
+#[async_trait]
 pub trait StorageBackend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
