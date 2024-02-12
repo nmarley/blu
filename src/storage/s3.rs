@@ -9,6 +9,7 @@ use tokio::io::AsyncReadExt;
 use crate::hash::Hash;
 
 use super::StorageBackend;
+use super::StorageError;
 
 /// Amazon S3 storage backend
 #[derive(Clone, Debug)]
@@ -90,17 +91,13 @@ impl StorageBackend for AmazonS3 {
     //     Ok(buf)
     // }
 
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
         let key = path.to_string_lossy().to_string();
         let data = self.get_object(&key).await?;
         Ok(data)
     }
 
-    async fn write_data(
-        &self,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
         let path = super::path_for(hash)?;
         let key = self.prefix.clone().unwrap_or_default().join(&path);
         info!("key = {}", key.display());

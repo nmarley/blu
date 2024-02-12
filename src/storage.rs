@@ -2,10 +2,12 @@ use async_trait::async_trait;
 use multihash::Multihash;
 use std::path::{Path, PathBuf};
 
+mod error;
 mod local;
 mod s3;
 
 use crate::hash::Hash;
+use error::StorageError;
 
 // TODO : Decouple filesystem semantics from storage backend
 
@@ -46,14 +48,10 @@ pub trait StorageBackend {
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
     // around 8MiB by default ... maybe streaming doesn't make sense here.
     /// Read the data blob identified by the hash from the storage backend.
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError>;
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
-    async fn write_data(
-        &self,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<PathBuf, Box<dyn std::error::Error>>;
+    async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError>;
 }
 
 /// Get a path for the encrypted data.

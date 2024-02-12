@@ -5,6 +5,7 @@ use tokio::fs;
 use crate::hash::Hash;
 
 use super::StorageBackend;
+use super::StorageError;
 
 /// Local storage backend for managing data on a local filesystem.
 #[derive(Default, Debug)]
@@ -23,16 +24,12 @@ impl Local {
 
 #[async_trait]
 impl StorageBackend for Local {
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
         let data = tokio::fs::read(path).await?;
         Ok(data)
     }
 
-    async fn write_data(
-        &self,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
         let hash_path = super::path_for(hash)?;
         let path = self.datadir.join(hash_path).to_path_buf();
 
