@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use std::fs;
 use std::path::{Path, PathBuf};
+use tokio::fs;
 
 use crate::hash::Hash;
 
@@ -23,22 +23,21 @@ impl Local {
 
 #[async_trait]
 impl StorageBackend for Local {
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = fs::read(path)?;
-        Ok(data)
-    }
-
-    async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = tokio::fs::read(path).await?;
         Ok(data)
     }
 
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    async fn write_data(
+        &self,
+        hash: &Hash,
+        data: &[u8],
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let hash_path = super::path_for(hash)?;
         let path = self.datadir.join(hash_path).to_path_buf();
 
-        fs::create_dir_all(path.parent().unwrap())?;
-        fs::write(&path, data)?;
+        fs::create_dir_all(path.parent().unwrap()).await?;
+        fs::write(&path, data).await?;
         Ok(path)
     }
 }

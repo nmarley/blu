@@ -1,8 +1,5 @@
 use async_trait::async_trait;
-use aws_sdk_s3::operation::{
-    get_object::{GetObjectError, GetObjectOutput},
-    put_object::{PutObjectError, PutObjectOutput},
-};
+use aws_sdk_s3::operation::put_object::{PutObjectError, PutObjectOutput};
 use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
 use aws_sdk_s3::{Client, Error};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
@@ -65,41 +62,45 @@ impl AmazonS3 {
 
 #[async_trait]
 impl StorageBackend for AmazonS3 {
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let key = self.prefix.clone().unwrap_or_default().join(path);
+    // async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    //     let key = self.prefix.clone().unwrap_or_default().join(path);
+    //
+    //     let runtime = tokio::runtime::Runtime::new().unwrap();
+    //     let mut object = runtime.block_on(async {
+    //         let object = self
+    //             .client
+    //             .get_object()
+    //             .bucket(&self.bucket)
+    //             .key(key.to_string_lossy().to_string())
+    //             .send()
+    //             .await?;
+    //         Ok::<GetObjectOutput, SdkError<GetObjectError, HttpResponse>>(object)
+    //     })?;
+    //
+    //     let (buf, _byte_count) = runtime.block_on(async {
+    //         let mut buf: Vec<u8> = vec![];
+    //         let mut byte_count = 0_usize;
+    //         while let Some(bytes) = object.body.try_next().await? {
+    //             buf.extend_from_slice(&bytes);
+    //             byte_count += bytes.len();
+    //         }
+    //         Ok::<(Vec<u8>, usize), Box<dyn std::error::Error>>((buf, byte_count))
+    //     })?;
+    //
+    //     Ok(buf)
+    // }
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut object = runtime.block_on(async {
-            let object = self
-                .client
-                .get_object()
-                .bucket(&self.bucket)
-                .key(key.to_string_lossy().to_string())
-                .send()
-                .await?;
-            Ok::<GetObjectOutput, SdkError<GetObjectError, HttpResponse>>(object)
-        })?;
-
-        let (buf, _byte_count) = runtime.block_on(async {
-            let mut buf: Vec<u8> = vec![];
-            let mut byte_count = 0_usize;
-            while let Some(bytes) = object.body.try_next().await? {
-                buf.extend_from_slice(&bytes);
-                byte_count += bytes.len();
-            }
-            Ok::<(Vec<u8>, usize), Box<dyn std::error::Error>>((buf, byte_count))
-        })?;
-
-        Ok(buf)
-    }
-
-    async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let key = path.to_string_lossy().to_string();
         let data = self.get_object(&key).await?;
         Ok(data)
     }
 
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    async fn write_data(
+        &self,
+        hash: &Hash,
+        data: &[u8],
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = super::path_for(hash)?;
         let key = self.prefix.clone().unwrap_or_default().join(&path);
         info!("key = {}", key.display());

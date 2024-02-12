@@ -46,12 +46,14 @@ pub trait StorageBackend {
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
     // around 8MiB by default ... maybe streaming doesn't make sense here.
     /// Read the data blob identified by the hash from the storage backend.
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>>;
-    /// Async version of read_data
-    async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+    async fn write_data(
+        &self,
+        hash: &Hash,
+        data: &[u8],
+    ) -> Result<PathBuf, Box<dyn std::error::Error>>;
 }
 
 /// Get a path for the encrypted data.
@@ -152,8 +154,8 @@ mod test {
     use super::StorageBackend;
     use crate::hash::multihash;
 
-    #[test]
-    fn local_rw_data() {
+    #[tokio::test]
+    async fn local_rw_data() {
         let datadir = tempdir().unwrap();
         let storage = Local::new(datadir);
 
@@ -163,10 +165,10 @@ mod test {
         let hash = Hash::from(mh.to_bytes());
 
         // Write the data
-        let pathbuf = storage.write_data(&hash, data).unwrap();
+        let pathbuf = storage.write_data(&hash, data).await.unwrap();
 
         // Read the data back and verify it
-        let read_data = storage.read_data(&pathbuf).unwrap();
+        let read_data = storage.read_data(&pathbuf).await.unwrap();
         assert_eq!(data.to_vec(), read_data);
     }
 }

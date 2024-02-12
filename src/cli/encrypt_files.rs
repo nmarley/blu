@@ -85,14 +85,16 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::er
 
             // add it to the blob buffer
             // info!("Adding chunk to blob buffer");
-            blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
+            blob_buf
+                .add_chunk(&mut data.clone(), &mut blob_index)
+                .await?;
             count_added += 1;
         }
     }
 
     println!("Added {} new chunks to blob buffer", count_added);
     if count_added > 0 || args.force_write_index {
-        match blob_buf.finalize(&mut blob_index) {
+        match blob_buf.finalize(&mut blob_index).await {
             Ok(_) => println!("Finalized blob buffer!"),
             Err(e) => println!("Error finalizing blob buffer: {}", e),
         }

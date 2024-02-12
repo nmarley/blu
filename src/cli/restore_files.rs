@@ -144,7 +144,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
             dbg!(&blob_block_location_ref);
 
             // Decrypt the blob file and read the necessary data
-            let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
+            let block_data = reader.get_bytes(&blob_block_location_ref).await.unwrap();
             println!("Read {} bytes from blob file", block_data.len());
 
             fh.seek(SeekFrom::Start(offset)).await?;
