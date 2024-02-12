@@ -30,7 +30,10 @@ impl StorageBackend for Local {
     }
 
     async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
-        let hash_path = super::path_for(hash)?;
+        let hash_path = match super::path_for(hash) {
+            Ok(path) => path,
+            Err(err) => return Err(StorageError::HashError(err)),
+        };
         let path = self.datadir.join(hash_path).to_path_buf();
 
         fs::create_dir_all(path.parent().unwrap()).await?;

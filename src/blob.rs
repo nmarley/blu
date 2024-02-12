@@ -111,9 +111,16 @@ impl<'a> BlobBuffer<'a> {
     async fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let raw_bytes = data;
         let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
-        self.storage_backend
+        // TODO: change to identifier?
+        let blobfile_path = match self
+            .storage_backend
             .write_data(&blobfile_hash, raw_bytes)
             .await
+        {
+            Ok(path) => path,
+            Err(err) => return Err(Box::new(err)),
+        };
+        Ok(blobfile_path)
     }
 
     // TODO: rename this

@@ -1,8 +1,5 @@
 use async_trait::async_trait;
-use aws_sdk_s3::operation::put_object::{PutObjectError, PutObjectOutput};
-use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
-use aws_sdk_s3::{Client, Error};
-use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+use aws_sdk_s3::{primitives::ByteStream, Client, Error};
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncReadExt;
 
@@ -59,63 +56,55 @@ impl AmazonS3 {
 
         Ok(data)
     }
+
+    /// Put an object into the S3 bucket
+    pub async fn put_object(&self, key: &str, data: &[u8]) -> Result<(), Error> {
+        let key = &(match self.prefix {
+            Some(ref prefix) => Path::new(&prefix)
+                .join(key)
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+            None => key.to_owned(),
+        });
+
+        // Result<PutObjectOutput, SdkError<PutObjectError>>
+        let _ = self
+            .client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(ByteStream::from(data.to_vec()))
+            .send()
+            .await?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl StorageBackend for AmazonS3 {
-    // async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    //     let key = self.prefix.clone().unwrap_or_default().join(path);
-    //
-    //     let runtime = tokio::runtime::Runtime::new().unwrap();
-    //     let mut object = runtime.block_on(async {
-    //         let object = self
-    //             .client
-    //             .get_object()
-    //             .bucket(&self.bucket)
-    //             .key(key.to_string_lossy().to_string())
-    //             .send()
-    //             .await?;
-    //         Ok::<GetObjectOutput, SdkError<GetObjectError, HttpResponse>>(object)
-    //     })?;
-    //
-    //     let (buf, _byte_count) = runtime.block_on(async {
-    //         let mut buf: Vec<u8> = vec![];
-    //         let mut byte_count = 0_usize;
-    //         while let Some(bytes) = object.body.try_next().await? {
-    //             buf.extend_from_slice(&bytes);
-    //             byte_count += bytes.len();
-    //         }
-    //         Ok::<(Vec<u8>, usize), Box<dyn std::error::Error>>((buf, byte_count))
-    //     })?;
-    //
-    //     Ok(buf)
-    // }
-
     async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
         let key = path.to_string_lossy().to_string();
-        let data = self.get_object(&key).await?;
+        let data = match self.get_object(&key).await {
+            Ok(data) => data,
+            Err(_e) => return Err(StorageError::ReadError(key.into())),
+        };
         Ok(data)
     }
 
     async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
-        let path = super::path_for(hash)?;
-        let key = self.prefix.clone().unwrap_or_default().join(&path);
-        info!("key = {}", key.display());
+        let path = match super::path_for(hash) {
+            Ok(path) => path,
+            Err(err) => return Err(StorageError::HashError(err)),
+        };
+        let key = path.to_string_lossy().to_string();
+        info!("key = {:?}", key);
 
-        let body = ByteStream::from(data.to_vec());
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let mut _put_obj_output = runtime.block_on(async {
-            let put_obj_output = self
-                .client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(key.to_string_lossy().to_string())
-                .body(body)
-                .send()
-                .await?;
-            Ok::<PutObjectOutput, SdkError<PutObjectError, HttpResponse>>(put_obj_output)
-        })?;
-
+        match self.put_object(&key, data).await {
+            Ok(_) => (),
+            Err(_e) => return Err(StorageError::WriteError(key.into())),
+        };
         Ok(path)
     }
 }

@@ -10,8 +10,12 @@ pub enum StorageError {
     ReadError(PathBuf),
     WriteError(PathBuf),
     ServerError,
+    // TODO: remove this error variant and replace with TokioIoError (rename
+    // TokioIoError to IoError)
     IoError(std::io::Error),
     TokioIoError(tokio::io::Error),
+    // AwsSdkError(aws_sdk_s3::Error),
+    HashError(multihash::Error),
     // Add more errors as needed
 }
 
@@ -28,6 +32,7 @@ impl Display for StorageError {
             StorageError::ServerError => write!(f, "Server error"),
             StorageError::IoError(err) => write!(f, "I/O error: {}", err),
             StorageError::TokioIoError(err) => write!(f, "Tokio I/O error: {}", err),
+            StorageError::HashError(err) => write!(f, "Hash error: {}", err),
         }
     }
 }
