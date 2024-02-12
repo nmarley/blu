@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,9 +21,15 @@ impl Local {
     }
 }
 
+#[async_trait]
 impl StorageBackend for Local {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = fs::read(path)?;
+        Ok(data)
+    }
+
+    async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let data = tokio::fs::read(path).await?;
         Ok(data)
     }
 

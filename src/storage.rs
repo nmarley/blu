@@ -48,6 +48,8 @@ pub trait StorageBackend {
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
     fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>>;
+    /// Async version of read_data
+    async fn async_read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
 }
 
 /// Get a path for the encrypted data.
