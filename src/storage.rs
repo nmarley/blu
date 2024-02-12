@@ -61,7 +61,7 @@ pub trait StorageBackend {
 /// ... would be stored in:
 /// DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
-pub fn path_for(hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn path_for(hash: &Hash) -> Result<PathBuf, multihash::Error> {
     // use multihash lib to properly separate multihash header code and size
     // (do not make assumptions about removing X number of bytes)
 
