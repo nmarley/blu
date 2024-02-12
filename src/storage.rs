@@ -7,6 +7,8 @@ mod s3;
 
 use crate::hash::Hash;
 
+// TODO : Decouple filesystem semantics from storage backend
+
 // TODO: probably rename StorageBackend to Backend to prevent stuttering ...
 // crate::storage::StorageBackend
 // crate::storage::Backend
