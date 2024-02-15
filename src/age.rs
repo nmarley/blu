@@ -41,13 +41,14 @@ impl BlackBox {
         //     .map(|x| Box::new(x.to_public()))
         //     .collect();
 
-        let mut pub_keys: Vec<Box<dyn age::Recipient>> = vec![];
+        let mut pub_keys: Vec<Box<dyn age::Recipient + Send>> = vec![];
         for x in identities.into_iter() {
             let pub_key = x.to_public();
             pub_keys.push(Box::new(pub_key));
         }
 
-        age::Encryptor::with_recipients(pub_keys)
+        // TODO: don't unwrap
+        age::Encryptor::with_recipients(pub_keys).unwrap()
     }
 
     /// Encrypt the given bytes using the identities associated with the BlackBox.
