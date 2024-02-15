@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
 
 use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
@@ -276,8 +277,10 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
                     "Reading blob file from backend: {}",
                     location_ref.path.display()
                 );
-                let data = &self.backend.read_data(&location_ref.path).await?;
-                let data = self.bbox.decrypt(data)?;
+                let data = &mut self.backend.read_data(&location_ref.path).await?;
+                let mut buf = vec![];
+                data.read_to_end(&mut buf).await?;
+                let data = self.bbox.decrypt(&buf)?;
                 let data = decompress(&data)?;
                 self.data_cache.add(&hash, data);
                 self.data_cache.get(&hash).unwrap()

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use aws_sdk_s3::{primitives::ByteStream, Client, Error};
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::hash::Hash;
 
@@ -57,6 +57,31 @@ impl AmazonS3 {
         Ok(data)
     }
 
+    /// Get an object async read stream from the S3 bucket
+    pub async fn get_object_stream(
+        &self,
+        key: &str,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, Error> {
+        let key = &(match self.prefix {
+            Some(ref prefix) => Path::new(&prefix)
+                .join(key)
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+            None => key.to_owned(),
+        });
+
+        let object = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+
+        Ok(Box::new(ByteStream::into_async_read(object.body)))
+    }
+
     /// Put an object into the S3 bucket
     pub async fn put_object(&self, key: &str, data: &[u8]) -> Result<(), Error> {
         let key = &(match self.prefix {
@@ -84,9 +109,12 @@ impl AmazonS3 {
 
 #[async_trait]
 impl StorageBackend for AmazonS3 {
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
+    async fn read_data(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
         let key = path.to_string_lossy().to_string();
-        let data = match self.get_object(&key).await {
+        let data = match self.get_object_stream(&key).await {
             Ok(data) => data,
             Err(_e) => return Err(StorageError::ReadError(key.into())),
         };

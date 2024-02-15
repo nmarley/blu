@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use multihash::Multihash;
 use std::path::{Path, PathBuf};
+use tokio::io::AsyncRead;
 
 mod error;
 mod local;
@@ -48,7 +49,10 @@ pub trait StorageBackend {
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
     // around 8MiB by default ... maybe streaming doesn't make sense here.
     /// Read the data blob identified by the hash from the storage backend.
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError>;
+    async fn read_data(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError>;
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
     async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError>;
@@ -147,6 +151,7 @@ mod test {
     );
 
     use tempfile::tempdir;
+    use tokio::io::AsyncReadExt;
 
     use super::Local;
     use super::StorageBackend;
@@ -166,8 +171,10 @@ mod test {
         let pathbuf = storage.write_data(&hash, data).await.unwrap();
 
         // Read the data back and verify it
-        let read_data = storage.read_data(&pathbuf).await.unwrap();
-        assert_eq!(data.to_vec(), read_data);
+        let mut read_data = storage.read_data(&pathbuf).await.unwrap();
+        let mut buf = vec![];
+        read_data.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(data.to_vec(), buf);
     }
 }
 

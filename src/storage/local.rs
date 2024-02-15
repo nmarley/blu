@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use tokio::fs::{self, File};
+use tokio::io::AsyncRead;
 
 use crate::hash::Hash;
 
@@ -24,9 +25,12 @@ impl Local {
 
 #[async_trait]
 impl StorageBackend for Local {
-    async fn read_data(&self, path: &Path) -> Result<Vec<u8>, StorageError> {
-        let data = tokio::fs::read(path).await?;
-        Ok(data)
+    async fn read_data(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
+        let file = File::open(path).await.map_err(StorageError::IoError)?;
+        Ok(Box::new(file) as Box<dyn AsyncRead + Unpin + Send>)
     }
 
     async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
