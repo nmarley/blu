@@ -126,13 +126,12 @@ impl AmazonS3 {
         // Result<PutObjectOutput, SdkError<PutObjectError>>
         let mut buf = vec![];
         data.read_to_end(&mut buf).await.unwrap();
-        let data = buf;
         let _ = self
             .client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
-            .body(ByteStream::from(SdkBody::from(data)))
+            .body(ByteStream::from(SdkBody::from(buf)))
             .send()
             .await?;
 
