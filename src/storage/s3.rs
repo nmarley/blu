@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use aws_sdk_s3::{primitives::ByteStream, Client, Error};
+use aws_sdk_s3::{
+    primitives::{ByteStream, SdkBody},
+    Client, Error,
+};
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -50,7 +53,7 @@ impl AmazonS3 {
             .await?;
 
         let mut data = Vec::new();
-        let mut stream = ByteStream::into_async_read(object.body);
+        let mut stream = object.body.into_async_read();
         // Read the stream into the vec
         stream.read_to_end(&mut data).await.unwrap();
 
@@ -79,7 +82,7 @@ impl AmazonS3 {
             .send()
             .await?;
 
-        Ok(Box::new(ByteStream::into_async_read(object.body)))
+        Ok(Box::new(object.body.into_async_read()))
     }
 
     /// Put an object into the S3 bucket
@@ -93,13 +96,43 @@ impl AmazonS3 {
             None => key.to_owned(),
         });
 
-        // Result<PutObjectOutput, SdkError<PutObjectError>>
         let _ = self
             .client
             .put_object()
             .bucket(&self.bucket)
             .key(key)
             .body(ByteStream::from(data.to_vec()))
+            .send()
+            .await?;
+
+        Ok(())
+    }
+
+    /// Put an object stream into the S3 bucket
+    pub async fn put_object_stream(
+        &self,
+        key: &str,
+        data: &mut Box<dyn AsyncRead + Unpin + Send>,
+    ) -> Result<(), Error> {
+        let key = &(match self.prefix {
+            Some(ref prefix) => Path::new(&prefix)
+                .join(key)
+                .into_os_string()
+                .into_string()
+                .unwrap(),
+            None => key.to_owned(),
+        });
+
+        // Result<PutObjectOutput, SdkError<PutObjectError>>
+        let mut buf = vec![];
+        data.read_to_end(&mut buf).await.unwrap();
+        let data = buf;
+        let _ = self
+            .client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .body(ByteStream::from(SdkBody::from(data)))
             .send()
             .await?;
 
@@ -136,48 +169,3 @@ impl StorageBackend for AmazonS3 {
         Ok(path)
     }
 }
-
-// impl S3Agent {
-//
-//     pub async fn get_object(&self, key: &str) -> Result<Vec<u8>, Error> {
-//         let key = &(match self.prefix {
-//             Some(ref prefix) => Path::new(&prefix)
-//                 .join(key)
-//                 .into_os_string()
-//                 .into_string()
-//                 .unwrap(),
-//             None => key.to_owned(),
-//         });
-//
-//         let object = self
-//             .client
-//             .get_object()
-//             .bucket(&self.bucket)
-//             .key(key)
-//             .send()
-//             .await?;
-//
-//         let mut data = Vec::new();
-//         let mut stream = ByteStream::into_async_read(object.body);
-//         // Read the stream into the vec
-//         stream.read_to_end(&mut data).await.unwrap();
-//
-//         Ok(data)
-//     }
-//
-//     // note: This was added as a sanity check, ensure we can see the bucket
-//     // before trying to download a shit-ton of files... or handle 'NoSuchBucket'
-//     // error and abort if we get one upon trying to get_object
-//
-//     #[allow(dead_code)]
-//     /// Example method to list all buckets, needs s3 iam permission
-//     pub async fn list_buckets(&self) -> Result<Vec<String>, aws_sdk_s3::Error> {
-//         let resp = self.client.list_buckets().send().await?;
-//         let buckets: Vec<String> = resp
-//             .buckets()
-//             .iter()
-//             .map(|e| e.name().unwrap().to_string())
-//             .collect();
-//         Ok(buckets)
-//     }
-// }
