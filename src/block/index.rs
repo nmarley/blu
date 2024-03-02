@@ -5,7 +5,7 @@ use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use tokio::fs::{self, metadata};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use walkdir::WalkDir;
 
@@ -24,6 +24,24 @@ use super::FileRef;
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.1";
+
+// TODO: move into appropriate module
+#[derive(Clone, Debug)]
+pub struct Work {
+    pub offset: u64,
+    pub size: u64,
+    pub file_hash: Hash,
+}
+
+async fn divide_work<P: AsRef<Path>>(
+    filename: P,
+    chunk_size: usize,
+) -> Result<Vec<Work>, Box<dyn std::error::Error>> {
+    let stats = metadata(filename.as_ref()).await?;
+    let size = stats.len();
+    // size / chunk_size;
+    Ok(vec![])
+}
 
 /// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
 /// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
@@ -103,7 +121,7 @@ impl PlainIndex {
 
     /// Lower-level internal method to hash a file and add to the file and
     /// block indexes.
-    fn hash_and_add_file<P: AsRef<Path>>(
+    async fn hash_and_add_file<P: AsRef<Path>>(
         &mut self,
         path: P,
         chunk_size: usize,
@@ -112,6 +130,7 @@ impl PlainIndex {
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
         // TODO: extensible hashing -- get hasher type from config / hasher from
         // factory
+
         let mut hasher = Sha512::new();
         let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
         for chunk in chunker {
