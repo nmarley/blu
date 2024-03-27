@@ -109,6 +109,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
         let mut fh = tokio::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(restore_path)
             .await?;
         let _ = fh
@@ -117,6 +118,9 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
             .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
 
         let mut offset = 0u64;
+
+        // TODO: Spawn multiple threads to read the blob data concurrently +
+        // write the file. Use channels.
         // slowness here ...
         for chunkmeta in fileref.chunkmetas.iter() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
@@ -128,6 +132,10 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
                 // corrupted / not intact so we should report it, but could
                 // ostensibly be fixed w/some repair tool if the blobs can be
                 // found later.
+                //
+                // An alternative would be to search the index for all blob
+                // locations just to make sure we have them all before
+                // continuing.
                 eprintln!("Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}", chunkmeta.hash, file_hash);
                 continue; // next file
             }
@@ -158,6 +166,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
         }
 
         // hard links for the same data with multiple filenames
+        // TODO: This should probably be a command line flag
         for other in other_paths.iter() {
             match fs::hard_link(restore_path, other).await {
                 Ok(_) => {
