@@ -237,9 +237,11 @@ mod test {
         ])
     }
 
-    #[test]
-    fn indexes() {
-        let index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T1, 4096).unwrap();
+    #[tokio::test]
+    async fn indexes() {
+        let index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T1, 4096)
+            .await
+            .unwrap();
 
         assert_eq!(index.files, helper_files_map());
         assert_eq!(index.blocks, helper_blocks_map());

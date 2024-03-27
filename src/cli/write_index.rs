@@ -32,7 +32,7 @@ pub async fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error:
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     info!("Indexing {:?}", dir);
-    let index = PlainIndex::new(dir)?;
+    let index = PlainIndex::new(dir).await?;
 
     // back out here since we pass a filename as a direct path
     match write_index_file(&index, &bbox, &outfile).await {

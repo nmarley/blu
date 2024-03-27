@@ -7,7 +7,7 @@ use crate::cli::clapargs::DebugIndexArgs;
 pub async fn debug_index(_args: DebugIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
 
-    let index = PlainIndex::new(dir)?;
+    let index = PlainIndex::new(dir).await?;
     dbg!(&index);
 
     println!("uniq bytes indexed: {}", index.uniq_bytes_indexed());

@@ -31,7 +31,7 @@ pub async fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
     // iterate each path
     for p in args.add_paths {
         info!("Adding {:?}", p);
-        plain_index.add(p, None)?;
+        plain_index.add(p, None).await?;
     }
 
     cfg.write_plain_index(&plain_index, &bbox).await?;

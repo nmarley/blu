@@ -61,23 +61,23 @@ pub struct PlainIndex {
 
 impl PlainIndex {
     /// Create a new PlainIndex given a directory path.
-    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE)
+    pub async fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE).await
     }
 
     /// Create a new PlainIndex given a directory path and custom (non-default)
     /// chunk size.
-    pub fn new_custom_chunk_size<P: AsRef<Path>>(
+    pub async fn new_custom_chunk_size<P: AsRef<Path>>(
         dir: P,
         chunk_size: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut idx = Self::new_empty();
-        idx.add(dir, Some(chunk_size))?;
+        idx.add(dir, Some(chunk_size)).await?;
         Ok(idx)
     }
 
     /// Add entries to the PlainIndex given a file/dir path and chunk size.
-    pub fn add<P: AsRef<Path>>(
+    pub async fn add<P: AsRef<Path>>(
         &mut self,
         path: P,
         chunk_size: Option<usize>,
@@ -96,7 +96,7 @@ impl PlainIndex {
         match path.as_ref() {
             p if p.is_file() => {
                 // add file element
-                self.hash_and_add_file(p, chunk_size)?;
+                self.hash_and_add_file(p, chunk_size).await?;
             }
             p if p.is_dir() => {
                 // walk dir and add each file element
@@ -107,7 +107,7 @@ impl PlainIndex {
                     .filter(|e| !e.path().starts_with("./.blu/"))
                     .filter(|e| e.path().is_file())
                 {
-                    self.hash_and_add_file(entry.path(), chunk_size)?;
+                    self.hash_and_add_file(entry.path(), chunk_size).await?;
                 }
             }
             p => {
@@ -128,10 +128,14 @@ impl PlainIndex {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
+
+        let file_stat = metadata(path.as_ref()).await?;
+        let size = file_stat.len();
+
         // TODO: extensible hashing -- get hasher type from config / hasher from
         // factory
-
         let mut hasher = Sha512::new();
+
         let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
         for chunk in chunker {
             chunkmetas.push(ChunkMeta::new(&chunk));
@@ -251,12 +255,12 @@ impl PlainIndex {
 
     /// Update the existing index, given a directory path, and return a list of removed (dangling)
     /// entries.
-    pub fn update<P: AsRef<Path>>(
+    pub async fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
         chunk_size: usize,
     ) -> Result<(Vec<FileRef>, Vec<BlockRef>), Box<dyn std::error::Error>> {
-        let new_index = Self::new_custom_chunk_size(base_dir, chunk_size)?;
+        let new_index = Self::new_custom_chunk_size(base_dir, chunk_size).await?;
 
         let mut to_delete: HashSet<Hash> = HashSet::new();
         let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
@@ -409,7 +413,9 @@ mod test {
     #[tokio::test]
     async fn update_index() {
         let chunk_size = 4096;
-        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size)
+            .await
+            .unwrap();
 
         let before_filerefs = HashMap::from([
             (
@@ -759,7 +765,7 @@ mod test {
             ),
         ]);
 
-        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
+        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).await.unwrap();
         // rename file6.txt back to file5.txt
         fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt"))
             .await
@@ -823,7 +829,9 @@ mod test {
     #[tokio::test]
     async fn update_index_paths() {
         let chunk_size = 4096;
-        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size)
+            .await
+            .unwrap();
 
         let before_filerefs = HashMap::from([(
             Hash::from(HASH_HELLO),
@@ -879,7 +887,7 @@ mod test {
         // rename to test
         fs::rename(&old_filename, &new_filename).await.unwrap();
         // run the update
-        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
+        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).await.unwrap();
         // move it back
         fs::rename(&new_filename, &old_filename).await.unwrap();
 

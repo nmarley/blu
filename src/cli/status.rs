@@ -165,7 +165,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
         }
         StatusCheckType::Deep => {
             // index the current dir on filesystem and compare
-            let curr_fs_index = PlainIndex::new(".")?;
+            let curr_fs_index = PlainIndex::new(".").await?;
 
             // files that ARE NOT in the index but ARE in FS
             for (file_hash, fileref) in &curr_fs_index.files {
