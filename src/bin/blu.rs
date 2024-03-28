@@ -32,6 +32,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             match args.action {
                 // init can run without all these other checks ...
                 clapargs::Action::Init(a) => return cli::init(a).await,
+                clapargs::Action::Version(a) => return cli::version(a).await,
                 _ => {
                     return Err(
                         "fatal: not a blu repository (or any of the parent directories): .blu"
