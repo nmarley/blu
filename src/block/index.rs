@@ -33,12 +33,13 @@ pub struct Work {
     pub file_hash: Hash,
 }
 
+#[allow(dead_code)]
 async fn divide_work<P: AsRef<Path>>(
     filename: P,
-    chunk_size: usize,
+    _chunk_size: usize,
 ) -> Result<Vec<Work>, Box<dyn std::error::Error>> {
     let stats = metadata(filename.as_ref()).await?;
-    let size = stats.len();
+    let _size = stats.len();
     // size / chunk_size;
     Ok(vec![])
 }
