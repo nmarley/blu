@@ -129,8 +129,17 @@ impl PlainIndex {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
 
+        // TODO: split it up
         let file_stat = metadata(path.as_ref()).await?;
         let size = file_stat.len();
+
+        let mut offset = 0;
+        while offset < size {
+            let curr_chunk_size = std::cmp::min(chunk_size as u64, size - offset);
+            offset += curr_chunk_size;
+            println!("curr_chunk_size: {}", curr_chunk_size);
+            println!("offset: {}", offset);
+        }
 
         // TODO: extensible hashing -- get hasher type from config / hasher from
         // factory

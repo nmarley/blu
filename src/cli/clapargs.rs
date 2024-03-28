@@ -43,7 +43,13 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+    /// Display the current version
+    Version(EmptyArgs),
 }
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct EmptyArgs {}
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]

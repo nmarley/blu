@@ -15,6 +15,7 @@ mod restore_files;
 mod search;
 mod status;
 mod tagger;
+mod version;
 mod write_index;
 
 pub use add::add;
@@ -29,6 +30,7 @@ pub use restore_files::restore_files;
 pub use search::search;
 pub use status::status;
 pub use tagger::tagger;
+pub use version::version;
 pub use write_index::write_index;
 
 pub(crate) use write_index::{check_outfile_writable, write_index_file};

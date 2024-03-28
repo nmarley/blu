@@ -75,6 +75,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Status(a) => cli::status(a).await,
         clapargs::Action::Tagger(a) => cli::tagger(a).await,
         clapargs::Action::WriteIndex(a) => cli::write_index(a).await,
+        clapargs::Action::Version(a) => cli::version(a).await,
     }
 }
 
