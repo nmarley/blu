@@ -134,6 +134,14 @@ impl PlainIndex {
         let file_stat = metadata(path.as_ref()).await?;
         let size = file_stat.len();
 
+        // TODO: limit to NUM_FILE_THREADS or something for tasks per file
+        // Channel for the work
+        // Pull from the channel for reading the file
+        // When work channel is done, close it.
+        // When done reading the file, close the read channel
+        // Wait 'til all reads done before finishing and stitching together
+        // In theory we could hash the chunks as they come in, but that would require ordering them and waiting 'til each is done.
+
         let mut offset = 0;
         while offset < size {
             let curr_chunk_size = std::cmp::min(chunk_size as u64, size - offset);
