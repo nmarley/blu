@@ -294,12 +294,9 @@ impl PlainIndex {
             self.files.entry(hash).and_modify(|e| e.paths = paths);
         }
 
-        // for each hash/fileref in NEW ...
+        // for each hash/fileref in NEW, add it
         for (hash, fileref) in new_index.files.into_iter() {
-            if self.files.get(&hash).is_none() {
-                // add it
-                self.files.insert(hash, fileref);
-            }
+            self.files.entry(hash).or_insert(fileref);
         }
 
         // files HashMap::<Hash, FileRef>
@@ -335,12 +332,9 @@ impl PlainIndex {
                 .and_modify(|e| e.references = references);
         }
 
-        // for each hash/fileref in NEW ...
+        // for each hash/blockref in NEW, add it
         for (hash, blockref) in new_index.blocks.into_iter() {
-            if self.blocks.get(&hash).is_none() {
-                // add it
-                self.blocks.insert(hash, blockref);
-            }
+            self.blocks.entry(hash).or_insert(blockref);
         }
 
         // blocks HashMap::<Hash, BlockRef>

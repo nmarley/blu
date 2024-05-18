@@ -138,7 +138,7 @@ impl<'a> BlobBuffer<'a> {
 
         let path = self.write_blob(&encrypted).await?;
         for (chunk_hash, location) in self.positions.iter_mut() {
-            location.path = path.clone();
+            location.path.clone_from(&path);
             idx.add_chunk_location(chunk_hash, location);
         }
         self.reset();
