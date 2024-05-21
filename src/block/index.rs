@@ -5,8 +5,10 @@ use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::fs::{self, metadata};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
+// use tokio::sync::Mutex;
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -24,6 +26,8 @@ use super::FileRef;
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.1";
+/// Number of threads to use for reading files
+const NUM_FILE_THREADS: usize = 8;
 
 // TODO: move into appropriate module
 #[derive(Clone, Debug)]
@@ -141,6 +145,36 @@ impl PlainIndex {
         // When done reading the file, close the read channel
         // Wait 'til all reads done before finishing and stitching together
         // In theory we could hash the chunks as they come in, but that would require ordering them and waiting 'til each is done.
+
+        let mut m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = tokio::sync::mpsc::channel::<usize, usize, usize>();
+        let mut file_read_handles = vec![];
+        for x in 0..NUM_FILE_THREADS {
+            dbg!(&x);
+            let mut fh = fs::File::open(path.as_ref()).await?;
+            file_read_handles.push(tokio::spawn(async move {
+                // read from channel
+                let mut fh = fh.clone();
+                let rx = rx.clone();
+
+                let work = rx.recv().await.unwrap();
+
+                fh.seek(SeekFrom::Start(work.0)).await.unwrap();
+                let bytes = fh.read_exact(work.1).await.unwrap();
+                m.lock().unwrap().insert(work.2, bytes);
+            }));
+            // Open a filehandle for the given filename
+            // Spawn a read chunk task which reads from the channel, gets the
+            // work and then reads from the filehandle
+            // tokio::spawn();
+            // read file
+            // send to channel
+        }
+
+        // join_all(file_read_handles).await;
+
+        // for i in range {
+        // }
 
         let mut offset = 0;
         while offset < size {
