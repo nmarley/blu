@@ -29,28 +29,10 @@ const CURRENT_INDEX_VERSION: &str = "0.2.1";
 /// Number of threads to use for reading files
 const NUM_FILE_THREADS: usize = 8;
 
-// TODO: move into appropriate module
-#[derive(Clone, Debug)]
-pub struct Work {
-    pub offset: u64,
-    pub size: u64,
-    pub file_hash: Hash,
-}
-
-#[allow(dead_code)]
-async fn divide_work<P: AsRef<Path>>(
-    filename: P,
-    _chunk_size: usize,
-) -> Result<Vec<Work>, Box<dyn std::error::Error>> {
-    let stats = metadata(filename.as_ref()).await?;
-    let _size = stats.len();
-    // size / chunk_size;
-    Ok(vec![])
-}
-
-/// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
-/// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
-/// by the hash of the block's contents.
+/// PlainIndex is a struct that represents the index of a directory of files.
+///
+/// It contains the mapping of file hashes to FileRefs, and block hashes to
+/// BlockRefs.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct PlainIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
@@ -128,40 +110,57 @@ impl PlainIndex {
     /// block indexes.
     async fn hash_and_add_file<P: AsRef<Path>>(
         &mut self,
-        path: P,
+        pathref: P,
         chunk_size: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
 
         // TODO: split it up
-        let file_stat = metadata(path.as_ref()).await?;
-        let size = file_stat.len();
+        let file_stat = metadata(pathref.as_ref()).await?;
+        let size: usize = file_stat.len() as usize;
 
         // TODO: limit to NUM_FILE_THREADS or something for tasks per file
-        // Channel for the work
-        // Pull from the channel for reading the file
-        // When work channel is done, close it.
-        // When done reading the file, close the read channel
-        // Wait 'til all reads done before finishing and stitching together
-        // In theory we could hash the chunks as they come in, but that would require ordering them and waiting 'til each is done.
+        // Channel for the work Pull from the channel for reading the file When
+        // work channel is done, close it. When done reading the file, close
+        // the read channel Wait 'til all reads done before finishing and
+        // stitching together In theory we could hash the chunks as they come
+        // in, but that would require ordering them and waiting 'til each is
+        // done.
 
-        let mut m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
-        let (tx, rx) = tokio::sync::mpsc::channel::<usize, usize, usize>();
+        // TODO: maybe bump this up, depends on below logic
+        // Create an mpmc channel for streaming work into hasher tasks. Bounded
+        // in order to handle backpressure
+        let (tx, rx) = async_channel::bounded::<(usize, usize)>(NUM_FILE_THREADS * 8);
+
+        // producer
+        let producer_handle = tokio::spawn(async move {
+            let mut offset = 0usize;
+            while offset < size {
+                let curr_chunk_size: usize = std::cmp::min(chunk_size, size - offset);
+                offset += curr_chunk_size;
+                tx.send((offset, curr_chunk_size)).await.unwrap();
+            }
+        });
+
+        let m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
         let mut file_read_handles = vec![];
+        let path = pathref.as_ref().to_owned().clone();
         for x in 0..NUM_FILE_THREADS {
+            let path = path.clone();
+            let rx = rx.clone();
+            let m = m.clone();
             dbg!(&x);
-            let mut fh = fs::File::open(path.as_ref()).await?;
             file_read_handles.push(tokio::spawn(async move {
+                let mut fh = fs::File::open(&path).await.unwrap();
                 // read from channel
-                let mut fh = fh.clone();
-                let rx = rx.clone();
+                let (offset, size): (usize, usize) = rx.recv().await.unwrap();
+                let order = offset / chunk_size;
+                fh.seek(SeekFrom::Start(offset as u64)).await.unwrap();
 
-                let work = rx.recv().await.unwrap();
-
-                fh.seek(SeekFrom::Start(work.0)).await.unwrap();
-                let bytes = fh.read_exact(work.1).await.unwrap();
-                m.lock().unwrap().insert(work.2, bytes);
+                let mut bytes: Vec<u8> = vec![0u8; size];
+                let _bytes_read = fh.read_exact(&mut bytes).await.unwrap();
+                m.lock().unwrap().insert(order, bytes);
             }));
             // Open a filehandle for the given filename
             // Spawn a read chunk task which reads from the channel, gets the
@@ -171,24 +170,32 @@ impl PlainIndex {
             // send to channel
         }
 
-        // join_all(file_read_handles).await;
-
-        // for i in range {
+        // let total_chunks = (size / chunk_size)
+        // if size % chunk_size as u64 != 0 {
+        //     total_chunks += 1;
         // }
+        // let total_chunks =
+        let extra_chunk = if size % chunk_size == 0 { 0 } else { 1 };
+        let total_chunks = size / chunk_size + extra_chunk;
 
-        let mut offset = 0;
-        while offset < size {
-            let curr_chunk_size = std::cmp::min(chunk_size as u64, size - offset);
-            offset += curr_chunk_size;
-            println!("curr_chunk_size: {}", curr_chunk_size);
-            println!("offset: {}", offset);
-        }
+        // synchronize access to the hashmap
+        // final hashmap reader -- reorder pieces and stitch them together
+        // let reader_handle = tokio::spawn(async move {
+        //     // for i in 0.. {
+        //     //     file_read_handles[i].await.unwrap();
+        //     // }
+        //     // while let Some((order, bytes)) = m.lock().unwrap().pop() {
+        //     //     // stitch together
+        //     // }
+        // });
+
+        // join_all(file_read_handles).await;
 
         // TODO: extensible hashing -- get hasher type from config / hasher from
         // factory
         let mut hasher = Sha512::new();
 
-        let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
+        let chunker = Chunkerator::new(pathref.as_ref(), chunk_size)?;
         for chunk in chunker {
             chunkmetas.push(ChunkMeta::new(&chunk));
             hasher.update(&chunk);
@@ -211,7 +218,7 @@ impl PlainIndex {
         }
 
         // normalize paths by removing `./` prefix
-        let mut path = path.as_ref().to_path_buf();
+        let mut path = pathref.as_ref().to_path_buf();
         if path.starts_with("./") {
             path = path.strip_prefix("./")?.to_path_buf();
         }
