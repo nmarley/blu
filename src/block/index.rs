@@ -20,7 +20,6 @@ use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
 
 use super::blockref::BlockRef;
 use super::ChunkMeta;
-use super::Chunkerator;
 use super::FileRef;
 
 /// the default on-disk filename for the plain index
@@ -116,7 +115,6 @@ impl PlainIndex {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
 
-        // TODO: split it up
         let file_stat = metadata(pathref.as_ref()).await?;
         let size: usize = file_stat.len() as usize;
 
@@ -133,75 +131,82 @@ impl PlainIndex {
         // in order to handle backpressure
         let (tx, rx) = async_channel::bounded::<(usize, usize)>(NUM_FILE_THREADS * 8);
 
+        // Create a vec to hold the handles for the producer, reader + stitcher tasks
+        let mut handles = Vec::with_capacity(NUM_FILE_THREADS + 2);
+
         // producer
-        let producer_handle = tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             let mut offset = 0usize;
             while offset < size {
                 let curr_chunk_size: usize = std::cmp::min(chunk_size, size - offset);
                 offset += curr_chunk_size;
                 tx.send((offset, curr_chunk_size)).await.unwrap();
             }
-        });
+            // drop tx to signal the end of the stream
+            drop(tx);
+        }));
 
         let m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
-        let mut file_read_handles = vec![];
         let path = pathref.as_ref().to_owned().clone();
-        for x in 0..NUM_FILE_THREADS {
+        for _ in 0..NUM_FILE_THREADS {
             let path = path.clone();
             let rx = rx.clone();
             let m = m.clone();
-            dbg!(&x);
-            file_read_handles.push(tokio::spawn(async move {
+            handles.push(tokio::spawn(async move {
                 let mut fh = fs::File::open(&path).await.unwrap();
-                // read from channel
-                let (offset, size): (usize, usize) = rx.recv().await.unwrap();
-                let order = offset / chunk_size;
-                fh.seek(SeekFrom::Start(offset as u64)).await.unwrap();
-
-                let mut bytes: Vec<u8> = vec![0u8; size];
-                let _bytes_read = fh.read_exact(&mut bytes).await.unwrap();
-                m.lock().unwrap().insert(order, bytes);
+                while let Ok((offset, size)) = rx.recv().await {
+                    let order = offset / chunk_size;
+                    fh.seek(SeekFrom::Start(offset as u64)).await.unwrap();
+                    let mut bytes: Vec<u8> = vec![0u8; size];
+                    let _bytes_read = fh.read_exact(&mut bytes).await.unwrap();
+                    m.lock().unwrap().insert(order, bytes);
+                }
+                drop(rx);
             }));
-            // Open a filehandle for the given filename
-            // Spawn a read chunk task which reads from the channel, gets the
-            // work and then reads from the filehandle
-            // tokio::spawn();
-            // read file
-            // send to channel
         }
+        // drop rx to signal the end of the stream
+        drop(rx);
 
-        // let total_chunks = (size / chunk_size)
-        // if size % chunk_size as u64 != 0 {
-        //     total_chunks += 1;
-        // }
-        // let total_chunks =
+        // Create a oneshot channel for sending the full-file hash and the
+        // chunkmetas back to the main task once it's finished
+        let (hashes_tx, hashes_rx) = oneshot::channel::<(Hash, Vec<ChunkMeta>)>();
+
         let extra_chunk = if size % chunk_size == 0 { 0 } else { 1 };
         let total_chunks = size / chunk_size + extra_chunk;
 
         // synchronize access to the hashmap
         // final hashmap reader -- reorder pieces and stitch them together
-        // let reader_handle = tokio::spawn(async move {
-        //     // for i in 0.. {
-        //     //     file_read_handles[i].await.unwrap();
-        //     // }
-        //     // while let Some((order, bytes)) = m.lock().unwrap().pop() {
-        //     //     // stitch together
-        //     // }
-        // });
+        handles.push(tokio::spawn(async move {
+            // TODO: extensible hashing -- get hasher type from config / hasher
+            // from factory
+            let mut hasher = Sha512::new();
+            for i in 0..total_chunks {
+                // spin until the chunk is available
+                while !m.lock().unwrap().contains_key(&i) {
+                    // spin
+                }
+                let bytes = m.lock().unwrap().remove(&i).unwrap();
+                chunkmetas.push(ChunkMeta::new(&bytes));
+                hasher.update(&bytes);
+            }
+            let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize()).unwrap();
+            let file_hash = Hash::from(file_mh.to_bytes());
+            dbg!(&file_hash);
+            // Send the full-file hash and chunkmetas back to the main task
+            let _ = hashes_tx.send((file_hash, chunkmetas));
+        }));
 
-        // join_all(file_read_handles).await;
+        // Wait for all the tasks to finish
+        futures::future::join_all(handles).await;
 
-        // TODO: extensible hashing -- get hasher type from config / hasher from
-        // factory
-        let mut hasher = Sha512::new();
-
-        let chunker = Chunkerator::new(pathref.as_ref(), chunk_size)?;
-        for chunk in chunker {
-            chunkmetas.push(ChunkMeta::new(&chunk));
-            hasher.update(&chunk);
-        }
-        let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize())?;
-        let file_hash = Hash::from(file_mh.to_bytes());
+        // Attempt to receive the full-file hash and chunkmetas from the final
+        // hashmap reader (stitcher)
+        let (file_hash, chunkmetas) = match hashes_rx.await {
+            Ok((file_hash, chunkmetas)) => (file_hash, chunkmetas),
+            Err(e) => {
+                return Err(Box::new(e));
+            }
+        };
 
         // block index
         let mut offset = 0;
