@@ -133,6 +133,7 @@ impl PlainIndex {
 
         // Create a vec to hold the handles for the producer, reader + stitcher tasks
         let mut handles = Vec::with_capacity(NUM_FILE_THREADS + 2);
+        dbg!("before spawn");
 
         // producer
         handles.push(tokio::spawn(async move {
@@ -145,6 +146,8 @@ impl PlainIndex {
             // drop tx to signal the end of the stream
             drop(tx);
         }));
+
+        dbg!("after producer spawn");
 
         let m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
         let path = pathref.as_ref().to_owned().clone();
