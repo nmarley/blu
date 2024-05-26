@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
 
 use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
@@ -65,7 +66,7 @@ impl<'a> BlobBuffer<'a> {
     /// and a new one started.
     ///
     /// To be used with [`BlobBuffer::finalize`].
-    pub fn add_chunk(
+    pub async fn add_chunk(
         &mut self,
         chunk: &mut [u8],
         idx: &mut BlobIndex,
@@ -88,7 +89,7 @@ impl<'a> BlobBuffer<'a> {
         self.offset += size;
 
         if self.is_full() {
-            let path = self.roll_new_blob(idx)?;
+            let path = self.roll_new_blob(idx).await?;
             debug!("Rolled new blob at {:?}!", path);
             return Ok(());
         }
@@ -98,21 +99,33 @@ impl<'a> BlobBuffer<'a> {
     }
 
     /// Finalize the blob buffer, writing the last blob to disk and updating the index.
-    pub fn finalize(&mut self, idx: &mut BlobIndex) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn finalize(
+        &mut self,
+        idx: &mut BlobIndex,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_empty() {
-            self.roll_new_blob(idx)?;
+            self.roll_new_blob(idx).await?;
         }
         Ok(())
     }
 
-    fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    async fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let raw_bytes = data;
         let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
-        self.storage_backend.write_data(&blobfile_hash, raw_bytes)
+        // TODO: change to identifier?
+        let blobfile_path = match self
+            .storage_backend
+            .write_data(&blobfile_hash, raw_bytes)
+            .await
+        {
+            Ok(path) => path,
+            Err(err) => return Err(Box::new(err)),
+        };
+        Ok(blobfile_path)
     }
 
     // TODO: rename this
-    fn roll_new_blob(
+    async fn roll_new_blob(
         &mut self,
         idx: &mut BlobIndex,
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -123,9 +136,9 @@ impl<'a> BlobBuffer<'a> {
         let compressed = compress(&self.data)?;
         let encrypted = self.bbox.encrypt(&compressed)?;
 
-        let path = self.write_blob(&encrypted)?;
+        let path = self.write_blob(&encrypted).await?;
         for (chunk_hash, location) in self.positions.iter_mut() {
-            location.path = path.clone();
+            location.path.clone_from(&path);
             idx.add_chunk_location(chunk_hash, location);
         }
         self.reset();
@@ -243,7 +256,7 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
     }
 
     /// Get the bytes from the blob file at the specified position.
-    pub fn get_bytes(
+    pub async fn get_bytes(
         &mut self,
         location_ref: &BlobBlockLocation,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -264,8 +277,10 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
                     "Reading blob file from backend: {}",
                     location_ref.path.display()
                 );
-                let data = &self.backend.read_data(&location_ref.path)?;
-                let data = self.bbox.decrypt(data)?;
+                let data = &mut self.backend.read_data(&location_ref.path).await?;
+                let mut buf = vec![];
+                data.read_to_end(&mut buf).await?;
+                let data = self.bbox.decrypt(&buf)?;
                 let data = decompress(&data)?;
                 self.data_cache.add(&hash, data);
                 self.data_cache.get(&hash).unwrap()
@@ -388,7 +403,7 @@ mod test {
         Local::new(datadir)
     }
 
-    fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
+    async fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
@@ -399,22 +414,22 @@ mod test {
         let mut blob_buf = BlobBuffer::new(backend, bbox);
         // load w/some data
         for v in vec.iter_mut() {
-            blob_buf.add_chunk(v, &mut blob_index).unwrap();
+            blob_buf.add_chunk(v, &mut blob_index).await.unwrap();
         }
         (blob_buf, blob_index)
     }
 
-    #[test]
-    fn new() {
+    #[tokio::test]
+    async fn new() {
         let backend = temp_local_backend();
-        let (mut blob_buf, mut idx) = test_blobbuf(&backend);
-        blob_buf.finalize(&mut idx).unwrap();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
         assert_eq!(idx.count_blob_files(), 1);
         assert_eq!(idx.count_chunks_indexed(), 3);
     }
 
-    #[test]
-    fn capacity() {
+    #[tokio::test]
+    async fn capacity() {
         // NOTE: do not use `test_blobmgr()` here, as we are testing capacity
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
@@ -431,16 +446,16 @@ mod test {
         let mut blob_buf = BlobBuffer::with_capacity(&backend, bbox, 3);
         // load w/some data
         for v in vec.iter_mut() {
-            blob_buf.add_chunk(v, &mut blob_index).unwrap();
+            blob_buf.add_chunk(v, &mut blob_index).await.unwrap();
         }
         assert_eq!(blob_index.count_blob_files(), 4);
         assert_eq!(blob_index.count_chunks_indexed(), 4);
     }
 
-    #[test]
-    fn blob() {
+    #[tokio::test]
+    async fn blob() {
         let backend = temp_local_backend();
-        let (mut blob_buf, mut _idx) = test_blobbuf(&backend);
+        let (mut blob_buf, mut _idx) = test_blobbuf(&backend).await;
         // TODO: Test the interface, not the implementation
         let (data, positions) = blob_buf._eject_blob();
         assert_eq!(

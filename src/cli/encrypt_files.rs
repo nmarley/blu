@@ -10,7 +10,7 @@ use crate::hash::{self, Hash};
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Encrypt the plain text files in the index
-pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started encrypt_files util");
 
     let dir = Path::new(".");
@@ -19,7 +19,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e
@@ -37,7 +37,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
         blob_index.count_blob_files()
     );
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = cfg.init_storage_backend().await?;
 
     // NOTE:
     //     `*` derefs the `Box<dyn StorageBackend>`
@@ -73,7 +73,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
             }
 
             let block_ref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
-            let data = plain_index.read_block_bytes(block_ref);
+            let data = plain_index.read_block_bytes(block_ref).await;
 
             // NOTE: we probably want to somehow keep this around / add it as a
             // checksum to ensure that the data is not corrupted
@@ -85,18 +85,20 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
 
             // add it to the blob buffer
             // info!("Adding chunk to blob buffer");
-            blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
+            blob_buf
+                .add_chunk(&mut data.clone(), &mut blob_index)
+                .await?;
             count_added += 1;
         }
     }
 
     println!("Added {} new chunks to blob buffer", count_added);
     if count_added > 0 || args.force_write_index {
-        match blob_buf.finalize(&mut blob_index) {
+        match blob_buf.finalize(&mut blob_index).await {
             Ok(_) => println!("Finalized blob buffer!"),
             Err(e) => println!("Error finalizing blob buffer: {}", e),
         }
-        match cfg.write_blob_index(&blob_index, &bbox) {
+        match cfg.write_blob_index(&blob_index, &bbox).await {
             Ok(_) => println!("Wrote blob index!"),
             Err(e) => println!("Error writing blob index: {}", e),
         }

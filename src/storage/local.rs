@@ -1,9 +1,12 @@
-use std::fs;
+use async_trait::async_trait;
 use std::path::{Path, PathBuf};
+use tokio::fs::{self, File};
+use tokio::io::AsyncRead;
 
 use crate::hash::Hash;
 
 use super::StorageBackend;
+use super::StorageError;
 
 /// Local storage backend for managing data on a local filesystem.
 #[derive(Default, Debug)]
@@ -20,18 +23,25 @@ impl Local {
     }
 }
 
+#[async_trait]
 impl StorageBackend for Local {
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        let data = std::fs::read(path)?;
-        Ok(data)
+    async fn read_data(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
+        let file = File::open(path).await.map_err(StorageError::IoError)?;
+        Ok(Box::new(file) as Box<dyn AsyncRead + Unpin + Send>)
     }
 
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let hash_path = super::path_for(hash)?;
+    async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError> {
+        let hash_path = match super::path_for(hash) {
+            Ok(path) => path,
+            Err(err) => return Err(StorageError::HashError(err)),
+        };
         let path = self.datadir.join(hash_path).to_path_buf();
 
-        fs::create_dir_all(path.parent().unwrap())?;
-        fs::write(&path, data)?;
+        fs::create_dir_all(path.parent().unwrap()).await?;
+        fs::write(&path, data).await?;
         Ok(path)
     }
 }

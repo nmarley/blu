@@ -1,6 +1,8 @@
 use std::collections::HashSet;
-use std::os::unix::fs::FileExt;
+use std::io::SeekFrom;
 use std::path::Path;
+use tokio::fs;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::age::BlackBox;
 use crate::blob::EncBlobReader;
@@ -11,7 +13,7 @@ use crate::hash::Hash;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
     info!("Got file_hashes: {:?}", args.file_hashes);
 
@@ -19,7 +21,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e
@@ -28,7 +30,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
     let files_map = plain_index.files_map_ref();
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = cfg.init_storage_backend().await?;
 
     // NOTE:
     //     `*` derefs the `Box<dyn StorageBackend>`
@@ -104,15 +106,21 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         //    from our block data (decrypted the encrypted blobs).
         // create sparse file that's X bytes long
         println!("Creating sparse file of size: {}", file_size);
-        let fh = std::fs::OpenOptions::new()
+        let mut fh = tokio::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(restore_path)?;
+            .truncate(true)
+            .open(restore_path)
+            .await?;
         let _ = fh
             .set_len(file_size)
+            .await
             .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
 
         let mut offset = 0u64;
+
+        // TODO: Spawn multiple threads to read the blob data concurrently +
+        // write the file. Use channels.
         // slowness here ...
         for chunkmeta in fileref.chunkmetas.iter() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
@@ -124,6 +132,10 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
                 // corrupted / not intact so we should report it, but could
                 // ostensibly be fixed w/some repair tool if the blobs can be
                 // found later.
+                //
+                // An alternative would be to search the index for all blob
+                // locations just to make sure we have them all before
+                // continuing.
                 eprintln!("Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}", chunkmeta.hash, file_hash);
                 continue; // next file
             }
@@ -140,10 +152,11 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
             dbg!(&blob_block_location_ref);
 
             // Decrypt the blob file and read the necessary data
-            let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
+            let block_data = reader.get_bytes(&blob_block_location_ref).await.unwrap();
             println!("Read {} bytes from blob file", block_data.len());
 
-            fh.write_all_at(&block_data, offset)?;
+            fh.seek(SeekFrom::Start(offset)).await?;
+            fh.write_all(&block_data).await?;
             println!(
                 "Wrote {} bytes to file {:?}",
                 block_data.len(),
@@ -153,8 +166,9 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         }
 
         // hard links for the same data with multiple filenames
+        // TODO: This should probably be a command line flag
         for other in other_paths.iter() {
-            match std::fs::hard_link(restore_path, other) {
+            match fs::hard_link(restore_path, other).await {
                 Ok(_) => {
                     println!("Created hard link: {:?}", other);
                 }

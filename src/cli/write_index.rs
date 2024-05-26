@@ -1,6 +1,6 @@
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 use crate::age::BlackBox;
 use crate::block::PlainIndex;
@@ -10,7 +10,7 @@ use crate::io::BlackBoxSerializable;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Write the index to a local file
-pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started write_index util");
 
     let dir = Path::new(".");
@@ -28,14 +28,14 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     };
 
     // test ability to write index file before further processing
-    check_outfile_writable(&outfile)?;
+    check_outfile_writable(&outfile).await?;
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     info!("Indexing {:?}", dir);
-    let index = PlainIndex::new(dir)?;
+    let index = PlainIndex::new(dir).await?;
 
     // back out here since we pass a filename as a direct path
-    match write_index_file(&index, &bbox, &outfile) {
+    match write_index_file(&index, &bbox, &outfile).await {
         Ok(num_bytes) => info!(
             "Index written to {} ({} bytes)",
             outfile.display(),
@@ -47,27 +47,29 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-pub(crate) fn check_outfile_writable<P: AsRef<Path>>(
+pub(crate) async fn check_outfile_writable<P: AsRef<Path>>(
     outfile: P,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // create parent dir(s) if necessary
     if let Some(parent_dir) = outfile.as_ref().parent() {
-        fs::create_dir_all(parent_dir)?;
+        fs::create_dir_all(parent_dir).await?;
     }
 
-    fs::File::create(&outfile).map_err(|e| -> Box<dyn std::error::Error> {
-        format!(
-            "unable to write to outfile '{}': {}",
-            outfile.as_ref().display(),
-            e
-        )
-        .into()
-    })?;
+    fs::File::create(&outfile)
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            format!(
+                "unable to write to outfile '{}': {}",
+                outfile.as_ref().display(),
+                e
+            )
+            .into()
+        })?;
 
     Ok(())
 }
 
-pub(crate) fn write_index_file<P: AsRef<Path>>(
+pub(crate) async fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
     bbox: &BlackBox,
     outfile: P,
@@ -75,7 +77,7 @@ pub(crate) fn write_index_file<P: AsRef<Path>>(
     let mut enc_idx_bytes = Vec::new();
     index.write(&mut enc_idx_bytes, bbox)?;
     let size = enc_idx_bytes.len();
-    let mut file = fs::File::create(outfile)?;
-    file.write_all(&enc_idx_bytes)?;
+    let mut file = fs::File::create(outfile).await?;
+    file.write_all(&enc_idx_bytes).await?;
     Ok(size)
 }

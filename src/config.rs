@@ -78,7 +78,9 @@ impl Default for Config {
 }
 
 /// read_config reads the config from the .blu directory in the base_dir.
-pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
+pub async fn read_config<P: AsRef<Path>>(
+    base_dir: P,
+) -> Result<Config, Box<dyn std::error::Error>> {
     let cfg_dir = base_dir.as_ref().join(".blu");
     let config_toml = cfg_dir.join("config.toml");
     // TODO: remove deprecated JSON configs in v0.5.x
@@ -87,13 +89,13 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
     // Avoid toctou race condition
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
 
-    let mut cfg: Config = match fs::read_to_string(config_toml) {
+    let mut cfg: Config = match tokio::fs::read_to_string(config_toml).await {
         Ok(toml_str) => match toml::from_str(&toml_str) {
             Ok(toml_cfg) => toml_cfg,
             Err(e) => return Err(e.into()),
         },
         Err(_) => {
-            match fs::read_to_string(config_json) {
+            match tokio::fs::read_to_string(config_json).await {
                 Ok(json_str) => match serde_json::from_str(&json_str) {
                     Ok(json_cfg) => {
                         println!("WARNING: using deprecated JSON config file, please update to TOML format");
@@ -130,17 +132,21 @@ macro_rules! load_index {
 macro_rules! write_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
         /// $name writes the index to the idxdir.
-        pub fn $name(
+        pub async fn $name(
             &self,
             idx: &$idx_struct_name,
             bbox: &BlackBox,
         ) -> Result<(), Box<dyn std::error::Error>> {
+            use tokio::fs::File;
+            use tokio::io::AsyncWriteExt;
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             // encrypt + compress + serialize index to buf
             let mut buf = vec![];
             idx.write(&mut buf, bbox)?;
             // write to file
-            std::fs::write(index_path, buf)?;
+            let mut file = File::create(index_path).await?;
+            file.write_all(&buf).await?;
+            file.flush().await?;
             Ok(())
         }
     };
@@ -167,17 +173,16 @@ impl Config {
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
     /// Initializes the storage backend based on `backend` field in config.
-    pub fn init_storage_backend(
+    pub async fn init_storage_backend(
         &self,
     ) -> Result<Box<dyn StorageBackend>, Box<dyn std::error::Error>> {
         match self.backend {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(Box::new(Local::new(&local_backend.path)))
             }
-            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(AmazonS3::new(
-                &s3_backend.bucket,
-                s3_backend.prefix.clone(),
-            ))),
+            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(
+                AmazonS3::new(&s3_backend.bucket, s3_backend.prefix.as_deref()).await,
+            )),
             #[allow(unreachable_patterns)]
             _ => Err("Unsupported backend".into()),
         }
@@ -194,10 +199,10 @@ pub(crate) mod test {
     // const TEST_DIR_T2: &str = "test/old/t2/";
     const TEST_DIR_BLOCKS_T4: &str = "test/blocks/t4/";
 
-    #[test]
-    fn read_config() {
-        assert!(super::read_config(TEST_DIR_T0).is_err());
-        let cfg = super::read_config(TEST_DIR_T1).unwrap();
+    #[tokio::test]
+    async fn read_config() {
+        assert!(super::read_config(TEST_DIR_T0).await.is_err());
+        let cfg = super::read_config(TEST_DIR_T1).await.unwrap();
         // dbg!(&cfg);
 
         assert_eq!(
@@ -211,10 +216,10 @@ pub(crate) mod test {
         );
     }
 
-    #[test]
-    fn load_plain_index() {
+    #[tokio::test]
+    async fn load_plain_index() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
+        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).await.unwrap();
         let index_opt = cfg.load_plain_index(&bbox);
         assert!(index_opt.is_some());
         let _index = index_opt.unwrap();

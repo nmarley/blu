@@ -3,8 +3,13 @@ use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::fs::{self, metadata};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::sync::{oneshot, Mutex};
+use tokio::time::{sleep, Duration};
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -16,16 +21,18 @@ use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
 
 use super::blockref::BlockRef;
 use super::ChunkMeta;
-use super::Chunkerator;
 use super::FileRef;
 
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
 const CURRENT_INDEX_VERSION: &str = "0.2.1";
+/// Number of threads to use for reading files
+const NUM_FILE_THREADS: usize = 8;
 
-/// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
-/// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
-/// by the hash of the block's contents.
+/// PlainIndex is a struct that represents the index of a directory of files.
+///
+/// It contains the mapping of file hashes to FileRefs, and block hashes to
+/// BlockRefs.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct PlainIndex {
     // file hash -> FileRef { file: File, paths: HashSet }
@@ -41,23 +48,23 @@ pub struct PlainIndex {
 
 impl PlainIndex {
     /// Create a new PlainIndex given a directory path.
-    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE)
+    pub async fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE).await
     }
 
     /// Create a new PlainIndex given a directory path and custom (non-default)
     /// chunk size.
-    pub fn new_custom_chunk_size<P: AsRef<Path>>(
+    pub async fn new_custom_chunk_size<P: AsRef<Path>>(
         dir: P,
         chunk_size: usize,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut idx = Self::new_empty();
-        idx.add(dir, Some(chunk_size))?;
+        idx.add(dir, Some(chunk_size)).await?;
         Ok(idx)
     }
 
     /// Add entries to the PlainIndex given a file/dir path and chunk size.
-    pub fn add<P: AsRef<Path>>(
+    pub async fn add<P: AsRef<Path>>(
         &mut self,
         path: P,
         chunk_size: Option<usize>,
@@ -76,7 +83,7 @@ impl PlainIndex {
         match path.as_ref() {
             p if p.is_file() => {
                 // add file element
-                self.hash_and_add_file(p, chunk_size)?;
+                self.hash_and_add_file(p, chunk_size).await?;
             }
             p if p.is_dir() => {
                 // walk dir and add each file element
@@ -87,7 +94,7 @@ impl PlainIndex {
                     .filter(|e| !e.path().starts_with("./.blu/"))
                     .filter(|e| e.path().is_file())
                 {
-                    self.hash_and_add_file(entry.path(), chunk_size)?;
+                    self.hash_and_add_file(entry.path(), chunk_size).await?;
                 }
             }
             p => {
@@ -101,23 +108,152 @@ impl PlainIndex {
 
     /// Lower-level internal method to hash a file and add to the file and
     /// block indexes.
-    fn hash_and_add_file<P: AsRef<Path>>(
+    async fn hash_and_add_file<P: AsRef<Path>>(
         &mut self,
-        path: P,
+        pathref: P,
         chunk_size: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
-        // TODO: extensible hashing -- get hasher type from config / hasher from
-        // factory
-        let mut hasher = Sha512::new();
-        let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
-        for chunk in chunker {
-            chunkmetas.push(ChunkMeta::new(&chunk));
-            hasher.update(&chunk);
+
+        let file_stat = metadata(pathref.as_ref()).await?;
+        // dbg!(&file_stat);
+        let size: usize = file_stat.len() as usize;
+        // dbg!(&size);
+        let extra_chunk = if size % chunk_size == 0 { 0 } else { 1 };
+        // dbg!(&extra_chunk);
+        let total_chunks = size / chunk_size + extra_chunk;
+        // dbg!(&total_chunks);
+        let num_file_threads = std::cmp::min(NUM_FILE_THREADS, total_chunks);
+        // dbg!(&num_file_threads);
+
+        // TODO: limit to NUM_FILE_THREADS or something for tasks per file
+        // Channel for the work Pull from the channel for reading the file When
+        // work channel is done, close it. When done reading the file, close
+        // the read channel Wait 'til all reads done before finishing and
+        // stitching together In theory we could hash the chunks as they come
+        // in, but that would require ordering them and waiting 'til each is
+        // done.
+
+        // Create an mpmc channel for streaming work into hasher tasks. Bounded
+        // in order to handle backpressure
+        // This number is totally arbitrary.
+        let (tx, rx) = async_channel::bounded::<(usize, usize)>(num_file_threads * 8);
+
+        // Create a vec to hold the handles for the producer, reader + stitcher tasks
+        let mut handles = Vec::with_capacity(num_file_threads + 2);
+        // dbg!("before spawn");
+
+        // producer
+        handles.push(tokio::spawn(async move {
+            let mut offset = 0usize;
+            while offset < size {
+                let curr_chunk_size: usize = std::cmp::min(chunk_size, size - offset);
+                // dbg!(
+                //     "sending offset=%d, curr_chunk_size=%d",
+                //     offset,
+                //     curr_chunk_size
+                // );
+                tx.send((offset, curr_chunk_size)).await.unwrap();
+                offset += curr_chunk_size;
+            }
+            // drop tx to signal the end of the stream
+            drop(tx);
+        }));
+
+        // dbg!("after producer spawn");
+
+        let m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let path = pathref.as_ref().to_owned().clone();
+        for _ in 0..num_file_threads {
+            let path = path.clone();
+            let rx = rx.clone();
+            let m = m.clone();
+            handles.push(tokio::spawn(async move {
+                // dbg!(&path, &reader_idx);
+                let mut fh = match fs::File::open(&path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        panic!("unable to open file");
+                    }
+                };
+                while let Ok((offset, size)) = rx.recv().await {
+                    let order = offset / chunk_size;
+                    // dbg!(&order, &offset, &size, &chunk_size, &reader_idx);
+                    match fh.seek(SeekFrom::Start(offset as u64)).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!("{}", e);
+                            panic!("unable to seek");
+                        }
+                    }
+                    // let mut bytes: Vec<u8> = vec![0u8; size];
+                    let mut bytes: Vec<u8> = vec![0u8; size];
+                    // dbg!(bytes.len());
+                    let _bytes_read = match fh.read_exact(&mut bytes).await {
+                        Ok(size) => {
+                            // dbg!("bytes read = %d", size);
+                            size
+                        }
+                        Err(e) => {
+                            eprintln!("{}", e);
+                            panic!("unable to read bytes from file");
+                        }
+                    };
+                    m.lock().await.insert(order, bytes);
+                }
+                drop(rx);
+            }));
         }
-        let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize())?;
-        let file_hash = Hash::from(file_mh.to_bytes());
+        // dbg!("after reader spawn");
+        // drop rx to signal the end of the stream
+        drop(rx);
+
+        // Create a oneshot channel for sending the full-file hash and the
+        // chunkmetas back to the main task once it's finished
+        let (hashes_tx, hashes_rx) = oneshot::channel::<(Hash, Vec<ChunkMeta>)>();
+        // dbg!("after creating oneshot channel");
+
+        // synchronize access to the hashmap
+        // final hashmap reader -- reorder pieces and stitch them together
+        handles.push(tokio::spawn(async move {
+            // dbg!("within final spawn");
+            // TODO: extensible hashing -- get hasher type from config / hasher
+            // from factory
+            let mut hasher = Sha512::new();
+            for i in 0..total_chunks {
+                // Spin until the chunk is available
+                loop {
+                    if let Some(bytes) = m.lock().await.remove(&i) {
+                        chunkmetas.push(ChunkMeta::new(&bytes));
+                        hasher.update(&bytes);
+                        break;
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            }
+            // dbg!("light up a stage and wax a chump like a candle");
+            let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize()).unwrap();
+            let file_hash = Hash::from(file_mh.to_bytes());
+            // dbg!(&file_hash);
+            // Send the full-file hash and chunkmetas back to the main task
+            let _ = hashes_tx.send((file_hash, chunkmetas));
+        }));
+        // dbg!("after stitcher spawn");
+
+        // Wait for all the tasks to finish
+        futures::future::join_all(handles).await;
+        // dbg!("after join_all");
+
+        // Attempt to receive the full-file hash and chunkmetas from the final
+        // hashmap reader (stitcher)
+        let (file_hash, chunkmetas) = match hashes_rx.await {
+            Ok((file_hash, chunkmetas)) => (file_hash, chunkmetas),
+            Err(e) => {
+                return Err(Box::new(e));
+            }
+        };
 
         // block index
         let mut offset = 0;
@@ -134,7 +270,7 @@ impl PlainIndex {
         }
 
         // normalize paths by removing `./` prefix
-        let mut path = path.as_ref().to_path_buf();
+        let mut path = pathref.as_ref().to_path_buf();
         if path.starts_with("./") {
             path = path.strip_prefix("./")?.to_path_buf();
         }
@@ -215,26 +351,27 @@ impl PlainIndex {
 
     // TODO: Should this be block hash instead?
     /// Read the bytes from disk and return them for a given blockref.
-    pub fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
+    pub async fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
         let (file_hash, disk_index) = blockref.references.iter().next().unwrap();
         let fileref = self.get_fileref_ref(file_hash).unwrap();
         let filename = fileref.get_a_path();
 
-        let mut f = std::fs::File::open(filename).unwrap();
+        // TODO: don't unwrap
+        let mut f = fs::File::open(filename).await.unwrap();
         let mut buf: Vec<u8> = vec![0; disk_index.size];
-        let _seekptr = f.seek(SeekFrom::Start(disk_index.offset as u64)).unwrap();
-        f.read_exact(&mut buf).unwrap();
+        let _ = f.seek(SeekFrom::Start(disk_index.offset as u64)).await;
+        f.read_exact(&mut buf).await.unwrap();
         buf
     }
 
     /// Update the existing index, given a directory path, and return a list of removed (dangling)
     /// entries.
-    pub fn update<P: AsRef<Path>>(
+    pub async fn update<P: AsRef<Path>>(
         &mut self,
         base_dir: P,
         chunk_size: usize,
     ) -> Result<(Vec<FileRef>, Vec<BlockRef>), Box<dyn std::error::Error>> {
-        let new_index = Self::new_custom_chunk_size(base_dir, chunk_size)?;
+        let new_index = Self::new_custom_chunk_size(base_dir, chunk_size).await?;
 
         let mut to_delete: HashSet<Hash> = HashSet::new();
         let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
@@ -258,12 +395,9 @@ impl PlainIndex {
             self.files.entry(hash).and_modify(|e| e.paths = paths);
         }
 
-        // for each hash/fileref in NEW ...
+        // for each hash/fileref in NEW, add it
         for (hash, fileref) in new_index.files.into_iter() {
-            if self.files.get(&hash).is_none() {
-                // add it
-                self.files.insert(hash, fileref);
-            }
+            self.files.entry(hash).or_insert(fileref);
         }
 
         // files HashMap::<Hash, FileRef>
@@ -299,12 +433,9 @@ impl PlainIndex {
                 .and_modify(|e| e.references = references);
         }
 
-        // for each hash/fileref in NEW ...
+        // for each hash/blockref in NEW, add it
         for (hash, blockref) in new_index.blocks.into_iter() {
-            if self.blocks.get(&hash).is_none() {
-                // add it
-                self.blocks.insert(hash, blockref);
-            }
+            self.blocks.entry(hash).or_insert(blockref);
         }
 
         // blocks HashMap::<Hash, BlockRef>
@@ -349,6 +480,7 @@ fn now() -> chrono::NaiveDateTime {
 mod test {
     use std::collections::{HashMap, HashSet};
     use std::path::Path;
+    use tokio::fs;
 
     use super::{BlockRef, ChunkMeta, FileRef, PlainIndex, Position};
     use crate::hash::Hash;
@@ -383,10 +515,12 @@ mod test {
     // - ensures that pathbufs are updated
     // - ensures that deleted filerefs and blockrefs are removed from index
     // - ensures that added filerefs and blockrefs are added to index
-    #[test]
-    fn update_index() {
+    #[tokio::test]
+    async fn update_index() {
         let chunk_size = 4096;
-        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T5, chunk_size)
+            .await
+            .unwrap();
 
         let before_filerefs = HashMap::from([
             (
@@ -569,21 +703,23 @@ mod test {
 
         // rename file5.txt to file6.txt
         let dir_path = Path::new(TEST_BLOCKS_DIR_T5);
-        std::fs::rename(dir_path.join("file5.txt"), dir_path.join("file6.txt")).unwrap();
+        fs::rename(dir_path.join("file5.txt"), dir_path.join("file6.txt"))
+            .await
+            .unwrap();
 
         // remove file4.txt
-        let file4_buf = std::fs::read(dir_path.join("file4.txt")).unwrap();
-        std::fs::remove_file(dir_path.join("file4.txt")).unwrap();
+        let file4_buf = fs::read(dir_path.join("file4.txt")).await.unwrap();
+        fs::remove_file(dir_path.join("file4.txt")).await.unwrap();
 
         // change content of file3.txt
-        let file3_buf = std::fs::read(dir_path.join("file3.txt")).unwrap();
+        let file3_buf = fs::read(dir_path.join("file3.txt")).await.unwrap();
         let mut e_buf = vec![b'e'; 4095];
         e_buf.push(b'\n');
-        std::fs::write(dir_path.join("file3.txt"), e_buf).unwrap();
+        fs::write(dir_path.join("file3.txt"), e_buf).await.unwrap();
 
         // remove file_f.txt
-        let file_f_buf = std::fs::read(dir_path.join("file_f.txt")).unwrap();
-        std::fs::remove_file(dir_path.join("file_f.txt")).unwrap();
+        let file_f_buf = fs::read(dir_path.join("file_f.txt")).await.unwrap();
+        fs::remove_file(dir_path.join("file_f.txt")).await.unwrap();
 
         let after_filerefs = HashMap::from([
             (
@@ -734,15 +870,23 @@ mod test {
             ),
         ]);
 
-        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).unwrap();
+        let (mut filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T5, chunk_size).await.unwrap();
         // rename file6.txt back to file5.txt
-        std::fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt")).unwrap();
+        fs::rename(dir_path.join("file6.txt"), dir_path.join("file5.txt"))
+            .await
+            .unwrap();
         // restore file4.txt
-        std::fs::write(dir_path.join("file4.txt"), file4_buf).unwrap();
+        fs::write(dir_path.join("file4.txt"), file4_buf)
+            .await
+            .unwrap();
         // restore file3.txt
-        std::fs::write(dir_path.join("file3.txt"), file3_buf).unwrap();
+        fs::write(dir_path.join("file3.txt"), file3_buf)
+            .await
+            .unwrap();
         // restore file_f.txt
-        std::fs::write(dir_path.join("file_f.txt"), file_f_buf).unwrap();
+        fs::write(dir_path.join("file_f.txt"), file_f_buf)
+            .await
+            .unwrap();
         // NOTE: DO NOT put any tests between the index.update() call and the
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
@@ -787,10 +931,12 @@ mod test {
     // TODO: this is tested above, so can probably remove this test and reserve
     // t6 for something else.
     const TEST_BLOCKS_DIR_T6: &str = "test/blocks/t6/";
-    #[test]
-    fn update_index_paths() {
+    #[tokio::test]
+    async fn update_index_paths() {
         let chunk_size = 4096;
-        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
+        let mut index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T6, chunk_size)
+            .await
+            .unwrap();
 
         let before_filerefs = HashMap::from([(
             Hash::from(HASH_HELLO),
@@ -844,11 +990,11 @@ mod test {
         let old_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hi.txt");
         let new_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hello.txt");
         // rename to test
-        std::fs::rename(&old_filename, &new_filename).unwrap();
+        fs::rename(&old_filename, &new_filename).await.unwrap();
         // run the update
-        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).unwrap();
+        let (filerefs, blockrefs) = index.update(TEST_BLOCKS_DIR_T6, chunk_size).await.unwrap();
         // move it back
-        std::fs::rename(&new_filename, &old_filename).unwrap();
+        fs::rename(&new_filename, &old_filename).await.unwrap();
 
         assert_eq!(index.files, after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);

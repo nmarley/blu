@@ -1,5 +1,5 @@
-use std::fs;
 use std::path::Path;
+use tokio::fs;
 
 use crate::age::BlackBox;
 use crate::blob::BlobIndex;
@@ -9,7 +9,7 @@ use crate::io::BlackBoxSerializable;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Defrag blobs is still a WIP
-pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started defrag_blobs util");
 
     // move into the basedir for all operations, like `git -C <dir>`
@@ -20,7 +20,7 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Err
 
     let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
 
-    let blob_index = load_blob_index(&bbox, args.blob_index_path).unwrap();
+    let blob_index = load_blob_index(&bbox, args.blob_index_path).await.unwrap();
     info!(
         "Blob index has {} blob files",
         blob_index.count_blob_files()
@@ -32,7 +32,7 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Err
     // Let's just use the First-Fit Decreasing (FFD) algorithm and call it good
     // (enough).
 
-    // let backend = cfg.init_storage_backend()?;
+    // let backend = cfg.init_storage_backend().await?;
 
     for (blob_path, set_chunk_hashes) in blob_index.path_index.iter() {
         let mut blob_size = 0_usize;
@@ -56,9 +56,9 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn load_blob_index<P: AsRef<Path>>(bbox: &BlackBox, index_path: P) -> Option<BlobIndex> {
+async fn load_blob_index<P: AsRef<Path>>(bbox: &BlackBox, index_path: P) -> Option<BlobIndex> {
     // read index file data or return None
-    let index_data: Vec<u8> = fs::read(index_path.as_ref()).ok()?;
+    let index_data: Vec<u8> = fs::read(index_path.as_ref()).await.ok()?;
     // deserialize + decompress + decrypt index or return None
     BlobIndex::read(&index_data[..], bbox).ok()
 }

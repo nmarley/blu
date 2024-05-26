@@ -17,6 +17,7 @@
 ///       being used, etc.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tokio::fs;
 use walkdir::WalkDir;
 
 use crate::age::BlackBox;
@@ -31,11 +32,11 @@ const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
 const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Show the local status of the blu vault
-pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     // info!("Started status util");
     let dir = Path::new(".");
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).await.map_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
         e
@@ -99,7 +100,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
                         // w/index
                         //
                         // calculates hash here
-                        let bytes = match std::fs::read(p) {
+                        let bytes = match fs::read(p).await {
                             Ok(b) => b,
                             Err(e) => {
                                 println!("unable to read file {:?}: {}", p, e);
@@ -164,7 +165,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
         StatusCheckType::Deep => {
             // index the current dir on filesystem and compare
-            let curr_fs_index = PlainIndex::new(".")?;
+            let curr_fs_index = PlainIndex::new(".").await?;
 
             // files that ARE NOT in the index but ARE in FS
             for (file_hash, fileref) in &curr_fs_index.files {

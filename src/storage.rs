@@ -1,10 +1,14 @@
+use async_trait::async_trait;
 use multihash::Multihash;
 use std::path::{Path, PathBuf};
+use tokio::io::AsyncRead;
 
+mod error;
 mod local;
 mod s3;
 
 use crate::hash::Hash;
+use error::StorageError;
 
 // TODO : Decouple filesystem semantics from storage backend
 
@@ -38,16 +42,20 @@ use crate::hash::Hash;
 /// chosen based on the provided hash. It returns a `Result` which, on success,
 /// contains the `PathBuf` where the data is stored. On failure, it returns an
 /// error.
+#[async_trait]
 pub trait StorageBackend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
     // around 8MiB by default ... maybe streaming doesn't make sense here.
     /// Read the data blob identified by the hash from the storage backend.
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+    async fn read_data(
+        &self,
+        path: &Path,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError>;
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>>;
+    async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, StorageError>;
 }
 
 /// Get a path for the encrypted data.
@@ -143,13 +151,14 @@ mod test {
     );
 
     use tempfile::tempdir;
+    use tokio::io::AsyncReadExt;
 
     use super::Local;
     use super::StorageBackend;
     use crate::hash::multihash;
 
-    #[test]
-    fn local_rw_data() {
+    #[tokio::test]
+    async fn local_rw_data() {
         let datadir = tempdir().unwrap();
         let storage = Local::new(datadir);
 
@@ -159,11 +168,13 @@ mod test {
         let hash = Hash::from(mh.to_bytes());
 
         // Write the data
-        let pathbuf = storage.write_data(&hash, data).unwrap();
+        let pathbuf = storage.write_data(&hash, data).await.unwrap();
 
         // Read the data back and verify it
-        let read_data = storage.read_data(&pathbuf).unwrap();
-        assert_eq!(data.to_vec(), read_data);
+        let mut read_data = storage.read_data(&pathbuf).await.unwrap();
+        let mut buf = vec![];
+        read_data.read_to_end(&mut buf).await.unwrap();
+        assert_eq!(data.to_vec(), buf);
     }
 }
 
