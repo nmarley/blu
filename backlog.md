@@ -1,5 +1,9 @@
 ## backlog
 
+- [ ] Async indexing w/multiple tasks
+
+- [ ] Async encryption w/multiple tasks
+
 - [x] TOML instead of JSON for the config file format
 
 - v0.5.x
