@@ -117,15 +117,10 @@ impl PlainIndex {
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
 
         let file_stat = metadata(pathref.as_ref()).await?;
-        // dbg!(&file_stat);
         let size: usize = file_stat.len() as usize;
-        // dbg!(&size);
         let extra_chunk = if size % chunk_size == 0 { 0 } else { 1 };
-        // dbg!(&extra_chunk);
         let total_chunks = size / chunk_size + extra_chunk;
-        // dbg!(&total_chunks);
         let num_file_threads = std::cmp::min(NUM_FILE_THREADS, total_chunks);
-        // dbg!(&num_file_threads);
 
         // TODO: limit to NUM_FILE_THREADS or something for tasks per file
         // Channel for the work Pull from the channel for reading the file When
@@ -136,32 +131,23 @@ impl PlainIndex {
         // done.
 
         // Create an mpmc channel for streaming work into hasher tasks. Bounded
-        // in order to handle backpressure
-        // This number is totally arbitrary.
+        // in order to handle backpressure. This number is totally arbitrary.
         let (tx, rx) = async_channel::bounded::<(usize, usize)>(num_file_threads * 8);
 
         // Create a vec to hold the handles for the producer, reader + stitcher tasks
         let mut handles = Vec::with_capacity(num_file_threads + 2);
-        // dbg!("before spawn");
 
         // producer
         handles.push(tokio::spawn(async move {
             let mut offset = 0usize;
             while offset < size {
                 let curr_chunk_size: usize = std::cmp::min(chunk_size, size - offset);
-                // dbg!(
-                //     "sending offset=%d, curr_chunk_size=%d",
-                //     offset,
-                //     curr_chunk_size
-                // );
                 tx.send((offset, curr_chunk_size)).await.unwrap();
                 offset += curr_chunk_size;
             }
             // drop tx to signal the end of the stream
             drop(tx);
         }));
-
-        // dbg!("after producer spawn");
 
         let m: Arc<Mutex<HashMap<usize, Vec<u8>>>> = Arc::new(Mutex::new(HashMap::new()));
         let path = pathref.as_ref().to_owned().clone();
@@ -170,7 +156,6 @@ impl PlainIndex {
             let rx = rx.clone();
             let m = m.clone();
             handles.push(tokio::spawn(async move {
-                // dbg!(&path, &reader_idx);
                 let mut fh = match fs::File::open(&path).await {
                     Ok(f) => f,
                     Err(e) => {
@@ -180,7 +165,6 @@ impl PlainIndex {
                 };
                 while let Ok((offset, size)) = rx.recv().await {
                     let order = offset / chunk_size;
-                    // dbg!(&order, &offset, &size, &chunk_size, &reader_idx);
                     match fh.seek(SeekFrom::Start(offset as u64)).await {
                         Ok(_) => {}
                         Err(e) => {
@@ -188,14 +172,9 @@ impl PlainIndex {
                             panic!("unable to seek");
                         }
                     }
-                    // let mut bytes: Vec<u8> = vec![0u8; size];
                     let mut bytes: Vec<u8> = vec![0u8; size];
-                    // dbg!(bytes.len());
                     let _bytes_read = match fh.read_exact(&mut bytes).await {
-                        Ok(size) => {
-                            // dbg!("bytes read = %d", size);
-                            size
-                        }
+                        Ok(size) => size,
                         Err(e) => {
                             eprintln!("{}", e);
                             panic!("unable to read bytes from file");
@@ -206,19 +185,16 @@ impl PlainIndex {
                 drop(rx);
             }));
         }
-        // dbg!("after reader spawn");
         // drop rx to signal the end of the stream
         drop(rx);
 
         // Create a oneshot channel for sending the full-file hash and the
         // chunkmetas back to the main task once it's finished
         let (hashes_tx, hashes_rx) = oneshot::channel::<(Hash, Vec<ChunkMeta>)>();
-        // dbg!("after creating oneshot channel");
 
         // synchronize access to the hashmap
         // final hashmap reader -- reorder pieces and stitch them together
         handles.push(tokio::spawn(async move {
-            // dbg!("within final spawn");
             // TODO: extensible hashing -- get hasher type from config / hasher
             // from factory
             let mut hasher = Sha512::new();
@@ -233,18 +209,14 @@ impl PlainIndex {
                     sleep(Duration::from_millis(10)).await;
                 }
             }
-            // dbg!("light up a stage and wax a chump like a candle");
             let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize()).unwrap();
             let file_hash = Hash::from(file_mh.to_bytes());
-            // dbg!(&file_hash);
             // Send the full-file hash and chunkmetas back to the main task
             let _ = hashes_tx.send((file_hash, chunkmetas));
         }));
-        // dbg!("after stitcher spawn");
 
         // Wait for all the tasks to finish
         futures::future::join_all(handles).await;
-        // dbg!("after join_all");
 
         // Attempt to receive the full-file hash and chunkmetas from the final
         // hashmap reader (stitcher)
