@@ -50,8 +50,8 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::er
     info!("iterating plain_index now");
 
     // Start with files, random blocks will make the data storage less organized
-    // and more scattered on disk. Async threads won't even help with bad
-    // design.
+    // and more scattered on disk. Even concurrent/async tasks won't help with
+    // bad design.
 
     let files_map = plain_index.files_map_ref();
     let file_hashes = files_map.keys().clone().sorted_unstable();
