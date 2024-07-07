@@ -26,7 +26,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = clapargs::Args::parse();
 
-    let blu_basedir = match find_blu_basedir(&args.bludir) {
+    let abspath = match tokio::fs::canonicalize(&args.bludir).await {
+        Ok(path) => path,
+        Err(_e) => {
+            // likely won't ever happen ...
+            return Err(
+                format!("fatal: unable to get absolute path for {:?}", &args.bludir).into(),
+            );
+        }
+    };
+
+    let blu_basedir = match find_blu_basedir(&abspath) {
         Some(dir) => dir,
         None => {
             match args.action {
@@ -43,19 +53,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let abspath = match tokio::fs::canonicalize(&blu_basedir).await {
-        Ok(path) => path,
-        Err(_e) => {
-            // likely won't ever happen ...
-            return Err(
-                format!("fatal: unable to get absolute path for {:?}", &blu_basedir).into(),
-            );
-        }
-    };
+    // debug!(
+    //     "blu_basedir: {:?}, cwd: {:?}",
+    //     &blu_basedir,
+    //     &env::current_dir()?
+    // );
 
     // move into the basedir for all operations, like `git -C <dir>`
-    if let Err(e) = env::set_current_dir(&abspath) {
-        return Err(format!("unable to chdir to '{:?}': {}", &abspath, e).into());
+    if let Err(e) = env::set_current_dir(&blu_basedir) {
+        return Err(format!("unable to chdir to '{:?}': {}", &blu_basedir, e).into());
     }
 
     // TODO: Should key(s) be read and stored here in some kind of state or context?
