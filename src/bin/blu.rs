@@ -144,3 +144,15 @@ mod test {
     );
     test_find_blu_basedir!(blu_basedir5, "sub1/sub2/sub3", None::<PathBuf>);
 }
+
+fn get_bluignore_patterns() -> Vec<String> {
+    if let Ok(bluignore) = std::fs::read_to_string(".bluignore") {
+        bluignore
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect()
+    } else {
+        vec![]
+    }
+}
