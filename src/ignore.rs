@@ -1,4 +1,5 @@
-fn get_bluignore_patterns() -> Vec<String> {
+/// Get the patterns from the .bluignore file
+pub fn get_bluignore_patterns() -> Vec<String> {
     if let Ok(bluignore) = std::fs::read_to_string(".bluignore") {
         bluignore
             .lines()

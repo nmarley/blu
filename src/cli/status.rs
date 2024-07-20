@@ -26,6 +26,7 @@ use crate::cli::clapargs::{StatusArgs, StatusCheckType};
 use crate::cli::output::FileDisplay;
 use crate::config;
 use crate::hash::{self, Hash};
+use crate::ignore;
 
 // 1 GB? (before they ruined the abbreviation)
 const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
@@ -319,6 +320,9 @@ impl std::fmt::Display for FileUpdatedPaths {
 }
 
 fn get_files_and_sizes<P: AsRef<Path>>(dir: P) -> Vec<(PathBuf, u64)> {
+    let ignore_patterns = ignore::get_bluignore_patterns();
+    dbg!(&ignore_patterns);
+
     WalkDir::new(dir)
         .into_iter()
         .filter_map(|e| {
@@ -351,6 +355,31 @@ fn get_files_and_sizes<P: AsRef<Path>>(dir: P) -> Vec<(PathBuf, u64)> {
             if path.starts_with(".blu/") {
                 return None;
             }
+
+            // ignore patterns from .bluignore file
+            for pattern in ignore_patterns.iter() {
+                dbg!(&pattern, &path);
+                if path.starts_with(pattern) {
+                    println!(
+                        "Got a match! path: [{:?}], pattern: [{:?}]",
+                        &path, &pattern
+                    );
+                    return None;
+                } else {
+                    println!(
+                        "path: [{:?}] does not start with pattern: [{:?}]",
+                        &path, &pattern
+                    );
+                }
+            }
+            println!("hi");
+            // if ignore_patterns
+            //     .iter()
+            //     .any(|pattern| path.starts_with(pattern))
+            // {
+            //     return None;
+            // }
+
             Some((path, file_size))
         })
         .collect::<Vec<(PathBuf, u64)>>()
