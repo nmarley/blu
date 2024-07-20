@@ -69,6 +69,7 @@ pub async fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> 
     // TODO?
 
     let files_list = get_files_and_sizes(dir);
+    dbg!(&files_list);
     // select deep or shallow check type based on cmd-line arg (explicit) or blu
     // dir size (implicit / variable)
     let current_dir_size = files_list.iter().fold(0, |acc, elem| acc + elem.1);
