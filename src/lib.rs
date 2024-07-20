@@ -40,6 +40,8 @@ pub mod config;
 pub mod format;
 /// wrapper around Vec<u8> for cryptographic hashes
 pub mod hash;
+/// bluignore parsing and matching
+pub mod ignore;
 /// serialization + compression + encryption for indexes
 pub mod io;
 /// search index for filenames
