@@ -1,0 +1,35 @@
+{
+    "files": {
+        "ignore": [
+            ".git",
+            "dist",
+            "node_modules",
+            "package.json",
+            "public",
+            "tsconfig*.json"
+        ]
+    },
+    "formatter": {
+        "indentStyle": "space",
+        "indentWidth": 4
+    },
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "single"
+        }
+    },
+    "linter": {
+        "rules": {
+            "style": {
+                "noNonNullAssertion": "off",
+                "useImportType": "off"
+            },
+            "suspicious": {
+                "noExplicitAny": "off"
+            },
+            "a11y": {
+                "useSemanticElements": "off"
+            }
+        }
+    }
+}
