@@ -98,8 +98,6 @@ character (`:`), it indicates that the tag should be removed instead of added.
 
 This project is licensed under either of
 
- * ISC license ([LICENSE](LICENSE) or
-   https://opensource.org/licenses/ISC)
  * MIT license ([LICENSE-MIT](LICENSE-MIT) or
    https://opensource.org/licenses/MIT)
  * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
