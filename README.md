@@ -2,6 +2,16 @@
 
 > "Not your keys, not your secrets ..."
 
+---
+
+🚀 **Open Source Release**
+
+This project was born from a compelling insight shared by Balaji in an interview: someday the "cloud will burst," meaning state actors could potentially access any secrets stored in traditional cloud services like S3 or Google Drive. True privacy requires encrypting your data with keys that you--and only you--control.
+
+While I initially explored commercial applications for this, I believe the most impactful path forward is thru open source. Rather than keep this locked away (and collecting... ahem, Rust...), I'm excited to open it up as both a working solution and a demonstration of what's possible when we prioritize user-controlled encryption. The core functionality is solid, and I believe this project can serve as a foundation for others to build upon, whether for personal use, enterprise applications, or further research into decentralized + encrypted storage solutions.
+
+---
+
 Based on directories in the typical \*nix hierarchical file system (HFS), this will read all files in the directory, and encrypt, de-duplicate and archive to any of several configurable backends, including locally and cloud object storage such as Amazon s3.
 
 All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by [@FiloSottile](https://twitter.com/FiloSottile) and [@Benjojo12](https://twitter.com/Benjojo12).
