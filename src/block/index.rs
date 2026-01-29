@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Timelike};
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
@@ -260,10 +260,8 @@ impl PlainIndex {
 
         // for each hash/fileref in NEW ...
         for (hash, fileref) in new_index.files.into_iter() {
-            if self.files.get(&hash).is_none() {
-                // add it
-                self.files.insert(hash, fileref);
-            }
+            // add it if not already present
+            self.files.entry(hash).or_insert(fileref);
         }
 
         // files HashMap::<Hash, FileRef>
@@ -301,10 +299,8 @@ impl PlainIndex {
 
         // for each hash/fileref in NEW ...
         for (hash, blockref) in new_index.blocks.into_iter() {
-            if self.blocks.get(&hash).is_none() {
-                // add it
-                self.blocks.insert(hash, blockref);
-            }
+            // add it if not already present
+            self.blocks.entry(hash).or_insert(blockref);
         }
 
         // blocks HashMap::<Hash, BlockRef>
@@ -342,7 +338,7 @@ gen_std_bbserde!(PlainIndex);
 /// Helper method to return the current timestamp
 fn now() -> chrono::NaiveDateTime {
     // returns a NaiveDateTime without milli/nano seconds
-    NaiveDateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)
+    chrono::Utc::now().naive_utc().with_nanosecond(0).unwrap()
 }
 
 #[cfg(test)]

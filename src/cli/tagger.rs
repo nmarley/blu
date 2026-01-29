@@ -1,9 +1,7 @@
 use std::collections::HashSet;
-use std::path::Path;
 
-use crate::age::BlackBox;
 use crate::cli::clapargs::TaggerArgs;
-use crate::config;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::hash::Hash;
 use crate::tag::sanitize_tag;
 
@@ -15,8 +13,6 @@ use crate::tag::sanitize_tag;
 //
 // This is a simpler alternative to --add and --remove actions/subcommands.
 
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
-
 /// Manipulate tags on data
 pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started tagger util");
@@ -24,23 +20,13 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.dry_run {
         info!("Got dry_run flag -- will not write tag index");
     }
-    // info!("Got args: {:?}", &args);
-
-    let basedir = Path::new(".");
-    // info!("Got blu BASEDIR: {}", basedir.display());
 
     if args.data_hash_filter.is_empty() {
         info!("Aborting, no file hashes provided");
         return Err("no file hashes provided".into());
     }
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let cfg = config::read_config(basedir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
-    // dbg!(&cfg);
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     // note that this is a "content tagger" -- I'd much rather keep the hashing
     // in the index only and tag based on what is shown in the index rather

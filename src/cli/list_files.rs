@@ -1,23 +1,13 @@
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::age::BlackBox;
 use crate::cli::clapargs::ListFilesArgs;
-use crate::config;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 
 /// List files in the index, optionally filtered
 pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = Path::new(".");
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
 
     let tag_index = cfg.load_tag_index(&bbox).unwrap_or_default();

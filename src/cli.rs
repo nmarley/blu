@@ -1,5 +1,7 @@
 /// clapargs for CLI args
 pub mod clapargs;
+/// helper functions for CLI commands
+pub mod helpers;
 /// unified CLI output structs for all CLI modules
 pub mod output;
 
@@ -10,10 +12,12 @@ mod delete_files;
 mod encrypt_files;
 mod init;
 mod list_files;
+mod pull;
 mod read_index;
 mod restore_files;
 mod search;
 mod status;
+mod sync;
 mod tagger;
 mod write_index;
 
@@ -24,10 +28,12 @@ pub use delete_files::delete_files;
 pub use encrypt_files::encrypt_files;
 pub use init::init;
 pub use list_files::list_files;
+pub use pull::pull;
 pub use read_index::read_index;
 pub use restore_files::restore_files;
 pub use search::search;
 pub use status::status;
+pub use sync::sync;
 pub use tagger::tagger;
 pub use write_index::write_index;
 

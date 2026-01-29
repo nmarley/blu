@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::age::BlackBox;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::WriteIndexArgs;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::io::BlackBoxSerializable;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Write the index to a local file
 pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -30,7 +29,7 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     // test ability to write index file before further processing
     check_outfile_writable(&outfile)?;
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let (_cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     info!("Indexing {:?}", dir);
     let index = PlainIndex::new(dir)?;
 

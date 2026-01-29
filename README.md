@@ -4,7 +4,7 @@
 
 ---
 
-🚀 **Open Source Release**
+**Open Source Release**
 
 This project was born from a compelling insight shared by Balaji in an interview: someday the "cloud will burst," meaning state actors could potentially access any secrets stored in traditional cloud services like S3 or Google Drive. True privacy requires encrypting your data with keys that you--and only you--control.
 
@@ -16,93 +16,158 @@ Based on directories in the typical \*nix hierarchical file system (HFS), this w
 
 All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by [@FiloSottile](https://twitter.com/FiloSottile) and [@Benjojo12](https://twitter.com/Benjojo12).
 
-## Encrypted & De-duplicated File Archival System in Rust
+## Features
 
-- Encryption-Centric Design: Developed with the premise of "own your encryption keys", ensuring data privacy against potential cloud breaches.
-- Cryptographic Hashing: Files are uniquely identified using cryptographic hashes rather than filenames, enhancing data integrity and security.
-- Intelligent De-duplication: Implemented chunking to de-duplicate files based on contiguous byte sequences, optimizing storage efficiency.
-- Robust Encryption: Utilizes the age encryption scheme with age keys (related to ed25519) for reliable asymmetric encryption.
-- Storage Flexibility: Equipped with a modular backend, currently featuring an S3 adapter for cloud storage.
-- Comprehensive Metadata Handling: Stores plaintext metadata, including filenames and tags, locally. Metadata uploads are encrypted to ensure confidentiality.
-- Integrated Tagging System: Includes a tagging system and tag index, allowing users to organize and locate their data efficiently.
+- **Encryption-Centric Design**: Developed with the premise of "own your encryption keys", ensuring data privacy against potential cloud breaches.
+- **Cryptographic Hashing**: Files are uniquely identified using cryptographic hashes rather than filenames, enhancing data integrity and security.
+- **Intelligent De-duplication**: Implemented chunking to de-duplicate files based on contiguous byte sequences, optimizing storage efficiency.
+- **Robust Encryption**: Utilizes the age encryption scheme with age keys (X25519) for reliable asymmetric encryption.
+- **Storage Flexibility**: Equipped with a modular backend, supporting local filesystem and Amazon S3.
+- **Comprehensive Metadata Handling**: Stores plaintext metadata, including filenames and tags, locally. Metadata uploads are encrypted to ensure confidentiality.
+- **Integrated Tagging System**: Includes a tagging system and tag index, allowing users to organize and locate their data efficiently.
+- **Remote Index Sync**: Push and pull encrypted indexes to/from the backend, enabling access from multiple machines.
 
-## Usage
+## Quick Start
 
-### Init
-
-```sh
-blu init .
-```
-
-### Config
+### Initialize a new vault
 
 ```sh
-vi .blu/config.toml
+# Create a new blu vault with passphrase-protected key
+blu init /path/to/your/data
+
+# Or without passphrase (for automation, not recommended for sensitive data)
+blu init --no-passphrase /path/to/your/data
 ```
 
-### Add
-
-Single file w/optional tags:
+### Sync files (add + encrypt)
 
 ```sh
-blu add ./passport.png --tags passport,US,Alice
+# Sync all files in the vault directory
+blu sync
+
+# Sync specific paths
+blu sync ./documents ./photos
+
+# Sync and push indexes to remote backend
+blu sync --push
 ```
 
-Entire dir:
+### List files
 
 ```sh
-blu add ./
+# List all indexed files
+blu ls
+
+# With filter
+blu list-files --filter "*.pdf"
 ```
 
-### Restore
+### Restore files
 
 ```sh
-blu restore .
+# Restore files by path pattern
+blu restore-files --path "photos/*.jpg" --to /tmp/restored
+
+# Restore all files
+blu restore-files --all --to /tmp/restored
+
+# Restore by hash prefix
+blu restore-files --file-hashes abc123
 ```
 
-### Search for all files w/tag? (combine w/the query command below):
+### Remote Index Sync
 
 ```sh
-blu search --tag iptu
-blu search --tags passport,John,fra
+# Push indexes to remote after sync
+blu sync --push
 
-blu query --tags passport,US,Alice
+# Pull indexes from remote (e.g., on a different machine)
+blu pull --force
 ```
 
-### Tags
-
-Add tag 'datasheet' to all files in /data/datasheets. Should not tag or add
-files which are not yet indexed.
+### Search
 
 ```sh
-blu tag --add --tag datasheet ./data/datasheets
+# Search for files by name or tag
+blu search passport
 ```
 
-Some examples:
+## Configuration
+
+The configuration is stored in `.blu/config.toml`:
+
+```toml
+blu_version = "0.4.4"
+
+[encryption]
+recipient = "age1..."  # Your public key
+identity_file = "identity.age"
+
+[backend]
+type = "local"
+path = ".blu/data"
+
+# Or for S3:
+# [backend]
+# type = "s3"
+# bucket = "my-bucket"
+# prefix = "backups/photos"
+# region = "us-east-1"
+```
+
+## S3 Backend
+
+To use S3 as a backend, edit your config:
+
+```toml
+[backend]
+type = "s3"
+bucket = "your-bucket-name"
+prefix = "optional/prefix"
+region = "us-east-1"
+```
+
+AWS credentials are loaded from the environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IAM roles.
+
+## Security
+
+- **Key Management**: Your private key is stored locally in `.blu/identity.age`. Back it up securely! Without it, your data cannot be decrypted.
+- **Passphrase Protection**: By default, your private key is encrypted with a passphrase. Use `--no-passphrase` only for automation scenarios.
+- **No Key Escrow**: blu never stores or transmits your keys. You are solely responsible for key backup.
+
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `init` | Initialize a new blu vault |
+| `sync` | Add files and encrypt (combines add + encrypt-files) |
+| `ls` / `list-files` | List indexed files |
+| `restore-files` | Restore files from encrypted archive |
+| `pull` | Pull indexes from remote backend |
+| `search` | Search files by name or tag |
+| `status` | Show vault status |
+| `add` | Add files to index (plumbing) |
+| `encrypt-files` | Encrypt indexed files (plumbing) |
+| `tagger` | Manage tags on files |
+
+## Global Options
+
+| Option | Description |
+|--------|-------------|
+| `--bludir <path>` | Target folder for blu to operate in (like `git -C`) |
+| `--no-passphrase` | Don't prompt for passphrase (fail if key is encrypted) |
+
+## Building from Source
 
 ```sh
-# add `datasheet` tag to everything in ./data/hw-ds
-cargo run --bin tagger -- --tags datasheet ./data/hw-ds
-
-# manip tags for file `./data/hw-ds/MQ4.pdf` : add `sensor` tag, remove `fart` tag
-cargo run --bin tagger -- --tags sensor,:fart ./data/hw-ds/MQ4.pdf
-
-# manip tags for file `./data/hw-ds/MQ4.pdf`
-#      adds:  `sensor`, `fart-detector`, `methane`
-#   removes:  `hello`, `silly`, `fart`
-cargo run --bin tagger -- --tags sensor,fart-detector,methane,:hello,:silly,:fart ./data/hw-ds/MQ4.pdf
-
-# specify file hash to tag
-cargo run --bin tagger -- --data-hash-filter 1bfdefb1375aa14 --tags pinout,stm32,black-pill,:datasheet ./data/hw-ds
+cargo build --release
 ```
 
-### TagSpec
+## Running Tests
 
-Tagspec is just a way of passing any number of tags to an operation, as well as
-whether to remove or add any specific given tags. It consists of a string of
-comma-separated tags, ideally sanitized/normalized (but the tools should be
-written to sanitize all tag inputs regardless). If a tag has a leading colon
-character (`:`), it indicates that the tag should be removed instead of added.
+```sh
+cargo test
+```
 
 ## License
 

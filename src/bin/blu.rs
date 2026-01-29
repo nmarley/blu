@@ -5,7 +5,7 @@ use simplelog::*;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use blu::cli::{self, clapargs};
+use blu::cli::{self, clapargs, helpers};
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +25,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
 
     let args = clapargs::Args::parse();
+
+    // Set global no-passphrase flag from CLI args
+    helpers::set_no_passphrase(args.no_passphrase);
 
     let blu_basedir = match find_blu_basedir(&args.bludir) {
         Some(dir) => dir,
@@ -69,10 +72,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a),
         clapargs::Action::Init(a) => cli::init(a),
         clapargs::Action::ListFiles(a) => cli::list_files(a),
+        clapargs::Action::Ls(a) => cli::list_files(a),
+        clapargs::Action::Pull(a) => cli::pull(a),
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
         clapargs::Action::RestoreFiles(a) => cli::restore_files(a),
         clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
+        clapargs::Action::Sync(a) => cli::sync(a),
         clapargs::Action::Tagger(a) => cli::tagger(a),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
     }

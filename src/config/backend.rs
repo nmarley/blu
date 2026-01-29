@@ -33,16 +33,17 @@ pub struct LocalConfig {
 }
 
 /// Configuration for the Amazon S3 backend.
-//
-// Note: We have to be careful with storing sensitive data like AWS access keys
-// and secret keys in plaintext. It might be better to use AWS's built-in
-// mechanisms for managing credentials (like environment variables or IAM
-// roles) rather than storing them here in the config file.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
+///
+/// Note: AWS credentials are loaded from the environment (AWS_ACCESS_KEY_ID,
+/// AWS_SECRET_ACCESS_KEY) or from IAM roles. Do not store credentials in the
+/// config file.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq, Clone)]
 pub struct S3Config {
-    /// The s3 bucket to store the data
+    /// The S3 bucket to store the data
     pub bucket: String,
-    /// An optional prefix for the s3 object key
+    /// An optional prefix for the S3 object key (e.g., "backups/photos")
     pub prefix: Option<String>,
-    // pub region: Option<String>,
+    /// AWS region (e.g., "us-east-1"). If not specified, uses AWS_REGION
+    /// environment variable or default region from AWS config.
+    pub region: Option<String>,
 }

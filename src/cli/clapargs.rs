@@ -8,6 +8,10 @@ pub struct Args {
     #[arg(long, default_value = ".")]
     pub bludir: String,
 
+    /// Do not prompt for passphrase (fail if key is encrypted)
+    #[arg(long, global = true)]
+    pub no_passphrase: bool,
+
     /// The subcommand to run
     #[command(subcommand)]
     pub action: Action,
@@ -16,21 +20,28 @@ pub struct Args {
 /// The possible subcommands to be run from blu-cli
 #[derive(Debug, clap::Subcommand, Clone)]
 pub enum Action {
-    /// Add
+    /// Add files to the index
     Add(AddArgs),
-    /// Initialize
+    /// Initialize a new blu vault
     Init(InitArgs),
-    /// Write index
+    /// Sync files: add to index and encrypt (combines add + encrypt-files)
+    Sync(SyncArgs),
+    /// Pull indexes from remote backend
+    Pull(PullArgs),
+    /// Write index (plumbing)
     WriteIndex(WriteIndexArgs),
-    /// Encrypt files in index
+    /// Encrypt files in index (plumbing)
     EncryptFiles(EncryptFilesArgs),
     /// Restore files from the index + encrypted data
     RestoreFiles(RestoreFilesArgs),
     /// List files in the index, optionally filtered
     ListFiles(ListFilesArgs),
+    /// List files (alias for list-files)
+    #[command(alias = "list")]
+    Ls(ListFilesArgs),
     /// Manipulate tags on files
     Tagger(TaggerArgs),
-    /// Print (debug) the index
+    /// Print (debug) the index (plumbing)
     ReadIndex(ReadIndexArgs),
     // #[command(hide = true)]
     /// Probably old, needs removed at this point
@@ -48,13 +59,49 @@ pub enum Action {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct InitArgs {
+    /// Directory to initialize as a blu vault
     pub dir: String,
+
+    /// Import an existing age key file instead of generating a new one
+    #[arg(long)]
+    pub key_file: Option<String>,
+
+    /// Do not encrypt the private key with a passphrase
+    #[arg(long)]
+    pub no_passphrase: bool,
 }
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct AddArgs {
     pub add_paths: Vec<String>,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct SyncArgs {
+    /// Paths to sync (defaults to current directory)
+    pub paths: Vec<String>,
+
+    /// Force write indexes even if no changes
+    #[arg(long)]
+    pub force: bool,
+
+    /// Push indexes to remote backend after sync
+    #[arg(long)]
+    pub push: bool,
+
+    /// Show verbose output
+    #[arg(long, short)]
+    pub verbose: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct PullArgs {
+    /// Force overwrite local indexes even if they exist
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[allow(missing_docs)]
@@ -73,8 +120,21 @@ pub struct EncryptFilesArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct RestoreFilesArgs {
-    #[arg(long, required = true)]
+    /// Restore files by hash prefix
+    #[arg(long)]
     pub file_hashes: Vec<String>,
+
+    /// Restore files matching path pattern (glob-style, e.g. "photos/*.jpg")
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Restore all files
+    #[arg(long)]
+    pub all: bool,
+
+    /// Destination directory for restored files (default: original paths)
+    #[arg(long)]
+    pub to: Option<String>,
 }
 
 #[allow(missing_docs)]

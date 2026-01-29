@@ -4,21 +4,16 @@ use std::path::Path;
 use crate::age::BlackBox;
 use crate::blob::BlobIndex;
 use crate::cli::clapargs::DefragBlobsArgs;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::io::BlackBoxSerializable;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Defrag blobs is still a WIP
 pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started defrag_blobs util");
 
-    // move into the basedir for all operations, like `git -C <dir>`
-    // env::set_current_dir(args.dir)?;
-    // let dir = Path::new(".");
-
     info!("blob_index_path: {}", args.blob_index_path);
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let (_cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     let blob_index = load_blob_index(&bbox, args.blob_index_path).unwrap();
     info!(
