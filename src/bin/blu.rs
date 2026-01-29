@@ -5,7 +5,7 @@ use simplelog::*;
 use std::env;
 use std::path::{Path, PathBuf};
 
-use blu::cli::{self, clapargs};
+use blu::cli::{self, clapargs, helpers};
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +25,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
 
     let args = clapargs::Args::parse();
+
+    // Set global no-passphrase flag from CLI args
+    helpers::set_no_passphrase(args.no_passphrase);
 
     let blu_basedir = match find_blu_basedir(&args.bludir) {
         Some(dir) => dir,

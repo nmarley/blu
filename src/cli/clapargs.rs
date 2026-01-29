@@ -8,6 +8,10 @@ pub struct Args {
     #[arg(long, default_value = ".")]
     pub bludir: String,
 
+    /// Do not prompt for passphrase (fail if key is encrypted)
+    #[arg(long, global = true)]
+    pub no_passphrase: bool,
+
     /// The subcommand to run
     #[command(subcommand)]
     pub action: Action,
@@ -48,7 +52,16 @@ pub enum Action {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct InitArgs {
+    /// Directory to initialize as a blu vault
     pub dir: String,
+
+    /// Import an existing age key file instead of generating a new one
+    #[arg(long)]
+    pub key_file: Option<String>,
+
+    /// Do not encrypt the private key with a passphrase
+    #[arg(long)]
+    pub no_passphrase: bool,
 }
 
 #[allow(missing_docs)]

@@ -1,11 +1,26 @@
 //! Helper functions for CLI commands.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::age::BlackBox;
 use crate::config::{self, Config};
 use crate::error::{BluError, Result};
 use crate::keys;
+
+/// Global flag for --no-passphrase option.
+/// Set by the main binary before calling CLI commands.
+static NO_PASSPHRASE: AtomicBool = AtomicBool::new(false);
+
+/// Set the global no-passphrase flag.
+pub fn set_no_passphrase(value: bool) {
+    NO_PASSPHRASE.store(value, Ordering::SeqCst);
+}
+
+/// Get the global no-passphrase flag.
+pub fn get_no_passphrase() -> bool {
+    NO_PASSPHRASE.load(Ordering::SeqCst)
+}
 
 /// Options for loading the encryption context.
 pub struct LoadOptions<'a> {
@@ -20,7 +35,7 @@ impl Default for LoadOptions<'_> {
     fn default() -> Self {
         Self {
             passphrase: None,
-            no_passphrase: false,
+            no_passphrase: get_no_passphrase(),
         }
     }
 }

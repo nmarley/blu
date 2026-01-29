@@ -1,6 +1,9 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::str::FromStr;
+
+use age::x25519::Identity;
 
 use crate::block::PlainIndex;
 use crate::cli::clapargs::InitArgs;
@@ -33,27 +36,52 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Initializing new .blu dir in {:?}", bludir);
     fs::create_dir_all(&bludir)?;
 
-    // Generate a new keypair
-    println!("Generating new encryption key...");
-    let (identity, recipient) = keys::generate_keypair();
+    // Get or generate the identity (private key)
+    let identity = if let Some(key_file) = &args.key_file {
+        // Import existing key
+        println!("Importing key from {}", key_file);
+        let key_contents = fs::read_to_string(key_file)
+            .map_err(|e| format!("failed to read key file '{}': {}", key_file, e))?;
+        // Find the AGE-SECRET-KEY line (skip comments)
+        let key_str = key_contents
+            .lines()
+            .find(|line| line.starts_with("AGE-SECRET-KEY-"))
+            .ok_or_else(|| format!("no AGE-SECRET-KEY found in '{}'", key_file))?
+            .trim();
+        Identity::from_str(key_str)
+            .map_err(|e| format!("invalid age key in '{}': {}", key_file, e))?
+    } else {
+        // Generate new keypair
+        println!("Generating new encryption key...");
+        let (identity, _) = keys::generate_keypair();
+        identity
+    };
+
+    let recipient = identity.to_public();
     let recipient_str = recipient.to_string();
     println!("Public key: {}", recipient_str);
 
-    // Prompt for passphrase to protect the private key
-    let passphrase = keys::prompt_passphrase(
-        "Enter passphrase to protect key (empty for no passphrase): ",
-        false,
-    )?;
-    let passphrase = if passphrase.is_empty() {
-        println!("Warning: storing key without passphrase protection");
+    // Determine passphrase handling
+    let passphrase = if args.no_passphrase {
+        println!("Storing key without passphrase protection (--no-passphrase)");
         None
     } else {
-        // Confirm passphrase
-        let confirm = keys::prompt_passphrase("Confirm passphrase: ", false)?;
-        if passphrase != confirm {
-            return Err("passphrases do not match".into());
+        // Prompt for passphrase
+        let pass = keys::prompt_passphrase(
+            "Enter passphrase to protect key (empty for no passphrase): ",
+            false,
+        )?;
+        if pass.is_empty() {
+            println!("Warning: storing key without passphrase protection");
+            None
+        } else {
+            // Confirm passphrase
+            let confirm = keys::prompt_passphrase("Confirm passphrase: ", false)?;
+            if pass != confirm {
+                return Err("passphrases do not match".into());
+            }
+            Some(pass)
         }
-        Some(passphrase)
     };
 
     // Save the identity (private key)
@@ -83,7 +111,7 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     let index_path = indexes_dir.join("index.dat");
     check_outfile_writable(&index_path)?;
 
-    // Load the BlackBox from the saved identity
+    // Load the BlackBox from the identity
     let bbox = keys::blackbox_from_identity(identity);
     let index = PlainIndex::new_empty();
     match write_index_file(&index, &bbox, &index_path) {
