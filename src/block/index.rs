@@ -1,4 +1,4 @@
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Timelike};
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
@@ -342,7 +342,7 @@ gen_std_bbserde!(PlainIndex);
 /// Helper method to return the current timestamp
 fn now() -> chrono::NaiveDateTime {
     // returns a NaiveDateTime without milli/nano seconds
-    NaiveDateTime::from_timestamp(chrono::Utc::now().timestamp(), 0)
+    chrono::Utc::now().naive_utc().with_nanosecond(0).unwrap()
 }
 
 #[cfg(test)]

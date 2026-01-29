@@ -36,12 +36,16 @@ pub mod cli;
 pub mod compression;
 /// configuration file and related methods
 pub mod config;
+/// error types for blu
+pub mod error;
 /// format contains a format fn for datetime (chrono/serde)
 pub mod format;
 /// wrapper around Vec<u8> for cryptographic hashes
 pub mod hash;
 /// serialization + compression + encryption for indexes
 pub mod io;
+/// key management (generation, loading, storage)
+pub mod keys;
 /// search index for filenames
 pub mod search;
 /// storage backends and hash to path translation methods
