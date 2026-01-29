@@ -29,19 +29,19 @@ use crate::hash::Hash;
 /// # Methods
 ///
 /// - `read_data`: Reads data identified by the given hash from the storage
-/// backend. It returns a `Result` which, on success, contains the data as a
-/// vector of bytes. On failure, it returns an error.
+///   backend. It returns a `Result` which, on success, contains the data as a
+///   vector of bytes. On failure, it returns an error.
 ///
 /// - `write_data`: Writes data to the storage backend. The path of the data is
-/// chosen based on the provided hash. It returns a `Result` which, on success,
-/// contains the `PathBuf` where the data is stored. On failure, it returns an
-/// error.
+///   chosen based on the provided hash. It returns a `Result` which, on success,
+///   contains the `PathBuf` where the data is stored. On failure, it returns an
+///   error.
 ///
 /// - `exists`: Checks if a blob exists at the given path. Returns true if the
-/// blob exists, false otherwise.
+///   blob exists, false otherwise.
 ///
 /// - `delete`: Deletes a blob at the given path. Returns an error if the
-/// deletion fails.
+///   deletion fails.
 pub trait StorageBackend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
@@ -93,18 +93,14 @@ pub fn path_for(hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
 /// extract the Hash part of the path and return it
 pub fn hash_from_path<P: AsRef<Path>>(path: P) -> Result<Hash, Box<dyn std::error::Error>> {
     let file_name = path.as_ref().file_name().ok_or_else(|| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        Box::new(std::io::Error::other(
             "Failed to extract file name from path",
         ))
     })?;
 
-    let path_str = file_name.to_str().ok_or_else(|| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to convert file name to str",
-        ))
-    })?;
+    let path_str = file_name
+        .to_str()
+        .ok_or_else(|| Box::new(std::io::Error::other("Failed to convert file name to str")))?;
 
     Ok(Hash::from(path_str))
 }

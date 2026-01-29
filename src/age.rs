@@ -99,11 +99,11 @@ pub fn passphrase_encrypt(
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod test {
     use super::BlackBox;
 
     pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
-    pub(crate) const TEST_AGE_SECRET_KEY_PATH: &str = "test/blu_secrets/blu.key";
     pub(crate) const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     #[test]

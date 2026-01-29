@@ -195,13 +195,13 @@ impl DataCache {
 
     /// Get the data from the cache, if it exists.
     pub fn get(&mut self, hash: &Hash) -> Option<&Vec<u8>> {
-        self.map.get(hash).map(|data| {
-            // update the positions for lru
+        // Update LRU position if present
+        if self.map.contains_key(hash) {
             let pos = self.lru.iter().position(|x| x == hash).unwrap();
             let hash = self.lru.remove(pos);
             self.lru.push(hash);
-            data
-        })
+        }
+        self.map.get(hash)
     }
 
     /// Add the data to the cache.

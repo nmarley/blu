@@ -14,7 +14,7 @@
 /// TODO:
 /// - [ ] Display files which are in the PlainIndex but not encrypted
 /// - [ ] Display stats, e.g. # files, # bytes de-duplicated (saved), x tags
-///       being used, etc.
+///   being used, etc.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;

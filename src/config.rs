@@ -117,10 +117,7 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
     // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
 
     let mut cfg: Config = match fs::read_to_string(config_toml) {
-        Ok(toml_str) => match toml::from_str(&toml_str) {
-            Ok(toml_cfg) => toml_cfg,
-            Err(e) => return Err(e.into()),
-        },
+        Ok(toml_str) => toml::from_str(&toml_str)?,
         Err(_) => {
             match fs::read_to_string(config_json) {
                 Ok(json_str) => match serde_json::from_str(&json_str) {

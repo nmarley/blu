@@ -162,6 +162,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         let fh = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&restore_path)?;
         let _ = fh
             .set_len(file_size)

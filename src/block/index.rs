@@ -260,10 +260,8 @@ impl PlainIndex {
 
         // for each hash/fileref in NEW ...
         for (hash, fileref) in new_index.files.into_iter() {
-            if self.files.get(&hash).is_none() {
-                // add it
-                self.files.insert(hash, fileref);
-            }
+            // add it if not already present
+            self.files.entry(hash).or_insert(fileref);
         }
 
         // files HashMap::<Hash, FileRef>
@@ -301,10 +299,8 @@ impl PlainIndex {
 
         // for each hash/fileref in NEW ...
         for (hash, blockref) in new_index.blocks.into_iter() {
-            if self.blocks.get(&hash).is_none() {
-                // add it
-                self.blocks.insert(hash, blockref);
-            }
+            // add it if not already present
+            self.blocks.entry(hash).or_insert(blockref);
         }
 
         // blocks HashMap::<Hash, BlockRef>
