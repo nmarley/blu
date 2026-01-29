@@ -36,6 +36,12 @@ use crate::hash::Hash;
 /// chosen based on the provided hash. It returns a `Result` which, on success,
 /// contains the `PathBuf` where the data is stored. On failure, it returns an
 /// error.
+///
+/// - `exists`: Checks if a blob exists at the given path. Returns true if the
+/// blob exists, false otherwise.
+///
+/// - `delete`: Deletes a blob at the given path. Returns an error if the
+/// deletion fails.
 pub trait StorageBackend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
@@ -46,6 +52,10 @@ pub trait StorageBackend {
     /// Write the data to the storage backend. The path is chosen based on the
     /// hash.
     fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>>;
+    /// Check if a blob exists at the given path.
+    fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>>;
+    /// Delete a blob at the given path.
+    fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 /// Get a path for the encrypted data.
@@ -162,6 +172,34 @@ mod test {
         // Read the data back and verify it
         let read_data = storage.read_data(&pathbuf).unwrap();
         assert_eq!(data.to_vec(), read_data);
+    }
+
+    #[test]
+    fn local_exists_and_delete() {
+        let datadir = tempdir().unwrap();
+        let storage = Local::new(&datadir);
+
+        // Test data
+        let data = b"Test data for exists/delete";
+        let mh = multihash(data);
+        let hash = Hash::from(mh.to_bytes());
+
+        // Initially the file should not exist
+        let pathbuf = datadir.path().join(path_for(&hash).unwrap());
+        assert!(!storage.exists(&pathbuf).unwrap());
+
+        // Write the data
+        let written_path = storage.write_data(&hash, data).unwrap();
+        assert_eq!(pathbuf, written_path);
+
+        // Now it should exist
+        assert!(storage.exists(&pathbuf).unwrap());
+
+        // Delete it
+        storage.delete(&pathbuf).unwrap();
+
+        // Now it should not exist
+        assert!(!storage.exists(&pathbuf).unwrap());
     }
 }
 

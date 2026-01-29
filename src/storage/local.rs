@@ -34,4 +34,13 @@ impl StorageBackend for Local {
         fs::write(&path, data)?;
         Ok(path)
     }
+
+    fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(path.exists())
+    }
+
+    fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        fs::remove_file(path)?;
+        Ok(())
+    }
 }

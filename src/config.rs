@@ -235,7 +235,8 @@ impl Config {
             }
             backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(AmazonS3::new(
                 &s3_backend.bucket,
-                s3_backend.prefix.clone(),
+                s3_backend.prefix.as_deref(),
+                s3_backend.region.as_deref(),
             ))),
             #[allow(unreachable_patterns)]
             _ => Err("Unsupported backend".into()),

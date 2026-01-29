@@ -1,5 +1,8 @@
 use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
+use std::path::{Path, PathBuf};
+
+use glob::Pattern;
 
 use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
@@ -9,7 +12,11 @@ use crate::hash::Hash;
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
 pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
-    info!("Got file_hashes: {:?}", args.file_hashes);
+
+    // Validate arguments
+    if args.file_hashes.is_empty() && args.path.is_none() && !args.all {
+        return Err("Must specify --file-hashes, --path, or --all".into());
+    }
 
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
@@ -23,21 +30,62 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     //     BlobBuffer::new expects a `&dyn StorageBackend`
     let mut reader = EncBlobReader::new(&bbox, &(*backend));
 
-    // info!("Got file_hashes: {:?}", args.file_hashes);
+    // Build path pattern matcher if specified
+    let path_pattern = args.path.as_ref().map(|p| {
+        Pattern::new(p).unwrap_or_else(|e| {
+            warn!("Invalid glob pattern '{}': {}, treating as literal", p, e);
+            Pattern::new(&glob::Pattern::escape(p)).unwrap()
+        })
+    });
+
+    // Collect files to restore
     let mut unique_hashes: HashSet<Hash> = HashSet::new();
-    // TODO: consider disambiguating hash filters if a short hash prefix might
-    // identify multiple files, sorta like git does
-    for hash in files_map.keys() {
-        // in theory the provided file hash list will be smaller than the number
-        // of entries in the index
-        for h in &args.file_hashes {
-            // TODO: better than this.
-            if hash.to_string().contains(h) {
-                println!("Got a match on file hash: {}", hash.dbg_short(9));
-                unique_hashes.insert(hash.clone());
+
+    for (hash, fileref) in files_map.iter() {
+        let mut should_restore = false;
+
+        // Check if --all
+        if args.all {
+            should_restore = true;
+        }
+
+        // Check if hash matches any provided hash prefix
+        if !args.file_hashes.is_empty() {
+            let hash_str = hash.to_string();
+            for h in &args.file_hashes {
+                if hash_str.contains(h) {
+                    println!("Got a match on file hash: {}", hash.dbg_short(9));
+                    should_restore = true;
+                    break;
+                }
             }
         }
+
+        // Check if any path matches the pattern
+        if let Some(ref pattern) = path_pattern {
+            for path in &fileref.paths {
+                if pattern.matches_path(path) {
+                    println!("Got a match on path: {}", path.display());
+                    should_restore = true;
+                    break;
+                }
+            }
+        }
+
+        if should_restore {
+            unique_hashes.insert(hash.clone());
+        }
     }
+
+    if unique_hashes.is_empty() {
+        println!("No files matched the specified criteria");
+        return Ok(());
+    }
+
+    println!("Found {} file(s) to restore", unique_hashes.len());
+
+    // Parse destination directory
+    let dest_dir = args.to.as_ref().map(PathBuf::from);
 
     'outer: for file_hash in unique_hashes.into_iter() {
         println!("========================================================================");
@@ -57,45 +105,64 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         println!("Size: {}", file_size);
         println!("Filename(s):");
 
-        // TODO: consider multiple paths... what to do if the same path exists
-        // with different filenames?  This might be a UX concern also.
+        // Determine restore path(s) based on --to option
+        let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = if let Some(ref dest) = dest_dir
+        {
+            // Restore to destination directory with original filename
+            let first_path = fileref.paths.iter().next().unwrap();
+            let filename = first_path.file_name().unwrap();
+            let dest_path = Path::new(dest).join(filename);
 
-        // check each file path and abort if there is a collision
+            // For --to mode, we only restore to one location (no hard links)
+            (dest_path, vec![])
+        } else {
+            // Restore to original paths
+            let mut path_iter = fileref.paths.iter();
+            let first = path_iter.next().unwrap().clone();
+            let others = path_iter.cloned().collect::<Vec<_>>();
+            (first, others)
+        };
+
+        // Print all original paths
         for path in fileref.paths.iter() {
             println!("\t{:?}", path);
-            // abort if file exists with this filename
-            if std::path::Path::exists(path) {
-                eprintln!("Unable to restore file: There already exists in the filesystem a file at the path: {:?}", path);
-                continue 'outer; // next file
+        }
+
+        // Check if destination file exists
+        if restore_path.exists() {
+            eprintln!(
+                "Unable to restore file: There already exists a file at: {:?}",
+                restore_path
+            );
+            continue 'outer;
+        }
+
+        // Check other paths too (only in non --to mode)
+        for other in &other_paths {
+            if other.exists() {
+                eprintln!(
+                    "Unable to restore file: There already exists a file at: {:?}",
+                    other
+                );
+                continue 'outer;
             }
         }
 
-        // TODO: hard links for the same data with multiple filenames
+        println!("Restoring to: '{}'", restore_path.display());
 
-        // TODO: restore to a temp working dir and do a filesystem rename
-        // instead of creating the destination file directly
+        // Create parent directories if needed
+        if let Some(parent) = restore_path.parent() {
+            if !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
 
-        // after file restored to `restore_path`, create FS hard links to
-        // `other_paths`
-        let mut path_iter = fileref.paths.iter();
-        let restore_path = path_iter.next().unwrap();
-        let other_paths = path_iter.collect::<Vec<_>>();
-        println!(
-            "Choosing path: '{}' for restoration",
-            restore_path.display()
-        );
-
-        // TODO: Create the TEMP file first. If restore fails at any
-        // data block, fail and move on, and remove the temp file.
-
-        // 2. Next, create a sparse file of the correct size and start to fill in the gaps
-        //    from our block data (decrypted the encrypted blobs).
-        // create sparse file that's X bytes long
+        // Create a sparse file of the correct size
         println!("Creating sparse file of size: {}", file_size);
         let fh = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
-            .open(restore_path)?;
+            .open(&restore_path)?;
         let _ = fh
             .set_len(file_size)
             .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
@@ -141,8 +208,20 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         }
 
         // hard links for the same data with multiple filenames
-        for other in other_paths.iter() {
-            match std::fs::hard_link(restore_path, other) {
+        for other in &other_paths {
+            // Create parent directories if needed
+            if let Some(parent) = other.parent() {
+                if !parent.exists() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        eprintln!(
+                            "Unable to create parent dir for hard link {:?}: {:?}",
+                            other, e
+                        );
+                        continue;
+                    }
+                }
+            }
+            match std::fs::hard_link(&restore_path, other) {
                 Ok(_) => {
                     println!("Created hard link: {:?}", other);
                 }
@@ -152,9 +231,6 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
             }
         }
     }
-
-    // TODO: iterate the plainindex, decrypt (from blob index ptr) and restore
-    // TODO: consider hard links for the same data with multiple filenames
 
     Ok(())
 }
