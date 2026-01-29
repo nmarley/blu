@@ -1,17 +1,10 @@
 //! Amazon S3 storage backend implementation.
 
-use aws_sdk_s3::operation::{
-    delete_object::DeleteObjectError,
-    get_object::{GetObjectError, GetObjectOutput},
-    head_object::HeadObjectError,
-    put_object::{PutObjectError, PutObjectOutput},
-};
-use aws_sdk_s3::{error::SdkError, primitives::ByteStream};
-use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
+use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::primitives::ByteStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use tokio_stream::StreamExt;
 
 use crate::hash::Hash;
 
@@ -47,7 +40,7 @@ impl AmazonS3 {
         let runtime = Arc::new(Runtime::new().expect("failed to create tokio runtime"));
 
         let client = runtime.block_on(async {
-            let mut config_loader = aws_config::from_env();
+            let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
 
             // Set region if provided
             if let Some(r) = region {
@@ -77,75 +70,29 @@ impl AmazonS3 {
     fn path_to_key(&self, path: &Path) -> String {
         self.prefix.join(path).to_string_lossy().to_string()
     }
-
-    /// Check if an object exists in S3.
-    pub fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
-        let key = self.path_to_key(path);
-
-        let result = self.runtime.block_on(async {
-            self.client
-                .head_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .send()
-                .await
-        });
-
-        match result {
-            Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(err)) => {
-                // Check if it's a NotFound error
-                if matches!(err.err(), HeadObjectError::NotFound(_)) {
-                    Ok(false)
-                } else {
-                    Err(Box::new(err.into_err()) as Box<dyn std::error::Error>)
-                }
-            }
-            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
-        }
-    }
-
-    /// Delete an object from S3.
-    pub fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-        let key = self.path_to_key(path);
-
-        self.runtime.block_on(async {
-            let _output = self
-                .client
-                .delete_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .send()
-                .await?;
-            Ok::<(), SdkError<DeleteObjectError, HttpResponse>>(())
-        })?;
-
-        Ok(())
-    }
 }
 
 impl StorageBackend for AmazonS3 {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let key = self.path_to_key(path);
 
-        let mut object = self.runtime.block_on(async {
-            let object = self
-                .client
-                .get_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .send()
-                .await?;
-            Ok::<GetObjectOutput, SdkError<GetObjectError, HttpResponse>>(object)
-        })?;
+        let buf = self
+            .runtime
+            .block_on(async {
+                let object = self
+                    .client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
 
-        let buf = self.runtime.block_on(async {
-            let mut buf: Vec<u8> = vec![];
-            while let Some(bytes) = object.body.try_next().await? {
-                buf.extend_from_slice(&bytes);
-            }
-            Ok::<Vec<u8>, Box<dyn std::error::Error>>(buf)
-        })?;
+                // Collect the body into bytes using the new API
+                let body = object.body.collect().await.map_err(|e| e.to_string())?;
+                Ok::<Vec<u8>, String>(body.into_bytes().to_vec())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         Ok(buf)
     }
@@ -157,17 +104,19 @@ impl StorageBackend for AmazonS3 {
         info!("S3 write: key={}", key);
 
         let body = ByteStream::from(data.to_vec());
-        self.runtime.block_on(async {
-            let _put_obj_output = self
-                .client
-                .put_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .body(body)
-                .send()
-                .await?;
-            Ok::<PutObjectOutput, SdkError<PutObjectError, HttpResponse>>(_put_obj_output)
-        })?;
+        self.runtime
+            .block_on(async {
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<(), String>(())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         Ok(path)
     }
@@ -186,30 +135,33 @@ impl StorageBackend for AmazonS3 {
 
         match result {
             Ok(_) => Ok(true),
-            Err(SdkError::ServiceError(err)) => {
-                if matches!(err.err(), HeadObjectError::NotFound(_)) {
-                    Ok(false)
-                } else {
-                    Err(Box::new(err.into_err()) as Box<dyn std::error::Error>)
+            Err(err) => {
+                // Check if it's a NotFound error
+                if let Some(service_err) = err.as_service_error() {
+                    if matches!(service_err, HeadObjectError::NotFound(_)) {
+                        return Ok(false);
+                    }
                 }
+                Err(Box::new(err) as Box<dyn std::error::Error>)
             }
-            Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
         }
     }
 
     fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let key = self.path_to_key(path);
 
-        self.runtime.block_on(async {
-            let _output = self
-                .client
-                .delete_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .send()
-                .await?;
-            Ok::<(), SdkError<DeleteObjectError, HttpResponse>>(())
-        })?;
+        self.runtime
+            .block_on(async {
+                self.client
+                    .delete_object()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<(), String>(())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         Ok(())
     }

@@ -1,4 +1,3 @@
-use age::secrecy::Secret;
 use std::io::{Read, Write};
 use std::str::FromStr;
 
@@ -33,27 +32,25 @@ impl BlackBox {
         self.identities.clone()
     }
 
-    fn new_encryptor(&self) -> age::Encryptor {
-        let identities = self.identities();
+    fn recipients(&self) -> Vec<age::x25519::Recipient> {
+        self.identities.iter().map(|x| x.to_public()).collect()
+    }
 
-        // let pub_keys: Vec<Box<dyn age::Recipient>> = identities
-        //     .into_iter()
-        //     .map(|x| Box::new(x.to_public()))
-        //     .collect();
-
-        let mut pub_keys: Vec<Box<dyn age::Recipient>> = vec![];
-        for x in identities.into_iter() {
-            let pub_key = x.to_public();
-            pub_keys.push(Box::new(pub_key));
-        }
-
-        age::Encryptor::with_recipients(pub_keys)
+    fn new_encryptor(&self) -> Result<age::Encryptor, age::EncryptError> {
+        let recipients = self.recipients();
+        // Convert to references for the new API
+        let recipient_refs: Vec<&dyn age::Recipient> = recipients
+            .iter()
+            .map(|r| r as &dyn age::Recipient)
+            .collect();
+        age::Encryptor::with_recipients(recipient_refs.into_iter())
     }
 
     /// Encrypt the given bytes using the identities associated with the BlackBox.
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, age::EncryptError> {
         let mut encrypted = vec![];
-        let mut writer = self.new_encryptor().wrap_output(&mut encrypted)?;
+        let encryptor = self.new_encryptor()?;
+        let mut writer = encryptor.wrap_output(&mut encrypted)?;
         writer.write_all(data)?;
         writer.finish()?;
 
@@ -63,10 +60,7 @@ impl BlackBox {
     /// Decrypt the given bytes using the identities associated with the BlackBox.
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let mut decrypted = vec![];
-        let decryptor = match age::Decryptor::new(data).unwrap() {
-            age::Decryptor::Recipients(d) => d,
-            _ => unreachable!(),
-        };
+        let decryptor = age::Decryptor::new(data)?;
         let mut reader =
             decryptor.decrypt(self.identities().iter().map(|x| x as &dyn age::Identity))?;
         let _ = reader.read_to_end(&mut decrypted);
@@ -80,12 +74,10 @@ pub fn passphrase_decrypt(
     data: &[u8],
     passphrase: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let decryptor = match age::Decryptor::new(data)? {
-        age::Decryptor::Passphrase(d) => d,
-        _ => unreachable!(),
-    };
+    let decryptor = age::Decryptor::new(data)?;
+    let identity = age::scrypt::Identity::new(passphrase.to_owned().into());
     let mut decrypted = vec![];
-    let mut reader = decryptor.decrypt(&Secret::new(passphrase.to_owned()), None)?;
+    let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
     let _ = reader.read_to_end(&mut decrypted);
 
     Ok(decrypted)
@@ -96,7 +88,7 @@ pub fn passphrase_encrypt(
     data: &[u8],
     passphrase: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let encryptor = age::Encryptor::with_user_passphrase(Secret::new(passphrase.to_owned()));
+    let encryptor = age::Encryptor::with_user_passphrase(passphrase.to_owned().into());
 
     let mut encrypted = vec![];
     let mut writer = encryptor.wrap_output(&mut encrypted)?;
