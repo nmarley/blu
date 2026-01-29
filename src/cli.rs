@@ -1,5 +1,7 @@
 /// clapargs for CLI args
 pub mod clapargs;
+/// helper functions for CLI commands
+pub mod helpers;
 /// unified CLI output structs for all CLI modules
 pub mod output;
 

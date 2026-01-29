@@ -1,15 +1,8 @@
-use std::path::Path;
-
-use crate::age::BlackBox;
 use crate::cli::clapargs::AddArgs;
-use crate::config;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 
 /// Add local files to the index
 pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let dir = Path::new(".");
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
     info!("Started add");
 
     if args.add_paths.is_empty() {
@@ -17,11 +10,7 @@ pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("no paths given".into());
     }
 
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     let mut plain_index = match cfg.load_plain_index(&bbox) {
         Some(idx) => idx,

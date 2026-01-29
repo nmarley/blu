@@ -19,34 +19,23 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::age::BlackBox;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::{StatusArgs, StatusCheckType};
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::cli::output::FileDisplay;
-use crate::config;
 use crate::hash::{self, Hash};
 
 // 1 GB? (before they ruined the abbreviation)
 const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Show the local status of the blu vault
 pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // info!("Started status util");
     let dir = Path::new(".");
-
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
-
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     let index = match cfg.load_plain_index(&bbox) {
         Some(idx) => idx,
         None => return Err("unable to load index".into()),
     };
-    // dbg!(&index);
 
     // TODO:
     // show files existing in FS but not in index ...

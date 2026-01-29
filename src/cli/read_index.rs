@@ -1,7 +1,5 @@
 use std::fs;
 
-// encryption/serialization stuff
-use crate::age::BlackBox;
 use crate::io::BlackBoxSerializable;
 
 // index types
@@ -10,14 +8,13 @@ use crate::block::PlainIndex;
 use crate::tag::TagIndex;
 
 use crate::cli::clapargs::{IndexType, ReadIndexArgs};
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 
 /// Read and print individual index files, for debugging
 pub fn read_index(args: ReadIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
     let index_file = &args.file;
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+    let (_cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     let data = fs::read(index_file)?;
 
     match args.index_type {

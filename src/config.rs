@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
+use crate::error::{BluError, Result as BluResult};
 use crate::io::BlackBoxSerializable;
+use crate::keys::{self, IDENTITY_FILENAME};
 use crate::storage::{AmazonS3, Local, StorageBackend};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
@@ -33,23 +35,50 @@ pub struct KeyID {
     public_key: String, // TODO: Vec<u8> ?
 }
 
+/// Encryption configuration for a blu vault.
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
+pub struct EncryptionConfig {
+    /// The public key (recipient) used to encrypt data.
+    /// Format: age1...
+    pub recipient: String,
+    /// Path to the identity (private key) file, relative to .blu/
+    /// Defaults to "identity.age"
+    #[serde(default = "default_identity_file")]
+    pub identity_file: PathBuf,
+}
+
+fn default_identity_file() -> PathBuf {
+    PathBuf::from(IDENTITY_FILENAME)
+}
+
+impl Default for EncryptionConfig {
+    fn default() -> Self {
+        Self {
+            recipient: String::new(),
+            identity_file: default_identity_file(),
+        }
+    }
+}
+
 /// Config is the configuration for blu. It is stored in the .blu directory in
 /// the config.(json|toml) file.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
 #[serde(default)]
 pub struct Config {
-    // TODO: idk if this is used at all ...
+    /// blu version that created this config
     blu_version: String,
-    // TODO: remove this, unused (but just for now?)
-    data_key_files: Vec<String>,
 
-    // base dir
+    /// Encryption settings (public key, identity file location)
+    #[serde(default)]
+    pub encryption: Option<EncryptionConfig>,
+
+    // base dir (not serialized)
     #[serde(skip)]
     basedir: PathBuf,
 
     // TODO: multiple backends
     /// Storage backend for encrypted data blobs
-    backend: backend::BackendConfig,
+    pub backend: backend::BackendConfig,
 
     // should blu delete Encrypted from filesystem, if the plain version was deleted?
     prune_deleted: bool,
@@ -66,7 +95,7 @@ impl Default for Config {
         Self {
             backend: backend::BackendConfig::default(),
             blu_version: env!("CARGO_PKG_VERSION").to_string(),
-            data_key_files: vec![],
+            encryption: None,
             basedir: PathBuf::from("."),
             prune_deleted: false,
             prune_dangling: false,
@@ -158,6 +187,36 @@ impl Config {
         self.bludir().join("indexes")
     }
 
+    /// Returns the path to the identity (private key) file.
+    pub fn identity_path(&self) -> BluResult<PathBuf> {
+        let enc = self.encryption.as_ref().ok_or(BluError::NoKeyConfigured)?;
+        Ok(self.bludir().join(&enc.identity_file))
+    }
+
+    /// Check if encryption is configured.
+    pub fn has_encryption(&self) -> bool {
+        self.encryption.is_some()
+    }
+
+    /// Load the BlackBox (encryption context) from the configured identity.
+    ///
+    /// If the identity file is passphrase-protected, a passphrase must be provided.
+    pub fn load_blackbox(&self, passphrase: Option<&str>) -> BluResult<BlackBox> {
+        let identity_path = self.identity_path()?;
+        let identity = keys::load_identity(&identity_path, passphrase)?;
+        Ok(keys::blackbox_from_identity(identity))
+    }
+
+    /// Set the encryption configuration.
+    pub fn set_encryption(&mut self, encryption: EncryptionConfig) {
+        self.encryption = Some(encryption);
+    }
+
+    /// Get the base directory for the vault.
+    pub fn basedir(&self) -> &Path {
+        &self.basedir
+    }
+
     load_index!(load_blob_index, BlobIndex, blob_index_filename);
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
@@ -187,7 +246,7 @@ impl Config {
 #[cfg(test)]
 pub(crate) mod test {
     use super::{BlackBox, Config};
-    use crate::age::test::{TEST_AGE_SECRET_KEY, TEST_AGE_SECRET_KEY_PATH};
+    use crate::age::test::TEST_AGE_SECRET_KEY;
 
     const TEST_DIR_T0: &str = "test/old/t0/";
     const TEST_DIR_T1: &str = "test/old/t1/";
@@ -198,14 +257,12 @@ pub(crate) mod test {
     fn read_config() {
         assert!(super::read_config(TEST_DIR_T0).is_err());
         let cfg = super::read_config(TEST_DIR_T1).unwrap();
-        // dbg!(&cfg);
 
         assert_eq!(
             cfg,
             Config {
                 basedir: TEST_DIR_T1.into(),
                 blu_version: "0.0.1".to_string(),
-                data_key_files: vec![TEST_AGE_SECRET_KEY_PATH.to_string()],
                 ..Default::default()
             }
         );

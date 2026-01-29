@@ -1,27 +1,14 @@
 use std::collections::HashSet;
-use std::path::Path;
 
-use crate::age::BlackBox;
 use crate::cli::clapargs::SearchArgs;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::cli::output::FileDisplay;
-use crate::config;
 use crate::hash::Hash;
 use crate::search::FilenameSearchIndex;
 
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
-
 /// Search for filenames or tags
 pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // info!("Started search util");
-
-    let dir = Path::new(".");
-
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     // TODO: load search index here ... (once implemented)
     //   for now, just create a new one every time and then search

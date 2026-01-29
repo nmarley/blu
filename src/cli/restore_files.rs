@@ -1,29 +1,17 @@
 use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
-use std::path::Path;
 
-use crate::age::BlackBox;
 use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
-use crate::config;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::hash::Hash;
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
 pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
     info!("Got file_hashes: {:?}", args.file_hashes);
 
-    let dir = Path::new(".");
-
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
     let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
     let files_map = plain_index.files_map_ref();

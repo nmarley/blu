@@ -1,30 +1,16 @@
 use itertools::Itertools;
-use std::path::Path;
 
-use crate::age::BlackBox;
 use crate::blob::BlobBuffer;
 use crate::cli::clapargs::EncryptFilesArgs;
-use crate::config;
+use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::hash::{self, Hash};
-
-const TEST_AGE_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
 
 /// Encrypt the plain text files in the index
 pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started encrypt_files util");
-
-    let dir = Path::new(".");
-
     info!("force_write_index option: {}", args.force_write_index);
 
-    let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-
-    let cfg = config::read_config(dir).map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        eprintln!("More info: {}", e);
-        e
-    })?;
-    // dbg!(&cfg);
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     let plain_index = cfg.load_plain_index(&bbox).unwrap();
 
