@@ -84,6 +84,13 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         cfg.write_blob_index(&blob_index, &bbox)?;
     }
 
+    // Push indexes to remote if requested
+    if args.push {
+        println!("Pushing indexes to remote backend...");
+        cfg.push_indexes(&*backend)?;
+        println!("Indexes pushed successfully");
+    }
+
     // Print summary
     println!(
         "Sync complete: {} files indexed, {} chunks encrypted",

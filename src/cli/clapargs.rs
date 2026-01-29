@@ -26,6 +26,8 @@ pub enum Action {
     Init(InitArgs),
     /// Sync files: add to index and encrypt (combines add + encrypt-files)
     Sync(SyncArgs),
+    /// Pull indexes from remote backend
+    Pull(PullArgs),
     /// Write index (plumbing)
     WriteIndex(WriteIndexArgs),
     /// Encrypt files in index (plumbing)
@@ -85,9 +87,21 @@ pub struct SyncArgs {
     #[arg(long)]
     pub force: bool,
 
+    /// Push indexes to remote backend after sync
+    #[arg(long)]
+    pub push: bool,
+
     /// Show verbose output
     #[arg(long, short)]
     pub verbose: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct PullArgs {
+    /// Force overwrite local indexes even if they exist
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[allow(missing_docs)]
