@@ -5,7 +5,7 @@
 //! encrypted with a passphrase.
 
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -98,32 +98,16 @@ pub fn blackbox_from_identity(identity: Identity) -> BlackBox {
     BlackBox::new(&[identity_str])
 }
 
-/// Prompt for a passphrase on stdin.
+/// Prompt for a passphrase on stdin with hidden input.
 ///
 /// If `confirm` is true, prompts twice and verifies they match.
 pub fn prompt_passphrase(prompt: &str, confirm: bool) -> Result<String> {
-    // For now, simple stdin reading. In the future, could use rpassword for hidden input.
-    eprint!("{}", prompt);
-    io::stderr().flush().ok();
-
-    let stdin = io::stdin();
-    let mut line = String::new();
-    stdin
-        .lock()
-        .read_line(&mut line)
+    let pass1 = rpassword::prompt_password(prompt)
         .map_err(|e| BluError::Internal(format!("failed to read passphrase: {}", e)))?;
-    let pass1 = line.trim().to_string();
 
     if confirm {
-        eprint!("Confirm passphrase: ");
-        io::stderr().flush().ok();
-
-        let mut line2 = String::new();
-        stdin
-            .lock()
-            .read_line(&mut line2)
+        let pass2 = rpassword::prompt_password("Confirm passphrase: ")
             .map_err(|e| BluError::Internal(format!("failed to read passphrase: {}", e)))?;
-        let pass2 = line2.trim();
 
         if pass1 != pass2 {
             return Err(BluError::Internal("passphrases do not match".to_string()));
