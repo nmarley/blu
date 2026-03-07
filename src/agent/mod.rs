@@ -21,7 +21,6 @@ mod paths;
 mod protocol;
 mod state;
 
-pub use blackbox::{AgentBlackBox, BlackBoxProxy};
 pub use client::AgentClient;
 pub use daemon::run_daemon;
 pub use paths::AgentPaths;

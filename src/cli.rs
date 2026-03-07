@@ -24,6 +24,8 @@ mod write_index;
 
 pub use add::add;
 pub use agent_cmd::agent;
+pub use agent_cmd::lock;
+pub use agent_cmd::unlock;
 pub use debug_index::debug_index;
 pub use defrag_blobs::defrag_blobs;
 pub use delete_files::delete_files;

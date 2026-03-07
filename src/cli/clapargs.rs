@@ -55,6 +55,11 @@ pub enum Action {
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
 
+    /// Unlock the agent (start if needed, cache passphrase)
+    Unlock,
+    /// Lock the agent (zeroize cached keys)
+    Lock,
+
     /// Manage the blu agent daemon
     Agent(AgentArgs),
 
