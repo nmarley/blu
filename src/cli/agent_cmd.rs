@@ -96,11 +96,14 @@ fn agent_status() -> Result<(), Box<dyn std::error::Error>> {
     let status = if unlocked { "unlocked" } else { "locked" };
     println!("agent is running ({})", status);
 
+    if let Some(profile) = result["profile"].as_str() {
+        println!("profile: {}", profile);
+    }
     if let Some(key) = result["public_key"].as_str() {
         println!("public key: {}", key);
     }
-    if let Some(expires) = result["expires_at"].as_str() {
-        println!("expires at: {}", expires);
+    if let Some(remaining) = result["timeout_remaining"].as_str() {
+        println!("timeout in: {}", remaining);
     }
 
     Ok(())

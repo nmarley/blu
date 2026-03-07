@@ -21,6 +21,7 @@ use std::sync::Arc;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 
+use crate::agent::config::AgentConfig;
 use crate::agent::paths::AgentPaths;
 use crate::agent::protocol::{self, Method};
 use crate::agent::state::AgentState;
@@ -66,11 +67,29 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
 
     ctrlc_handler(running_signal);
 
+    // Load agent configuration (timeout profiles, preferences)
+    let agent_config = match AgentConfig::load() {
+        Ok(cfg) => {
+            info!(
+                "agent config: profile={}, idle={:?}, max={:?}",
+                cfg.profile, cfg.timeout_idle, cfg.timeout_max
+            );
+            cfg
+        }
+        Err(e) => {
+            warn!("failed to load agent config, using defaults: {}", e);
+            AgentConfig::default()
+        }
+    };
+
     // Agent state (holds decrypted keys when unlocked)
-    let mut state = AgentState::new();
+    let mut state = AgentState::with_config(agent_config);
 
     // Accept loop
     while running.load(Ordering::SeqCst) {
+        // Check timeouts on each poll iteration
+        state.check_timeouts();
+
         listener
             .set_nonblocking(true)
             .map_err(|e| BluError::Internal(format!("set_nonblocking: {}", e)))?;
@@ -82,7 +101,10 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
                     .map_err(|e| BluError::Internal(format!("stream config: {}", e)))?;
 
                 match handle_connection(&mut stream, &mut state, &running) {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        // Record activity to reset the idle timer
+                        state.touch();
+                    }
                     Err(e) => {
                         warn!("error handling connection: {}", e);
                     }
@@ -159,13 +181,34 @@ fn handle_connection(
 }
 
 fn handle_status(state: &AgentState, id: &serde_json::Value) -> serde_json::Value {
+    let remaining = state.time_remaining().map(format_duration);
+    let profile = state.profile().profile.to_string();
+
     protocol::success_response(
         id,
         serde_json::json!({
             "unlocked": state.is_unlocked(),
             "public_key": state.public_key(),
+            "profile": profile,
+            "timeout_remaining": remaining,
         }),
     )
+}
+
+/// Format a Duration as a human-readable string (e.g. "59m 42s").
+fn format_duration(d: std::time::Duration) -> String {
+    let total_secs = d.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    let seconds = total_secs % 60;
+
+    if hours > 0 {
+        format!("{}h {:02}m", hours, minutes)
+    } else if minutes > 0 {
+        format!("{}m {:02}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
 }
 
 fn handle_unlock(
@@ -445,6 +488,9 @@ mod test {
         );
         assert_eq!(resp["result"]["unlocked"], false);
         assert_eq!(resp["result"]["public_key"], serde_json::Value::Null);
+        assert!(resp["result"]["profile"].is_string());
+        // timeout_remaining should be null when locked
+        assert_eq!(resp["result"]["timeout_remaining"], serde_json::Value::Null);
 
         // Unknown method
         let resp = send_request(
@@ -508,7 +554,7 @@ mod test {
         let pubkey = resp["result"]["public_key"].as_str().unwrap();
         assert!(pubkey.starts_with("age1"));
 
-        // Status should now show unlocked
+        // Status should now show unlocked with timeout info
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
@@ -520,6 +566,7 @@ mod test {
         );
         assert_eq!(resp["result"]["unlocked"], true);
         assert_eq!(resp["result"]["public_key"], pubkey);
+        assert!(resp["result"]["timeout_remaining"].is_string());
 
         // Lock
         let resp = send_request(

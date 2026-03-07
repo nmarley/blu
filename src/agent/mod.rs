@@ -16,11 +16,13 @@
 
 mod blackbox;
 mod client;
+mod config;
 mod daemon;
 mod paths;
 mod protocol;
 mod state;
 
 pub use client::AgentClient;
+pub use config::AgentConfig;
 pub use daemon::run_daemon;
 pub use paths::AgentPaths;
