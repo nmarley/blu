@@ -661,6 +661,7 @@ dependencies = [
  "age",
  "aws-config",
  "aws-sdk-s3",
+ "base64 0.22.1",
  "bincode",
  "chrono",
  "clap",

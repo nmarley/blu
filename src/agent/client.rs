@@ -9,6 +9,9 @@ use std::os::unix::net::UnixStream;
 use std::process::Command;
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+
 use crate::agent::paths::AgentPaths;
 use crate::error::{BluError, Result};
 
@@ -46,11 +49,14 @@ impl AgentClient {
         if !self.paths.socket_exists() {
             return false;
         }
-        // Try to connect briefly to verify the socket is live
         UnixStream::connect(&self.paths.socket).is_ok()
     }
 
     /// Send a JSON-RPC request and return the parsed response.
+    ///
+    /// Returns the full JSON-RPC response object. Use the typed
+    /// convenience methods (unlock, lock, encrypt, decrypt) instead
+    /// of calling this directly.
     pub fn request(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
         let request = serde_json::json!({
             "jsonrpc": "2.0",
@@ -67,11 +73,9 @@ impl AgentClient {
             ))
         })?;
 
-        // Set a read/write timeout so we don't hang indefinitely
         stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
         stream.set_write_timeout(Some(Duration::from_secs(10))).ok();
 
-        // Write length-prefixed request
         let body = serde_json::to_vec(&request)?;
         let len = (body.len() as u32).to_be_bytes();
         stream
@@ -84,7 +88,6 @@ impl AgentClient {
             .flush()
             .map_err(|e| BluError::Internal(format!("flush to agent: {}", e)))?;
 
-        // Read length-prefixed response
         let mut len_buf = [0u8; 4];
         stream
             .read_exact(&mut len_buf)
@@ -102,13 +105,22 @@ impl AgentClient {
 
         let response: serde_json::Value = serde_json::from_slice(&resp_buf)?;
 
-        // Check for JSON-RPC error
         if let Some(err) = response.get("error") {
             let msg = err
                 .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown agent error");
-            return Err(BluError::Internal(format!("agent error: {}", msg)));
+            let code = err.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+
+            return Err(match code {
+                -32000 => BluError::Internal("agent is locked".into()),
+                -32001 => BluError::WrongPassphrase,
+                -32002 => {
+                    let path = msg.strip_prefix("key file not found: ").unwrap_or(msg);
+                    BluError::KeyFileNotFound { path: path.into() }
+                }
+                _ => BluError::Internal(format!("agent error: {}", msg)),
+            });
         }
 
         Ok(response)
@@ -119,17 +131,71 @@ impl AgentClient {
         self.request("status", serde_json::json!({}))
     }
 
+    /// Unlock the agent with a passphrase and identity file path.
+    ///
+    /// Returns the public key on success.
+    pub fn unlock(&self, identity_path: &str, passphrase: &str) -> Result<String> {
+        let resp = self.request(
+            "unlock",
+            serde_json::json!({
+                "identity_path": identity_path,
+                "passphrase": passphrase,
+            }),
+        )?;
+
+        let public_key = resp["result"]["public_key"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing public_key in unlock response".into()))?
+            .to_string();
+
+        Ok(public_key)
+    }
+
+    /// Lock the agent (zeroize all secrets).
+    pub fn lock(&self) -> Result<()> {
+        self.request("lock", serde_json::json!({}))?;
+        Ok(())
+    }
+
+    /// Encrypt data via the agent.
+    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let resp = self.request(
+            "encrypt",
+            serde_json::json!({ "data": BASE64.encode(data) }),
+        )?;
+
+        let ciphertext_b64 = resp["result"]["ciphertext"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing ciphertext in response".into()))?;
+
+        BASE64
+            .decode(ciphertext_b64)
+            .map_err(|e| BluError::Internal(format!("invalid base64 from agent: {}", e)))
+    }
+
+    /// Decrypt data via the agent.
+    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let resp = self.request(
+            "decrypt",
+            serde_json::json!({ "data": BASE64.encode(data) }),
+        )?;
+
+        let plaintext_b64 = resp["result"]["plaintext"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing plaintext in response".into()))?;
+
+        BASE64
+            .decode(plaintext_b64)
+            .map_err(|e| BluError::Internal(format!("invalid base64 from agent: {}", e)))
+    }
+
     /// Send a shutdown request to the agent.
     pub fn shutdown(&self) -> Result<()> {
-        // Shutdown may close the connection before we read the
-        // response, so we tolerate errors here.
         let _ = self.request("shutdown", serde_json::json!({}));
         Ok(())
     }
 
     /// Start the agent daemon as a background process.
-    ///
-    /// Spawns `blu __agent-daemon` which forks and daemonizes.
     fn start_daemon(&self) -> Result<()> {
         let exe = std::env::current_exe().map_err(|e| {
             BluError::Internal(format!("could not determine blu executable path: {}", e))
@@ -172,18 +238,20 @@ mod test {
     use crate::agent::paths::AgentPaths;
     use tempfile::tempdir;
 
-    #[test]
-    fn client_status_via_daemon() {
+    /// Start a daemon in a background thread, wait for socket, return
+    /// the client and join handle.
+    fn start_test_client() -> (AgentClient, AgentPaths, std::thread::JoinHandle<()>) {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        // Keep the tempdir so it is not removed while the daemon runs.
+        // Tests are short-lived so this is fine.
+        let tmp_path = tmp.keep();
+        let paths = AgentPaths::from_base(&tmp_path).unwrap();
         let paths_for_daemon = paths.clone();
 
-        // Start daemon in background thread
         let handle = std::thread::spawn(move || {
             run_daemon(&paths_for_daemon).unwrap();
         });
 
-        // Wait for socket
         for _ in 0..50 {
             if paths.socket_exists() {
                 break;
@@ -191,13 +259,63 @@ mod test {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        let client = AgentClient::with_paths(paths);
+        let client = AgentClient::with_paths(paths.clone());
+        (client, paths, handle)
+    }
 
-        // Status
+    #[test]
+    fn client_status_when_locked() {
+        let (client, _paths, handle) = start_test_client();
+
         let resp = client.status().unwrap();
         assert_eq!(resp["result"]["unlocked"], false);
 
-        // Shutdown
+        client.shutdown().unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn client_unlock_lock_cycle() {
+        let (client, _paths, handle) = start_test_client();
+
+        let pubkey = client.unlock("test/blu_secrets/blu.key", "unused").unwrap();
+        assert!(pubkey.starts_with("age1"));
+
+        let resp = client.status().unwrap();
+        assert_eq!(resp["result"]["unlocked"], true);
+
+        client.lock().unwrap();
+
+        let resp = client.status().unwrap();
+        assert_eq!(resp["result"]["unlocked"], false);
+
+        client.shutdown().unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn client_encrypt_decrypt() {
+        let (client, _paths, handle) = start_test_client();
+        client.unlock("test/blu_secrets/blu.key", "unused").unwrap();
+
+        let plaintext = b"agent encrypt/decrypt test data";
+        let ciphertext = client.encrypt(plaintext).unwrap();
+        assert_ne!(&ciphertext[..], &plaintext[..]);
+
+        let decrypted = client.decrypt(&ciphertext).unwrap();
+        assert_eq!(&decrypted, plaintext);
+
+        client.shutdown().unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn client_encrypt_when_locked() {
+        let (client, _paths, handle) = start_test_client();
+
+        let result = client.encrypt(b"data");
+        assert!(result.is_err());
+
         client.shutdown().unwrap();
         handle.join().unwrap();
     }

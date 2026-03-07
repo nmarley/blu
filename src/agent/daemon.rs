@@ -7,7 +7,7 @@
 //! 2. Binds a Unix domain socket at `~/.blu/agent.sock`
 //! 3. Sets socket permissions to 0600 (owner-only)
 //! 4. Writes its PID to `~/.blu/agent.pid`
-//! 5. Accepts connections and processes JSON-RPC requests
+//! 5. Accepts connections and dispatches JSON-RPC requests
 //! 6. On shutdown: zeroizes secrets, removes socket and PID file
 
 use std::fs;
@@ -18,7 +18,12 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+
 use crate::agent::paths::AgentPaths;
+use crate::agent::protocol::{self, Method};
+use crate::agent::state::AgentState;
 use crate::error::{BluError, Result};
 
 /// Run the agent daemon. This function does not return under normal
@@ -59,20 +64,13 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let running_signal = running.clone();
 
-    // Handle SIGTERM and SIGINT for graceful shutdown
     ctrlc_handler(running_signal);
 
-    // Set a short timeout on the listener so we can check the
-    // shutdown flag periodically
-    listener
-        .set_nonblocking(false)
-        .map_err(|e| BluError::Internal(format!("failed to configure socket: {}", e)))?;
+    // Agent state (holds decrypted keys when unlocked)
+    let mut state = AgentState::new();
 
     // Accept loop
     while running.load(Ordering::SeqCst) {
-        // Use a timeout so we periodically check the shutdown flag.
-        // std UnixListener does not have set_timeout, so we use
-        // non-blocking mode with a sleep.
         listener
             .set_nonblocking(true)
             .map_err(|e| BluError::Internal(format!("set_nonblocking: {}", e)))?;
@@ -83,7 +81,7 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
                     .set_nonblocking(false)
                     .map_err(|e| BluError::Internal(format!("stream config: {}", e)))?;
 
-                match handle_connection(&mut stream, &running) {
+                match handle_connection(&mut stream, &mut state, &running) {
                     Ok(()) => {}
                     Err(e) => {
                         warn!("error handling connection: {}", e);
@@ -91,7 +89,6 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // No pending connection; sleep briefly then retry
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             Err(e) => {
@@ -101,17 +98,15 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
     }
 
     info!("agent shutting down");
+    state.lock();
     paths.cleanup();
     Ok(())
 }
 
-/// Handle a single client connection.
-///
-/// Reads one length-prefixed JSON message, dispatches it, writes the
-/// response, and closes the connection. (Stage 1b will add the full
-/// JSON-RPC dispatch; for now this is a minimal skeleton.)
+/// Handle a single client connection: read request, dispatch, write response.
 fn handle_connection(
     stream: &mut std::os::unix::net::UnixStream,
+    state: &mut AgentState,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     // Read 4-byte big-endian length prefix
@@ -121,12 +116,10 @@ fn handle_connection(
         .map_err(|e| BluError::Internal(format!("read length: {}", e)))?;
     let msg_len = u32::from_be_bytes(len_buf) as usize;
 
-    // Sanity check: reject messages larger than 64 MiB
     if msg_len > 64 * 1024 * 1024 {
         return Err(BluError::Internal("message too large".into()));
     }
 
-    // Read the JSON payload
     let mut payload = vec![0u8; msg_len];
     stream
         .read_exact(&mut payload)
@@ -134,47 +127,194 @@ fn handle_connection(
 
     let request: serde_json::Value = serde_json::from_slice(&payload)?;
 
-    // Minimal dispatch: only "status" and "shutdown" for stage 1a.
-    // Full JSON-RPC dispatch is stage 1b.
-    let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
+    let method_str = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let id = request
         .get("id")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let params = request
+        .get("params")
+        .cloned()
+        .unwrap_or(serde_json::json!({}));
 
-    let response = match method {
-        "status" => serde_json::json!({
-            "jsonrpc": "2.0",
-            "result": {
-                "unlocked": false,
-                "public_key": null,
-                "expires_at": null,
-                "vaults": []
-            },
-            "id": id
-        }),
-        "shutdown" => {
+    let response = match Method::from_str(method_str) {
+        Some(Method::Status) => handle_status(state, &id),
+        Some(Method::Unlock) => handle_unlock(state, &id, &params),
+        Some(Method::Lock) => handle_lock(state, &id),
+        Some(Method::Encrypt) => handle_encrypt(state, &id, &params),
+        Some(Method::Decrypt) => handle_decrypt(state, &id, &params),
+        Some(Method::Shutdown) => {
             running.store(false, Ordering::SeqCst);
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {},
-                "id": id
-            })
+            protocol::success_response(&id, serde_json::json!({}))
         }
-        _ => {
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32601,
-                    "message": "method not found"
-                },
-                "id": id
-            })
-        }
+        None => protocol::error_response(
+            &id,
+            protocol::error_code::METHOD_NOT_FOUND,
+            "method not found",
+        ),
     };
 
     write_response(stream, &response)?;
     Ok(())
+}
+
+fn handle_status(state: &AgentState, id: &serde_json::Value) -> serde_json::Value {
+    protocol::success_response(
+        id,
+        serde_json::json!({
+            "unlocked": state.is_unlocked(),
+            "public_key": state.public_key(),
+        }),
+    )
+}
+
+fn handle_unlock(
+    state: &mut AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    let identity_path = match params.get("identity_path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing identity_path",
+            );
+        }
+    };
+
+    let passphrase = match params.get("passphrase").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing passphrase",
+            );
+        }
+    };
+
+    match state.unlock(identity_path, passphrase) {
+        Ok(public_key) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "public_key": public_key,
+            }),
+        ),
+        Err(BluError::WrongPassphrase) => protocol::error_response(
+            id,
+            protocol::error_code::WRONG_PASSPHRASE,
+            "incorrect passphrase",
+        ),
+        Err(BluError::KeyFileNotFound { path }) => protocol::error_response(
+            id,
+            protocol::error_code::KEY_NOT_FOUND,
+            &format!("key file not found: {}", path.display()),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("unlock failed: {}", e),
+        ),
+    }
+}
+
+fn handle_lock(state: &mut AgentState, id: &serde_json::Value) -> serde_json::Value {
+    state.lock();
+    protocol::success_response(id, serde_json::json!({}))
+}
+
+fn handle_encrypt(
+    state: &AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    if !state.is_unlocked() {
+        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
+    }
+
+    let data_b64 = match params.get("data").and_then(|v| v.as_str()) {
+        Some(d) => d,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing data",
+            );
+        }
+    };
+
+    let data = match BASE64.decode(data_b64) {
+        Ok(d) => d,
+        Err(e) => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                &format!("invalid base64 data: {}", e),
+            );
+        }
+    };
+
+    match state.encrypt(&data) {
+        Ok(ciphertext) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "ciphertext": BASE64.encode(&ciphertext),
+            }),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("encryption failed: {}", e),
+        ),
+    }
+}
+
+fn handle_decrypt(
+    state: &AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    if !state.is_unlocked() {
+        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
+    }
+
+    let data_b64 = match params.get("data").and_then(|v| v.as_str()) {
+        Some(d) => d,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing data",
+            );
+        }
+    };
+
+    let data = match BASE64.decode(data_b64) {
+        Ok(d) => d,
+        Err(e) => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                &format!("invalid base64 data: {}", e),
+            );
+        }
+    };
+
+    match state.decrypt(&data) {
+        Ok(plaintext) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "plaintext": BASE64.encode(&plaintext),
+            }),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("decryption failed: {}", e),
+        ),
+    }
 }
 
 /// Write a length-prefixed JSON response to the stream.
@@ -196,8 +336,7 @@ fn write_response(
     Ok(())
 }
 
-/// Remove stale socket and PID files from a previous agent that did
-/// not shut down cleanly.
+/// Remove stale socket and PID files from a previous agent.
 fn cleanup_stale(paths: &AgentPaths) {
     if let Some(pid) = paths.read_pid() {
         if !process_alive(pid) {
@@ -205,23 +344,16 @@ fn cleanup_stale(paths: &AgentPaths) {
             paths.cleanup();
         }
     } else if paths.socket_exists() {
-        // PID file missing but socket exists; stale
         info!("removing stale agent socket (no PID file)");
         paths.cleanup();
     }
 }
 
-/// Check whether a process with the given PID is alive.
 fn process_alive(pid: u32) -> bool {
-    // signal 0 checks if the process exists without sending a signal
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Install a handler for SIGTERM/SIGINT that sets the running flag
-/// to false.
 fn ctrlc_handler(running: Arc<AtomicBool>) {
-    // We use a simple signal-safe approach: set an atomic flag.
-    // The accept loop checks this flag on each iteration.
     unsafe {
         libc::signal(
             libc::SIGTERM,
@@ -232,8 +364,6 @@ fn ctrlc_handler(running: Arc<AtomicBool>) {
             signal_handler as *const () as libc::sighandler_t,
         );
     }
-    // Store the Arc in a static so the signal handler can access it.
-    // This is safe because we only set it once before the accept loop.
     RUNNING_FLAG
         .lock()
         .map(|mut guard| {
@@ -279,18 +409,13 @@ mod test {
         serde_json::from_slice(&resp_buf).unwrap()
     }
 
-    #[test]
-    fn daemon_status_and_shutdown() {
-        let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+    /// Start a daemon in a background thread and wait for the socket.
+    fn start_test_daemon(paths: &AgentPaths) -> std::thread::JoinHandle<()> {
         let paths_clone = paths.clone();
-
-        // Start the daemon in a background thread
         let handle = std::thread::spawn(move || {
             run_daemon(&paths_clone).unwrap();
         });
 
-        // Wait for socket to appear
         for _ in 0..50 {
             if paths.socket_exists() {
                 break;
@@ -299,7 +424,16 @@ mod test {
         }
         assert!(paths.socket_exists(), "agent socket did not appear");
 
-        // Send status request
+        handle
+    }
+
+    #[test]
+    fn daemon_status_and_shutdown() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Status: should be locked
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
@@ -310,8 +444,9 @@ mod test {
             }),
         );
         assert_eq!(resp["result"]["unlocked"], false);
+        assert_eq!(resp["result"]["public_key"], serde_json::Value::Null);
 
-        // Send unknown method
+        // Unknown method
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
@@ -323,8 +458,8 @@ mod test {
         );
         assert_eq!(resp["error"]["code"], -32601);
 
-        // Send shutdown
-        let resp = send_request(
+        // Shutdown
+        send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
@@ -333,13 +468,201 @@ mod test {
                 "id": 3
             }),
         );
-        assert!(resp["result"].is_object());
-
-        // Daemon thread should exit
         handle.join().unwrap();
 
-        // Socket and PID file should be cleaned up
         assert!(!paths.socket_exists());
-        assert!(paths.read_pid().is_none());
+    }
+
+    #[test]
+    fn daemon_unlock_lock_cycle() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Encrypt while locked should fail
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "encrypt",
+                "params": { "data": BASE64.encode(b"hello") },
+                "id": 10
+            }),
+        );
+        assert_eq!(resp["error"]["code"], protocol::error_code::AGENT_LOCKED);
+
+        // Unlock with the test key (plaintext, no passphrase needed)
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock",
+                "params": {
+                    "identity_path": "test/blu_secrets/blu.key",
+                    "passphrase": "unused"
+                },
+                "id": 11
+            }),
+        );
+        assert!(resp["result"]["public_key"].is_string());
+        let pubkey = resp["result"]["public_key"].as_str().unwrap();
+        assert!(pubkey.starts_with("age1"));
+
+        // Status should now show unlocked
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 12
+            }),
+        );
+        assert_eq!(resp["result"]["unlocked"], true);
+        assert_eq!(resp["result"]["public_key"], pubkey);
+
+        // Lock
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "lock",
+                "params": {},
+                "id": 13
+            }),
+        );
+        assert!(resp["result"].is_object());
+
+        // Status should show locked again
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 14
+            }),
+        );
+        assert_eq!(resp["result"]["unlocked"], false);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_encrypt_decrypt_round_trip() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Unlock
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock",
+                "params": {
+                    "identity_path": "test/blu_secrets/blu.key",
+                    "passphrase": "unused"
+                },
+                "id": 1
+            }),
+        );
+
+        // Encrypt
+        let plaintext = b"the quick brown fox jumps over the lazy dog";
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "encrypt",
+                "params": { "data": BASE64.encode(plaintext) },
+                "id": 2
+            }),
+        );
+        let ciphertext_b64 = resp["result"]["ciphertext"].as_str().unwrap();
+        let ciphertext = BASE64.decode(ciphertext_b64).unwrap();
+        assert_ne!(&ciphertext, plaintext);
+
+        // Decrypt
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "decrypt",
+                "params": { "data": ciphertext_b64 },
+                "id": 3
+            }),
+        );
+        let decrypted_b64 = resp["result"]["plaintext"].as_str().unwrap();
+        let decrypted = BASE64.decode(decrypted_b64).unwrap();
+        assert_eq!(&decrypted, plaintext);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_unlock_bad_passphrase() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Try to unlock with a nonexistent key file
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock",
+                "params": {
+                    "identity_path": "/nonexistent/path/identity.age",
+                    "passphrase": "test"
+                },
+                "id": 1
+            }),
+        );
+        assert_eq!(resp["error"]["code"], protocol::error_code::KEY_NOT_FOUND);
+
+        // Missing params
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock",
+                "params": {},
+                "id": 2
+            }),
+        );
+        assert_eq!(resp["error"]["code"], protocol::error_code::INVALID_PARAMS);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
     }
 }
