@@ -6,6 +6,7 @@ pub mod helpers;
 pub mod output;
 
 mod add;
+mod agent_cmd;
 mod debug_index;
 mod defrag_blobs;
 mod delete_files;
@@ -22,6 +23,7 @@ mod tagger;
 mod write_index;
 
 pub use add::add;
+pub use agent_cmd::agent;
 pub use debug_index::debug_index;
 pub use defrag_blobs::defrag_blobs;
 pub use delete_files::delete_files;

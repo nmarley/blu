@@ -54,6 +54,13 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+
+    /// Manage the blu agent daemon
+    Agent(AgentArgs),
+
+    /// Internal: run the agent daemon (not user-facing)
+    #[command(name = "__agent-daemon", hide = true)]
+    AgentDaemon,
 }
 
 #[allow(missing_docs)]
@@ -208,6 +215,22 @@ pub struct DeleteFilesArgs {
 #[derive(Parser, Debug, Clone)]
 pub struct SearchArgs {
     pub needle: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct AgentArgs {
+    #[command(subcommand)]
+    pub command: AgentCommand,
+}
+
+/// Agent subcommands
+#[derive(Debug, clap::Subcommand, Clone)]
+pub enum AgentCommand {
+    /// Show agent status (running, unlocked, timeout)
+    Status,
+    /// Stop the agent daemon
+    Stop,
 }
 
 #[allow(missing_docs)]

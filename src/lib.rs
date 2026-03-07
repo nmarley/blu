@@ -26,6 +26,8 @@ extern crate log;
 
 /// age handles all encryption and decryption
 pub mod age;
+/// agent daemon for session management (unlock/lock)
+pub mod agent;
 /// blob handles storage and retrieval of encrypted files
 pub mod blob;
 /// block handles block-based indexing

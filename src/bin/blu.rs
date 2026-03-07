@@ -29,6 +29,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Set global no-passphrase flag from CLI args
     helpers::set_no_passphrase(args.no_passphrase);
 
+    // Agent commands do not require a blu repository
+    match &args.action {
+        clapargs::Action::Agent(a) => return cli::agent(a.clone()),
+        clapargs::Action::AgentDaemon => {
+            let paths = blu::agent::AgentPaths::resolve()?;
+            return blu::agent::run_daemon(&paths).map_err(|e| e.into());
+        }
+        _ => {}
+    }
+
     let blu_basedir = match find_blu_basedir(&args.bludir) {
         Some(dir) => dir,
         None => {
@@ -81,6 +91,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Sync(a) => cli::sync(a),
         clapargs::Action::Tagger(a) => cli::tagger(a),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
+        // Agent commands are dispatched above, before basedir resolution
+        clapargs::Action::Agent(_) | clapargs::Action::AgentDaemon => unreachable!(),
     }
 }
 
