@@ -8,6 +8,8 @@
 pub mod dek;
 /// Key Encryption Key (KEK) generation, wrapping, and storage.
 pub mod kek;
+/// BIP39 mnemonic generation and seed-to-key derivation.
+pub mod mnemonic;
 
 use std::fs;
 use std::io;

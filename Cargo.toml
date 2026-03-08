@@ -42,3 +42,7 @@ daemonize = "0.5"
 dirs = "6"
 libc = "0.2"
 zeroize = { version = "1", features = ["derive"] }
+bip39 = { version = "2", features = ["zeroize"] }
+hkdf = "0.12"
+hmac = "0.12"
+bech32 = "0.9"
