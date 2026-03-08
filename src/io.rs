@@ -35,7 +35,7 @@ macro_rules! gen_std_bbserde {
             ) -> Result<(), Box<dyn std::error::Error>> {
                 let serialized = self.serialize_bytes()?;
                 let compressed = compress(&serialized)?;
-                let encrypted = bbox.encrypt(&compressed)?;
+                let encrypted = bbox.encrypt_index(&compressed)?;
                 let _ = stream.write_all(&encrypted);
                 Ok(())
             }

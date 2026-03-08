@@ -121,7 +121,7 @@ impl<'a> BlobBuffer<'a> {
         // 2. compress
         // 3. encrypt
         let compressed = compress(&self.data)?;
-        let encrypted = self.bbox.encrypt(&compressed)?;
+        let encrypted = self.bbox.encrypt_blob(&compressed)?;
 
         let path = self.write_blob(&encrypted)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
