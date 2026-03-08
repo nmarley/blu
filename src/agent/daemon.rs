@@ -165,6 +165,8 @@ fn handle_connection(
         Some(Method::Lock) => handle_lock(state, &id),
         Some(Method::Encrypt) => handle_encrypt(state, &id, &params),
         Some(Method::Decrypt) => handle_decrypt(state, &id, &params),
+        Some(Method::WrapDek) => handle_wrap_dek(state, &id, &params),
+        Some(Method::UnwrapDek) => handle_unwrap_dek(state, &id, &params),
         Some(Method::Shutdown) => {
             running.store(false, Ordering::SeqCst);
             protocol::success_response(&id, serde_json::json!({}))
@@ -191,6 +193,8 @@ fn handle_status(state: &AgentState, id: &serde_json::Value) -> serde_json::Valu
             "public_key": state.public_key(),
             "profile": profile,
             "timeout_remaining": remaining,
+            "has_kek": state.has_kek(),
+            "kek_version": state.kek_version(),
         }),
     )
 }
@@ -356,6 +360,121 @@ fn handle_decrypt(
             id,
             protocol::error_code::CRYPTO_ERROR,
             &format!("decryption failed: {}", e),
+        ),
+    }
+}
+
+fn handle_wrap_dek(
+    state: &mut AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    if !state.is_unlocked() {
+        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
+    }
+
+    // If a kek_dir is provided and no KEK is loaded yet, load it
+    if !state.has_kek() {
+        if let Some(kek_dir) = params.get("kek_dir").and_then(|v| v.as_str()) {
+            if let Err(e) = state.load_kek(kek_dir) {
+                return protocol::error_response(
+                    id,
+                    protocol::error_code::CRYPTO_ERROR,
+                    &format!("failed to load KEK: {}", e),
+                );
+            }
+        } else {
+            return protocol::error_response(
+                id,
+                protocol::error_code::KEK_NOT_LOADED,
+                "no KEK loaded (provide kek_dir to load)",
+            );
+        }
+    }
+
+    match state.wrap_dek() {
+        Ok((dek_bytes, wrapped_dek, kek_version)) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "dek": BASE64.encode(&dek_bytes),
+                "wrapped_dek": BASE64.encode(&wrapped_dek),
+                "kek_version": kek_version,
+            }),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("wrap_dek failed: {}", e),
+        ),
+    }
+}
+
+fn handle_unwrap_dek(
+    state: &mut AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    if !state.is_unlocked() {
+        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
+    }
+
+    // If a kek_dir is provided and no KEK is loaded yet, load it
+    if !state.has_kek() {
+        if let Some(kek_dir) = params.get("kek_dir").and_then(|v| v.as_str()) {
+            if let Err(e) = state.load_kek(kek_dir) {
+                return protocol::error_response(
+                    id,
+                    protocol::error_code::CRYPTO_ERROR,
+                    &format!("failed to load KEK: {}", e),
+                );
+            }
+        } else {
+            return protocol::error_response(
+                id,
+                protocol::error_code::KEK_NOT_LOADED,
+                "no KEK loaded (provide kek_dir to load)",
+            );
+        }
+    }
+
+    let wrapped_b64 = match params.get("wrapped_dek").and_then(|v| v.as_str()) {
+        Some(d) => d,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing wrapped_dek",
+            );
+        }
+    };
+
+    let wrapped = match BASE64.decode(wrapped_b64) {
+        Ok(d) => d,
+        Err(e) => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                &format!("invalid base64 wrapped_dek: {}", e),
+            );
+        }
+    };
+
+    let kek_version = params
+        .get("kek_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u16;
+
+    match state.unwrap_dek(&wrapped, kek_version) {
+        Ok(dek_bytes) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "dek": BASE64.encode(&dek_bytes),
+            }),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("unwrap_dek failed: {}", e),
         ),
     }
 }

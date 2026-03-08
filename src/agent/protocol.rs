@@ -9,6 +9,8 @@ pub enum Method {
     Lock,
     Encrypt,
     Decrypt,
+    WrapDek,
+    UnwrapDek,
     Shutdown,
 }
 
@@ -20,6 +22,8 @@ impl Method {
             "lock" => Some(Self::Lock),
             "encrypt" => Some(Self::Encrypt),
             "decrypt" => Some(Self::Decrypt),
+            "wrap_dek" => Some(Self::WrapDek),
+            "unwrap_dek" => Some(Self::UnwrapDek),
             "shutdown" => Some(Self::Shutdown),
             _ => None,
         }
@@ -40,6 +44,8 @@ pub mod error_code {
     pub const KEY_NOT_FOUND: i64 = -32002;
     /// Encryption or decryption failed.
     pub const CRYPTO_ERROR: i64 = -32003;
+    /// KEK not loaded (no vault KEK available).
+    pub const KEK_NOT_LOADED: i64 = -32004;
 }
 
 /// Build a JSON-RPC 2.0 success response.

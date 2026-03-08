@@ -4,6 +4,9 @@
 //! locked. The BlackBox is constructed from the decrypted identity
 //! and provides encrypt/decrypt operations.
 //!
+//! When a vault's KEK is loaded, the agent can also perform DEK
+//! wrap/unwrap operations without exposing the KEK to CLI processes.
+//!
 //! Timeout tracking: the state records when the agent was unlocked
 //! and when the last RPC activity occurred. The daemon polls
 //! `check_timeouts()` on each iteration of the accept loop.
@@ -16,6 +19,8 @@ use crate::age::BlackBox;
 use crate::agent::config::AgentConfig;
 use crate::error::{BluError, Result};
 use crate::keys;
+use crate::keys::dek::Dek;
+use crate::keys::kek::Kek;
 
 /// The agent's mutable state. Holds an optional decrypted identity.
 pub struct AgentState {
@@ -26,6 +31,11 @@ pub struct AgentState {
     blackbox: Option<BlackBox>,
     /// The public key string (age1...).
     public_key: Option<String>,
+
+    /// Cached KEK for the current vault (zeroized on lock/drop).
+    kek: Option<Kek>,
+    /// Version of the cached KEK.
+    kek_version: u16,
 
     /// When the agent was last unlocked (None if locked).
     unlocked_at: Option<Instant>,
@@ -55,6 +65,8 @@ impl AgentState {
             secret_key: None,
             blackbox: None,
             public_key: None,
+            kek: None,
+            kek_version: 0,
             unlocked_at: None,
             last_activity: None,
             config: AgentConfig::default(),
@@ -67,6 +79,8 @@ impl AgentState {
             secret_key: None,
             blackbox: None,
             public_key: None,
+            kek: None,
+            kek_version: 0,
             unlocked_at: None,
             last_activity: None,
             config,
@@ -76,6 +90,16 @@ impl AgentState {
     /// Whether the agent holds a decrypted identity.
     pub fn is_unlocked(&self) -> bool {
         self.blackbox.is_some()
+    }
+
+    /// Whether the agent has a cached KEK.
+    pub fn has_kek(&self) -> bool {
+        self.kek.is_some()
+    }
+
+    /// The cached KEK version, if loaded.
+    pub fn kek_version(&self) -> Option<u16> {
+        self.kek.as_ref().map(|_| self.kek_version)
     }
 
     /// The public key, if unlocked.
@@ -188,8 +212,77 @@ impl AgentState {
         self.secret_key.take();
         self.blackbox.take();
         self.public_key.take();
+        // Kek::drop will zeroize the KEK (ZeroizeOnDrop)
+        self.kek.take();
+        self.kek_version = 0;
         self.unlocked_at = None;
         self.last_activity = None;
+    }
+
+    /// Load and cache a vault's KEK.
+    ///
+    /// The `kek_dir` is the path to the vault's `.blu/` directory
+    /// (the KekStore lives under `.blu/keys/`). The agent uses its
+    /// cached age identity string to unwrap the KEK from the
+    /// age-encrypted `wrapped.age` files.
+    pub fn load_kek(&mut self, kek_dir: &str) -> Result<u16> {
+        let identity_str = self
+            .secret_key
+            .as_ref()
+            .ok_or(BluError::Internal("agent is locked".into()))?;
+
+        let store = keys::kek::KekStore::new(std::path::Path::new(kek_dir));
+        let (kek, version) = store.unwrap_current_kek(&identity_str.inner)?;
+
+        self.kek = Some(kek);
+        self.kek_version = version;
+
+        Ok(version)
+    }
+
+    /// Set a KEK directly (for testing or when the KEK is provided
+    /// rather than loaded from disk).
+    #[allow(dead_code)]
+    pub fn set_kek(&mut self, kek: Kek, version: u16) {
+        self.kek = Some(kek);
+        self.kek_version = version;
+    }
+
+    /// Generate a new DEK, wrap it with the cached KEK, and return
+    /// the plaintext DEK bytes, the wrapped DEK, and the KEK version.
+    ///
+    /// This is the agent-side implementation of the `wrap_dek` RPC.
+    pub fn wrap_dek(&self) -> Result<(Vec<u8>, Vec<u8>, u16)> {
+        let kek = self
+            .kek
+            .as_ref()
+            .ok_or(BluError::Internal("no KEK loaded".into()))?;
+
+        let dek = Dek::generate();
+        let wrapped = dek.wrap(kek)?;
+        let dek_bytes = dek.as_bytes().to_vec();
+
+        Ok((dek_bytes, wrapped, self.kek_version))
+    }
+
+    /// Unwrap a DEK using the cached KEK.
+    ///
+    /// This is the agent-side implementation of the `unwrap_dek` RPC.
+    pub fn unwrap_dek(&self, wrapped_dek: &[u8], kek_version: u16) -> Result<Vec<u8>> {
+        let kek = self
+            .kek
+            .as_ref()
+            .ok_or(BluError::Internal("no KEK loaded".into()))?;
+
+        if kek_version != self.kek_version {
+            return Err(BluError::DecryptionFailed(format!(
+                "KEK version mismatch: requested v{}, agent has v{}",
+                kek_version, self.kek_version
+            )));
+        }
+
+        let dek = Dek::unwrap(kek, wrapped_dek)?;
+        Ok(dek.as_bytes().to_vec())
     }
 
     /// Encrypt data using the cached BlackBox.
@@ -223,6 +316,7 @@ mod test {
     fn new_state_is_locked() {
         let state = AgentState::new();
         assert!(!state.is_unlocked());
+        assert!(!state.has_kek());
         assert!(state.public_key().is_none());
         assert!(state.time_remaining().is_none());
     }
@@ -267,6 +361,7 @@ mod test {
 
         state.lock();
         assert!(!state.is_unlocked());
+        assert!(!state.has_kek());
         assert!(state.public_key().is_none());
         assert!(state.encrypt(b"data").is_err());
         assert!(state.time_remaining().is_none());
@@ -334,5 +429,66 @@ mod test {
     fn check_timeouts_noop_when_locked() {
         let mut state = AgentState::new();
         assert!(!state.check_timeouts());
+    }
+
+    #[test]
+    fn wrap_dek_without_kek_fails() {
+        let mut state = AgentState::new();
+        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        assert!(state.wrap_dek().is_err());
+    }
+
+    #[test]
+    fn unwrap_dek_without_kek_fails() {
+        let mut state = AgentState::new();
+        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        assert!(state.unwrap_dek(b"fake", 0).is_err());
+    }
+
+    #[test]
+    fn wrap_unwrap_dek_round_trip() {
+        let mut state = AgentState::new();
+        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+
+        let kek = Kek::generate();
+        state.set_kek(kek, 0);
+
+        let (dek_bytes, wrapped, version) = state.wrap_dek().unwrap();
+        assert_eq!(version, 0);
+        assert_eq!(dek_bytes.len(), 32);
+        assert!(!wrapped.is_empty());
+
+        let unwrapped = state.unwrap_dek(&wrapped, 0).unwrap();
+        assert_eq!(unwrapped, dek_bytes);
+    }
+
+    #[test]
+    fn unwrap_dek_version_mismatch() {
+        let mut state = AgentState::new();
+        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+
+        let kek = Kek::generate();
+        state.set_kek(kek, 0);
+
+        let (_dek_bytes, wrapped, _version) = state.wrap_dek().unwrap();
+
+        // Try to unwrap with wrong version
+        let result = state.unwrap_dek(&wrapped, 1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn lock_clears_kek() {
+        let mut state = AgentState::new();
+        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+
+        let kek = Kek::generate();
+        state.set_kek(kek, 5);
+        assert!(state.has_kek());
+        assert_eq!(state.kek_version(), Some(5));
+
+        state.lock();
+        assert!(!state.has_kek());
+        assert_eq!(state.kek_version(), None);
     }
 }
