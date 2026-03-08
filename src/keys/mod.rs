@@ -4,6 +4,8 @@
 //! Keys are stored in the `.blu/` directory, with the private key optionally
 //! encrypted with a passphrase.
 
+/// Data Encryption Key (DEK) generation, wrapping, and data encryption.
+pub mod dek;
 /// Key Encryption Key (KEK) generation, wrapping, and storage.
 pub mod kek;
 
