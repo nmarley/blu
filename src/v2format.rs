@@ -151,6 +151,23 @@ fn write_header<W: Write>(
     Ok(())
 }
 
+/// Assemble a v2 file from pre-computed components.
+///
+/// Used by the Agent path where the DEK wrapping happens via RPC
+/// and data encryption happens in-process. Writes the v2 header
+/// followed by the already-encrypted payload.
+pub fn write_v2<W: Write>(
+    writer: &mut W,
+    file_type: FileType,
+    kek_version: u16,
+    wrapped_dek: &[u8],
+    encrypted_payload: &[u8],
+) -> io::Result<()> {
+    write_header(writer, file_type, kek_version, wrapped_dek)?;
+    writer.write_all(encrypted_payload)?;
+    Ok(())
+}
+
 /// Encrypt data in v2 format: generate a DEK, wrap it with the KEK,
 /// write the header, and encrypt the payload.
 ///

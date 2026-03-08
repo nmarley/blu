@@ -189,6 +189,70 @@ impl AgentClient {
             .map_err(|e| BluError::Internal(format!("invalid base64 from agent: {}", e)))
     }
 
+    /// Generate and wrap a new DEK via the agent.
+    ///
+    /// Returns `(dek_bytes, wrapped_dek, kek_version)`. The agent
+    /// generates a random DEK, wraps it with the cached KEK, and
+    /// returns both. If no KEK is loaded yet, `kek_dir` is sent so
+    /// the agent can load it on demand.
+    pub fn wrap_dek(&self, kek_dir: Option<&str>) -> Result<(Vec<u8>, Vec<u8>, u16)> {
+        let mut params = serde_json::json!({});
+        if let Some(dir) = kek_dir {
+            params["kek_dir"] = serde_json::json!(dir);
+        }
+
+        let resp = self.request("wrap_dek", params)?;
+
+        let dek_b64 = resp["result"]["dek"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing dek in wrap_dek response".into()))?;
+        let wrapped_b64 = resp["result"]["wrapped_dek"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing wrapped_dek in wrap_dek response".into()))?;
+        let kek_version = resp["result"]["kek_version"]
+            .as_u64()
+            .ok_or_else(|| BluError::Internal("missing kek_version in wrap_dek response".into()))?
+            as u16;
+
+        let dek = BASE64
+            .decode(dek_b64)
+            .map_err(|e| BluError::Internal(format!("invalid base64 dek: {}", e)))?;
+        let wrapped = BASE64
+            .decode(wrapped_b64)
+            .map_err(|e| BluError::Internal(format!("invalid base64 wrapped_dek: {}", e)))?;
+
+        Ok((dek, wrapped, kek_version))
+    }
+
+    /// Unwrap a DEK via the agent.
+    ///
+    /// Sends the wrapped DEK and KEK version to the agent, which
+    /// unwraps it using the cached KEK and returns the plaintext DEK.
+    pub fn unwrap_dek(
+        &self,
+        wrapped_dek: &[u8],
+        kek_version: u16,
+        kek_dir: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        let mut params = serde_json::json!({
+            "wrapped_dek": BASE64.encode(wrapped_dek),
+            "kek_version": kek_version,
+        });
+        if let Some(dir) = kek_dir {
+            params["kek_dir"] = serde_json::json!(dir);
+        }
+
+        let resp = self.request("unwrap_dek", params)?;
+
+        let dek_b64 = resp["result"]["dek"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing dek in unwrap_dek response".into()))?;
+
+        BASE64
+            .decode(dek_b64)
+            .map_err(|e| BluError::Internal(format!("invalid base64 dek: {}", e)))
+    }
+
     /// Send a shutdown request to the agent.
     pub fn shutdown(&self) -> Result<()> {
         let _ = self.request("shutdown", serde_json::json!({}));

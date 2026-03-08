@@ -549,6 +549,7 @@ mod test {
     use super::*;
     use crate::agent::paths::AgentPaths;
     use std::os::unix::net::UnixStream;
+    use std::str::FromStr;
     use tempfile::tempdir;
 
     /// Helper: send a JSON-RPC request to the agent and read the response.
@@ -772,6 +773,107 @@ mod test {
         let decrypted_b64 = resp["result"]["plaintext"].as_str().unwrap();
         let decrypted = BASE64.decode(decrypted_b64).unwrap();
         assert_eq!(&decrypted, plaintext);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_wrap_unwrap_dek_round_trip() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Unlock
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock",
+                "params": {
+                    "identity_path": "test/blu_secrets/blu.key",
+                    "passphrase": "unused"
+                },
+                "id": 1
+            }),
+        );
+
+        // Set up a KekStore in the temp dir so the agent can load it
+        let blu_dir = tmp.path().join(".blu");
+        std::fs::create_dir_all(&blu_dir).unwrap();
+        let identity_str = include_str!("../../test/blu_secrets/blu.key").trim();
+        let identity = age::x25519::Identity::from_str(identity_str).unwrap();
+        let recipient = identity.to_public().to_string();
+        let store = crate::keys::kek::KekStore::new(&blu_dir);
+        store.init(&[&recipient]).unwrap();
+
+        // wrap_dek while no KEK is loaded and no kek_dir provided should fail
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "wrap_dek",
+                "params": {},
+                "id": 2
+            }),
+        );
+        assert_eq!(resp["error"]["code"], protocol::error_code::KEK_NOT_LOADED);
+
+        // wrap_dek with kek_dir should succeed and load the KEK
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "wrap_dek",
+                "params": {
+                    "kek_dir": blu_dir.to_str().unwrap()
+                },
+                "id": 3
+            }),
+        );
+        assert!(resp["result"]["dek"].is_string());
+        assert!(resp["result"]["wrapped_dek"].is_string());
+        assert_eq!(resp["result"]["kek_version"], 0);
+
+        let dek_b64 = resp["result"]["dek"].as_str().unwrap();
+        let wrapped_b64 = resp["result"]["wrapped_dek"].as_str().unwrap();
+
+        // unwrap_dek should return the same DEK
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unwrap_dek",
+                "params": {
+                    "wrapped_dek": wrapped_b64,
+                    "kek_version": 0
+                },
+                "id": 4
+            }),
+        );
+        assert_eq!(resp["result"]["dek"].as_str().unwrap(), dek_b64);
+
+        // Status should show has_kek=true
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 5
+            }),
+        );
+        assert_eq!(resp["result"]["has_kek"], true);
+        assert_eq!(resp["result"]["kek_version"], 0);
 
         // Shutdown
         send_request(
