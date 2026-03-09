@@ -63,6 +63,9 @@ pub enum Action {
     /// Manage the blu agent daemon
     Agent(AgentArgs),
 
+    /// Manage your global identity (mnemonic-based)
+    Identity(IdentityArgs),
+
     /// Internal: run the agent daemon (not user-facing)
     #[command(name = "__agent-daemon", hide = true)]
     AgentDaemon,
@@ -254,4 +257,46 @@ pub enum StatusCheckType {
     Deep,
     /// Shallow check means use file path (+size?) to determine changes
     Shallow,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct IdentityArgs {
+    #[command(subcommand)]
+    pub command: IdentityCommand,
+}
+
+/// Identity subcommands
+#[derive(Debug, clap::Subcommand, Clone)]
+pub enum IdentityCommand {
+    /// Generate a new mnemonic-based identity
+    Init(IdentityInitArgs),
+    /// Display the current identity's public key
+    Show,
+    /// Recover an identity from a BIP39 mnemonic
+    Recover(IdentityRecoverArgs),
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct IdentityInitArgs {
+    /// Do not encrypt the identity file with a passphrase
+    #[arg(long)]
+    pub no_passphrase: bool,
+
+    /// Overwrite an existing identity
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct IdentityRecoverArgs {
+    /// Do not encrypt the identity file with a passphrase
+    #[arg(long)]
+    pub no_passphrase: bool,
+
+    /// Overwrite an existing identity
+    #[arg(long)]
+    pub force: bool,
 }

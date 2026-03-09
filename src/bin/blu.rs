@@ -29,9 +29,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Set global no-passphrase flag from CLI args
     helpers::set_no_passphrase(args.no_passphrase);
 
-    // Agent/lock commands do not require a blu repository
+    // Commands that do not require a blu repository
     match &args.action {
         clapargs::Action::Agent(a) => return cli::agent(a.clone()),
+        clapargs::Action::Identity(a) => return cli::identity(a.clone()),
         clapargs::Action::Lock => return cli::lock(),
         clapargs::Action::AgentDaemon => {
             let paths = blu::agent::AgentPaths::resolve()?;
@@ -93,8 +94,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Tagger(a) => cli::tagger(a),
         clapargs::Action::Unlock => cli::unlock(),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
-        // Agent/lock commands are dispatched above, before basedir resolution
-        clapargs::Action::Agent(_) | clapargs::Action::AgentDaemon | clapargs::Action::Lock => {
+        // These are dispatched above, before basedir resolution
+        clapargs::Action::Agent(_)
+        | clapargs::Action::AgentDaemon
+        | clapargs::Action::Identity(_)
+        | clapargs::Action::Lock => {
             unreachable!()
         }
     }
