@@ -14,6 +14,8 @@
 //! The CLI auto-starts the agent on first use and communicates via
 //! the socket for all crypto operations.
 
+/// Biometric (Touch ID) unlock support.
+pub mod biometric;
 mod blackbox;
 mod client;
 mod config;

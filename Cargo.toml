@@ -46,3 +46,4 @@ bip39 = { version = "2", features = ["zeroize"] }
 hkdf = "0.12"
 hmac = "0.12"
 bech32 = "0.9"
+security-framework = { version = "3", features = ["OSX_10_15"] }
