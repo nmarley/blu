@@ -11,6 +11,7 @@ pub enum Method {
     Decrypt,
     WrapDek,
     UnwrapDek,
+    UnlockWithSecret,
     Shutdown,
 }
 
@@ -24,6 +25,7 @@ impl Method {
             "decrypt" => Some(Self::Decrypt),
             "wrap_dek" => Some(Self::WrapDek),
             "unwrap_dek" => Some(Self::UnwrapDek),
+            "unlock_with_secret" => Some(Self::UnlockWithSecret),
             "shutdown" => Some(Self::Shutdown),
             _ => None,
         }

@@ -206,6 +206,33 @@ impl AgentState {
         Ok(public_key)
     }
 
+    /// Unlock the agent with a raw secret key string (AGE-SECRET-KEY-...).
+    ///
+    /// Used by the biometric unlock path: the CLI derives the identity
+    /// from the seed and sends the secret key directly, bypassing the
+    /// identity file.
+    pub fn unlock_with_secret(&mut self, secret_key_str: &str) -> Result<String> {
+        use std::str::FromStr;
+
+        let identity = age::x25519::Identity::from_str(secret_key_str)
+            .map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?;
+
+        let public_key = identity.to_public().to_string();
+        let bbox = keys::blackbox_from_identity(identity);
+
+        self.secret_key = Some(SecretString {
+            inner: secret_key_str.to_string(),
+        });
+        self.blackbox = Some(bbox);
+        self.public_key = Some(public_key.clone());
+
+        let now = Instant::now();
+        self.unlocked_at = Some(now);
+        self.last_activity = Some(now);
+
+        Ok(public_key)
+    }
+
     /// Lock the agent: zeroize and drop all secret material.
     pub fn lock(&mut self) {
         // SecretString::drop will zeroize the key
@@ -490,5 +517,29 @@ mod test {
         state.lock();
         assert!(!state.has_kek());
         assert_eq!(state.kek_version(), None);
+    }
+
+    #[test]
+    fn unlock_with_secret_key_string() {
+        let mut state = AgentState::new();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+
+        let pubkey = state.unlock_with_secret(secret).unwrap();
+        assert!(state.is_unlocked());
+        assert!(pubkey.starts_with("age1"));
+
+        // Should be able to encrypt/decrypt
+        let plaintext = b"secret data";
+        let ciphertext = state.encrypt(plaintext).unwrap();
+        let decrypted = state.decrypt(&ciphertext).unwrap();
+        assert_eq!(&decrypted, plaintext);
+    }
+
+    #[test]
+    fn unlock_with_secret_invalid_key() {
+        let mut state = AgentState::new();
+        let result = state.unlock_with_secret("not-a-valid-key");
+        assert!(result.is_err());
+        assert!(!state.is_unlocked());
     }
 }

@@ -167,6 +167,7 @@ fn handle_connection(
         Some(Method::Decrypt) => handle_decrypt(state, &id, &params),
         Some(Method::WrapDek) => handle_wrap_dek(state, &id, &params),
         Some(Method::UnwrapDek) => handle_unwrap_dek(state, &id, &params),
+        Some(Method::UnlockWithSecret) => handle_unlock_with_secret(state, &id, &params),
         Some(Method::Shutdown) => {
             running.store(false, Ordering::SeqCst);
             protocol::success_response(&id, serde_json::json!({}))
@@ -258,6 +259,37 @@ fn handle_unlock(
             id,
             protocol::error_code::KEY_NOT_FOUND,
             &format!("key file not found: {}", path.display()),
+        ),
+        Err(e) => protocol::error_response(
+            id,
+            protocol::error_code::CRYPTO_ERROR,
+            &format!("unlock failed: {}", e),
+        ),
+    }
+}
+
+fn handle_unlock_with_secret(
+    state: &mut AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    let secret = match params.get("secret").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                "missing secret",
+            );
+        }
+    };
+
+    match state.unlock_with_secret(secret) {
+        Ok(public_key) => protocol::success_response(
+            id,
+            serde_json::json!({
+                "public_key": public_key,
+            }),
         ),
         Err(e) => protocol::error_response(
             id,
@@ -920,6 +952,79 @@ mod test {
             }),
         );
         assert_eq!(resp["error"]["code"], protocol::error_code::INVALID_PARAMS);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_unlock_with_secret() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+
+        // Unlock with raw secret key
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock_with_secret",
+                "params": { "secret": secret },
+                "id": 1
+            }),
+        );
+        let pubkey = resp["result"]["public_key"].as_str().unwrap();
+        assert!(pubkey.starts_with("age1"));
+
+        // Status should show unlocked
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 2
+            }),
+        );
+        assert_eq!(resp["result"]["unlocked"], true);
+
+        // Should be able to encrypt/decrypt
+        let plaintext = b"biometric unlock test";
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "encrypt",
+                "params": { "data": BASE64.encode(plaintext) },
+                "id": 3
+            }),
+        );
+        let ct_b64 = resp["result"]["ciphertext"].as_str().unwrap();
+
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "decrypt",
+                "params": { "data": ct_b64 },
+                "id": 4
+            }),
+        );
+        let pt = BASE64
+            .decode(resp["result"]["plaintext"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(&pt, plaintext);
 
         // Shutdown
         send_request(

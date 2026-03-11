@@ -151,6 +151,24 @@ impl AgentClient {
         Ok(public_key)
     }
 
+    /// Unlock the agent with a raw secret key string (AGE-SECRET-KEY-...).
+    ///
+    /// Used by the biometric unlock path where the identity is derived
+    /// from the seed rather than loaded from a file.
+    pub fn unlock_with_secret(&self, secret: &str) -> Result<String> {
+        let resp = self.request(
+            "unlock_with_secret",
+            serde_json::json!({ "secret": secret }),
+        )?;
+
+        let public_key = resp["result"]["public_key"]
+            .as_str()
+            .ok_or_else(|| BluError::Internal("missing public_key in unlock response".into()))?
+            .to_string();
+
+        Ok(public_key)
+    }
+
     /// Lock the agent (zeroize all secrets).
     pub fn lock(&self) -> Result<()> {
         self.request("lock", serde_json::json!({}))?;
