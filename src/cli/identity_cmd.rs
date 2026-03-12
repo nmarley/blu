@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
+use crate::agent::biometric;
 use crate::cli::clapargs::{IdentityArgs, IdentityCommand, IdentityInitArgs, IdentityRecoverArgs};
 use crate::error::BluError;
 use crate::keys;
@@ -25,6 +26,9 @@ struct IdentityMeta {
     public_key: String,
     /// ISO 8601 timestamp of when the identity was created.
     created: String,
+    /// Whether biometric unlock was set up.
+    #[serde(default)]
+    biometric: bool,
 }
 
 /// Dispatch identity subcommands.
@@ -79,7 +83,8 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
     println!();
     println!("Your 24-word recovery mnemonic:");
     println!();
-    let words: Vec<&str> = m.to_string().leak().split_whitespace().collect();
+    let words_str = m.to_string();
+    let words: Vec<&str> = words_str.split_whitespace().collect();
     for (i, chunk) in words.chunks(6).enumerate() {
         let start = i * 6 + 1;
         let line: Vec<String> = chunk
@@ -108,18 +113,21 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
         return Err("aborted (mnemonic not confirmed)".into());
     }
 
-    // Save identity
-    save_identity_files(
-        &identity,
-        &public_key,
-        &age_path,
-        &toml_path,
-        args.no_passphrase,
-    )?;
+    // Save identity file
+    save_identity_age_file(&identity, &age_path, args.no_passphrase)?;
+
+    // Set up biometric unlock if available
+    let biometric_ok = setup_biometric_if_available(&seed);
+
+    // Save metadata
+    save_identity_meta(&public_key, biometric_ok, &toml_path)?;
 
     println!();
     println!("Identity created.");
     println!("Public key: {}", public_key);
+    if biometric_ok {
+        println!("Touch ID:   enabled");
+    }
 
     Ok(())
 }
@@ -151,18 +159,21 @@ fn identity_recover(args: IdentityRecoverArgs) -> Result<(), Box<dyn std::error:
     let identity = mnemonic::derive_x25519_identity(&seed)?;
     let public_key = mnemonic::public_key_from_identity(&identity);
 
-    // Save identity
-    save_identity_files(
-        &identity,
-        &public_key,
-        &age_path,
-        &toml_path,
-        args.no_passphrase,
-    )?;
+    // Save identity file
+    save_identity_age_file(&identity, &age_path, args.no_passphrase)?;
+
+    // Set up biometric unlock if available
+    let biometric_ok = setup_biometric_if_available(&seed);
+
+    // Save metadata
+    save_identity_meta(&public_key, biometric_ok, &toml_path)?;
 
     println!();
     println!("Identity recovered.");
     println!("Public key: {}", public_key);
+    if biometric_ok {
+        println!("Touch ID:   enabled");
+    }
 
     Ok(())
 }
@@ -179,17 +190,24 @@ fn identity_show() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Public key: {}", meta.public_key);
     println!("Created:    {}", meta.created);
+    if meta.biometric {
+        let status = if biometric::has_biometric_identity() {
+            "enabled"
+        } else {
+            "configured but identity.enc missing"
+        };
+        println!("Touch ID:   {}", status);
+    } else {
+        println!("Touch ID:   not configured");
+    }
 
     Ok(())
 }
 
-/// Save the identity to `~/.blu/identity.age` and metadata to
-/// `~/.blu/identity.toml`.
-fn save_identity_files(
+/// Save the age identity file (optionally passphrase-encrypted).
+fn save_identity_age_file(
     identity: &age::x25519::Identity,
-    public_key: &str,
     age_path: &PathBuf,
-    toml_path: &PathBuf,
     no_passphrase: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let passphrase = if no_passphrase {
@@ -204,16 +222,41 @@ fn save_identity_files(
     };
 
     keys::save_identity(identity, age_path, passphrase.as_deref())?;
+    Ok(())
+}
 
+/// Save identity metadata to `identity.toml`.
+fn save_identity_meta(
+    public_key: &str,
+    biometric_enabled: bool,
+    toml_path: &PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     let meta = IdentityMeta {
         public_key: public_key.to_string(),
         created: Utc::now().to_rfc3339(),
+        biometric: biometric_enabled,
     };
     let toml_str =
         toml::to_string_pretty(&meta).map_err(|e| BluError::SerializationError(e.to_string()))?;
     fs::write(toml_path, toml_str)?;
-
     Ok(())
+}
+
+/// Attempt to set up biometric unlock. Returns true if successful.
+/// On failure or unsupported platforms, prints a message and returns false.
+fn setup_biometric_if_available(seed: &mnemonic::Seed) -> bool {
+    if !biometric::is_available() {
+        return false;
+    }
+
+    match biometric::setup(seed) {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("Warning: could not set up Touch ID: {}", e);
+            eprintln!("You can still unlock with your mnemonic or passphrase.");
+            false
+        }
+    }
 }
 
 /// Prompt for an optional passphrase (hidden input). Returns empty

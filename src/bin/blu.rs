@@ -34,6 +34,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Agent(a) => return cli::agent(a.clone()),
         clapargs::Action::Identity(a) => return cli::identity(a.clone()),
         clapargs::Action::Lock => return cli::lock(),
+        clapargs::Action::Unlock => return cli::unlock(),
         clapargs::Action::AgentDaemon => {
             let paths = blu::agent::AgentPaths::resolve()?;
             return blu::agent::run_daemon(&paths).map_err(|e| e.into());
@@ -92,13 +93,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Status(a) => cli::status(a),
         clapargs::Action::Sync(a) => cli::sync(a),
         clapargs::Action::Tagger(a) => cli::tagger(a),
-        clapargs::Action::Unlock => cli::unlock(),
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
         // These are dispatched above, before basedir resolution
         clapargs::Action::Agent(_)
         | clapargs::Action::AgentDaemon
         | clapargs::Action::Identity(_)
-        | clapargs::Action::Lock => {
+        | clapargs::Action::Lock
+        | clapargs::Action::Unlock => {
             unreachable!()
         }
     }
