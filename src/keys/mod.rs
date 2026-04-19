@@ -6,6 +6,8 @@
 
 /// Data Encryption Key (DEK) generation, wrapping, and data encryption.
 pub mod dek;
+/// MLKEM768-X25519 hybrid KEM (post-quantum).
+pub mod hybrid_kem;
 /// Key Encryption Key (KEK) generation, wrapping, and storage.
 pub mod kek;
 /// BIP39 mnemonic generation and seed-to-key derivation.

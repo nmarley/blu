@@ -118,7 +118,7 @@ impl Dek {
     ///
     /// Returns `nonce (12) || ciphertext || tag (16)`.
     pub fn encrypt_data(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let cipher = ChaCha20Poly1305::new(self.bytes.as_ref().into());
+        let cipher = ChaCha20Poly1305::new((&self.bytes).into());
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
@@ -150,7 +150,7 @@ impl Dek {
         let (nonce_bytes, ciphertext_and_tag) = data.split_at(NONCE_SIZE);
         let nonce = Nonce::from_slice(nonce_bytes);
 
-        let cipher = ChaCha20Poly1305::new(self.bytes.as_ref().into());
+        let cipher = ChaCha20Poly1305::new((&self.bytes).into());
         cipher
             .decrypt(nonce, ciphertext_and_tag)
             .map_err(|_| BluError::DecryptionFailed("DEK decrypt: authentication failed".into()))

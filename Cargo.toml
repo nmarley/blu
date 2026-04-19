@@ -46,4 +46,7 @@ bip39 = { version = "2", features = ["zeroize"] }
 hkdf = "0.12"
 hmac = "0.12"
 bech32 = "0.9"
+ml-kem = { version = "0.2", features = ["deterministic", "zeroize"] }
+sha3 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
 security-framework = { version = "3", features = ["OSX_10_15"] }
