@@ -6,12 +6,16 @@
 
 /// Data Encryption Key (DEK) generation, wrapping, and data encryption.
 pub mod dek;
+/// HPKE Base mode for the MLKEM768-X25519 suite (RFC 9180).
+pub mod hpke;
 /// MLKEM768-X25519 hybrid KEM (post-quantum).
 pub mod hybrid_kem;
 /// Key Encryption Key (KEK) generation, wrapping, and storage.
 pub mod kek;
 /// BIP39 mnemonic generation and seed-to-key derivation.
 pub mod mnemonic;
+/// Post-quantum age recipient and identity (mlkem768x25519).
+pub mod pq;
 
 use std::fs;
 use std::io;

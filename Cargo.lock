@@ -686,6 +686,7 @@ name = "blu"
 version = "0.5.0"
 dependencies = [
  "age",
+ "age-core",
  "aws-config",
  "aws-sdk-s3",
  "base64 0.22.1",
