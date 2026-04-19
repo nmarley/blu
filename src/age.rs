@@ -240,7 +240,7 @@ impl BlackBox {
                 BlackBoxInner::InProcess { .. } => {
                     let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
                         crate::error::BluError::DecryptionFailed(
-                            "v2 file detected but no KEK available (vault not migrated?)".into(),
+                            "v2 file detected but no KEK available".into(),
                         )
                     })?;
                     let kek_clone = kek_ctx.kek.clone();

@@ -57,7 +57,7 @@ Used for: KEK wraps DEK, DEK encrypts data. Both symmetric.
 | 2b | DEK generation, wrapping, data encrypt/decrypt | new: `src/envelope/dek.rs` |
 | 2c | v2 file format (header + DEK-encrypted payload) | new: `src/envelope/format.rs`; modify: `src/blob.rs`, `src/io.rs` |
 | 2d | Agent wrap_dek/unwrap_dek RPCs + KEK caching | modify: `src/agent/protocol.rs`, `src/agent/daemon.rs`, `src/agent/state.rs`, `src/agent/client.rs` |
-| 2e | Migration command (v1 to v2) | new: `src/cli/migrate.rs`; modify: `src/cli.rs`, `src/cli/clapargs.rs`, `src/bin/blu.rs` |
+
 
 ## 2a: KEK Generation, Storage, Wrapping
 
@@ -598,41 +598,6 @@ Where `WrapDekResult` contains `dek: Vec<u8>`, `wrapped_dek: Vec<u8>`,
 - unwrap_dek with wrong kek_version fails gracefully
 - KEK is cached (second call to same vault does not read disk)
 
-## 2e: Migration Command
-
-### `blu migrate` command
-
-Converts a v1 vault to v2 format:
-
-1. Verify vault exists and has encryption configured
-2. If `.blu/keys/` does not exist, run `init_kek()`
-3. For each index file (plain, blob, tag):
-   a. Read with v1 decryption (age via BlackBox)
-   b. Re-write with v2 encryption (DEK + header)
-4. For each blob file referenced in the blob index:
-   a. Read with v1 decryption
-   b. Re-write with v2 encryption
-5. Report results (files migrated, errors)
-
-### CLI integration
-
-- New variant `Migrate` in `Action` enum (no args needed)
-- New file `src/cli/migrate.rs`
-- Wired into `cli.rs` and `bin/blu.rs`
-
-### Safety
-
-- Backup recommendation printed before starting
-- Dry-run mode (`--dry-run`) to preview without writing
-- Atomic writes where possible (write temp, rename)
-- On failure, leave original files intact
-
-### Tests (2e)
-
-- Create a v1 vault with test data, run migrate, verify v2 format
-- Migrate is idempotent (running on v2 vault is a no-op)
-- Partial failure leaves original files intact
-
 ## Module Layout
 
 New module: `src/envelope/`
@@ -668,10 +633,6 @@ pub mod envelope;
 | `src/agent/daemon.rs` | Add `handle_wrap_dek`, `handle_unwrap_dek` |
 | `src/agent/state.rs` | Add `VaultKekCache`, resolve/cache KEK per vault |
 | `src/agent/client.rs` | Add `wrap_dek()`, `unwrap_dek()` convenience methods |
-| `src/cli/clapargs.rs` | Add `Migrate` variant |
-| `src/cli/migrate.rs` | New: migration command |
-| `src/cli.rs` | Export `migrate` |
-| `src/bin/blu.rs` | Dispatch `Migrate` |
 
 ## Implementation Order (Detailed)
 
@@ -709,21 +670,10 @@ pub mod envelope;
 7. Build + test
 8. Stop for review
 
-### 2e (Migration)
-1. Add `Migrate` to clapargs
-2. Create `src/cli/migrate.rs`
-3. Wire into `cli.rs` and `bin/blu.rs`
-4. Update `src/cli/init.rs` to call `init_kek()` for new vaults
-5. Update `src/cli/helpers.rs` to attach envelope context
-6. Write tests
-7. Build + test
-8. Stop for review
-
 ## Open Questions
 
 1. **Should `blu init` on a new vault always create KEK storage?**
-   Proposed: yes. New vaults always get v2. Older vaults stay v1
-   until `blu migrate` is run.
+   Proposed: yes. New vaults always get v2.
 
 2. **Should the agent cache the plaintext KEK, or should the CLI
    hold it?** Proposed: agent caches it. The CLI never sees the KEK
@@ -734,7 +684,3 @@ pub mod envelope;
 3. **What is the maximum wrapped DEK size?** ChaCha20-Poly1305 with
    a 32-byte plaintext produces: 12 (nonce) + 32 (ciphertext) + 16
    (tag) = 60 bytes. This is fixed and can be validated.
-
-4. **Should blob files be rewritten in-place during migration, or
-   written to new paths?** Proposed: write to new path, update index,
-   delete old. This is safer but uses temporarily more disk space.

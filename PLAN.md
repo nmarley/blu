@@ -460,19 +460,6 @@ Removing a user:
 5. Bob can no longer decrypt anything
 ```
 
-### Migration (v1 to v2)
-
-Old vaults continue to work via the agent's encrypt/decrypt RPCs from
-stage 1. The `blu migrate` command:
-
-1. Generates a KEK for the vault
-2. For each index file: re-encrypt with v2 format (DEK + header)
-3. For each blob file: re-encrypt with v2 format (DEK + header)
-
-Since the data payload itself uses the same symmetric encryption, only
-headers change. The migration rewrites files but the actual data
-encryption is the same underlying operation.
-
 ## Stage 3: BIP39 Identity and Biometric Unlock
 
 ### Goal
@@ -624,8 +611,7 @@ device, derive the same seed, get the same UK, access all vaults.
 | 2b | DEK generation, wrapping (ChaCha20-Poly1305) | 2a | new: `src/keys/dek.rs` |
 | 2c | Blob/index v2 format (header with wrapped DEK) | 2b | modify: `src/blob.rs`, `src/io.rs` |
 | 2d | Agent wrap_dek/unwrap_dek RPCs | 2c | modify: `src/agent/protocol.rs` |
-| 2e | Migration command (v1 to v2) | 2d | new: `src/cli/migrate.rs` |
-| 3a | BIP39 mnemonic generation + seed derivation | 2e | new: `src/keys/mnemonic.rs` |
+| 3a | BIP39 mnemonic generation + seed derivation | 2d | new: `src/keys/mnemonic.rs` |
 | 3b | identity init/recover/show commands | 3a | new: `src/cli/identity.rs` |
 | 3c | Biometric unlock (macOS Keychain + Touch ID) | 3b | new: `src/agent/biometric.rs` |
 | 3d | Recovery kit generation | 3b | new: `src/cli/recovery.rs` |
@@ -681,18 +667,4 @@ Not protected against:
 4. Constant-time comparison for all secret comparisons
 5. Never log keys, mnemonics, passphrases, or DEKs
 
-## Migration Path
 
-### v0.5 (current) to v1.0 (after all three stages)
-
-Phase 1 (agent only): no data format changes. Existing vaults work
-as-is. The agent just caches the decrypted identity in memory instead
-of prompting every time.
-
-Phase 2 (envelope encryption): `blu migrate` converts vaults from v1
-format (age-encrypted blobs) to v2 format (KEK/DEK envelope). Old
-format is still readable for backward compatibility.
-
-Phase 3 (BIP39): `blu identity init` creates a new mnemonic-based
-identity. Users can import their existing age key during init, or
-start fresh and re-authorize on existing vaults.

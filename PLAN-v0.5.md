@@ -226,7 +226,6 @@ region = "us-east-1" # optional, new field
 
 - Monitor `age-plugin-ml-kem` development
 - Design for hybrid mode (X25519 + ML-KEM)
-- Migration path for existing vaults
 
 ### 6.2 Multi-Backend
 
@@ -245,22 +244,6 @@ region = "us-east-1" # optional, new field
 - Progress bars for long operations
 - Color output
 - `blu doctor` for diagnosing issues
-
----
-
-## Migration Notes
-
-### Config Migration (v0.4 -> v0.5)
-
-- Add `[encryption]` section
-- Move backend to `[backend]` (already there)
-- Tool: `blu migrate-config` or auto-detect on load
-
-### Index Compatibility
-
-- Index version already tracked (`CURRENT_INDEX_VERSION`)
-- Bump version for any schema changes
-- Support reading old versions, writing new
 
 ---
 

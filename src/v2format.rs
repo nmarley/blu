@@ -226,7 +226,7 @@ where
     if is_v2(data) {
         let resolver = kek_resolver.ok_or_else(|| {
             BluError::DecryptionFailed(
-                "v2 file detected but no KEK available (vault not migrated?)".into(),
+                "v2 file detected but no KEK available".into(),
             )
         })?;
         decrypt_v2(data, resolver).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)

@@ -731,25 +731,6 @@ blu recovery-kit generate [--output <file.pdf>]
 4. **Constant-time comparison:** For all secret comparisons
 5. **No secret logging:** Never log keys, mnemonics, or DEKs
 
-## Migration Path
-
-Since this is a clean break from v0.4:
-
-```bash
-# On old system with v0.4 vault
-blu-v04 export --output /tmp/vault-export/
-
-# On new system with v0.5+
-blu identity init
-blu init /path/to/new/vault
-blu import /tmp/vault-export/
-
-# Securely delete export
-rm -rf /tmp/vault-export/
-```
-
-The `export` command writes unencrypted files (or re-encrypted with a temporary key). The `import` command reads them and encrypts with the new scheme.
-
 ## Future Considerations
 
 ### Post-Quantum Cryptography
