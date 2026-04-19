@@ -57,6 +57,7 @@ impl PqRecipient {
     }
 
     /// Encode as a bech32 string with HRP `age1pq`.
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         use bech32::{ToBase32, Variant};
         bech32::encode(
@@ -97,11 +98,7 @@ impl age::Recipient for PqRecipient {
         use age_core::secrecy::ExposeSecret;
 
         let (enc, ct) = hpke::seal_base(&self.pk, HPKE_INFO, b"", file_key.expose_secret())
-            .map_err(|e| {
-                age::EncryptError::from(std::io::Error::other(
-                    e.to_string(),
-                ))
-            })?;
+            .map_err(|e| age::EncryptError::from(std::io::Error::other(e.to_string())))?;
 
         let stanza = Stanza {
             tag: STANZA_TAG.to_string(),
