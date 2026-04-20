@@ -16,6 +16,9 @@ pub mod kek;
 pub mod mnemonic;
 /// Post-quantum age recipient and identity (mlkem768x25519).
 pub mod pq;
+/// Post-quantum integration tests (full pipeline + Go age interop).
+#[cfg(test)]
+mod pq_integration_test;
 
 use std::fs;
 use std::io;
