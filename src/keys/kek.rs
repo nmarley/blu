@@ -620,8 +620,7 @@ mod test {
         let kek = Kek::generate();
         let wrapped = kek.wrap_for(&[&recipient as &dyn age::Recipient]).unwrap();
 
-        let unwrapped =
-            Kek::unwrap_with(&wrapped, &[&identity as &dyn age::Identity]).unwrap();
+        let unwrapped = Kek::unwrap_with(&wrapped, &[&identity as &dyn age::Identity]).unwrap();
         assert_eq!(unwrapped.as_bytes(), kek.as_bytes());
     }
 
@@ -647,10 +646,7 @@ mod test {
 
         // Init with PQ recipient via trait objects
         let kek = store
-            .init_with(
-                &[&recipient as &dyn age::Recipient],
-                &[recipient_str],
-            )
+            .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
             .unwrap();
 
         // Unwrap with PQ identity via trait objects
@@ -678,8 +674,7 @@ mod test {
         let kek = Kek::generate();
         let wrapped = kek.wrap_for(&[&recipient1 as &dyn age::Recipient]).unwrap();
 
-        let result =
-            Kek::unwrap_with(&wrapped, &[&identity2 as &dyn age::Identity]);
+        let result = Kek::unwrap_with(&wrapped, &[&identity2 as &dyn age::Identity]);
         assert!(result.is_err());
     }
 }
