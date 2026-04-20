@@ -11,6 +11,7 @@
 //! and when the last RPC activity occurred. The daemon polls
 //! `check_timeouts()` on each iteration of the accept loop.
 
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use zeroize::Zeroize;
@@ -20,7 +21,9 @@ use crate::agent::config::AgentConfig;
 use crate::error::{BluError, Result};
 use crate::keys;
 use crate::keys::dek::Dek;
+use crate::keys::hybrid_kem::HybridSeed;
 use crate::keys::kek::Kek;
+use crate::keys::pq::PqIdentity;
 
 /// The agent's mutable state. Holds an optional decrypted identity.
 pub struct AgentState {
@@ -31,6 +34,9 @@ pub struct AgentState {
     blackbox: Option<BlackBox>,
     /// The public key string (age1...).
     public_key: Option<String>,
+
+    /// Post-quantum identity seed (zeroized on lock/drop).
+    pq_seed: Option<HybridSeed>,
 
     /// Cached KEK for the current vault (zeroized on lock/drop).
     kek: Option<Kek>,
@@ -65,6 +71,7 @@ impl AgentState {
             secret_key: None,
             blackbox: None,
             public_key: None,
+            pq_seed: None,
             kek: None,
             kek_version: 0,
             unlocked_at: None,
@@ -79,6 +86,7 @@ impl AgentState {
             secret_key: None,
             blackbox: None,
             public_key: None,
+            pq_seed: None,
             kek: None,
             kek_version: 0,
             unlocked_at: None,
@@ -212,8 +220,6 @@ impl AgentState {
     /// from the seed and sends the secret key directly, bypassing the
     /// identity file.
     pub fn unlock_with_secret(&mut self, secret_key_str: &str) -> Result<String> {
-        use std::str::FromStr;
-
         let identity = age::x25519::Identity::from_str(secret_key_str)
             .map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?;
 
@@ -233,12 +239,30 @@ impl AgentState {
         Ok(public_key)
     }
 
+    /// Set the PQ seed for this agent session.
+    ///
+    /// Called after unlock when the seed is available (from BIP39
+    /// derivation or biometric recovery). The PQ seed enables
+    /// decryption of mlkem768x25519-wrapped KEKs.
+    #[allow(dead_code)]
+    pub fn set_pq_seed(&mut self, seed: HybridSeed) {
+        self.pq_seed = Some(seed);
+    }
+
+    /// Whether the agent has a PQ identity loaded.
+    #[allow(dead_code)]
+    pub fn has_pq(&self) -> bool {
+        self.pq_seed.is_some()
+    }
+
     /// Lock the agent: zeroize and drop all secret material.
     pub fn lock(&mut self) {
         // SecretString::drop will zeroize the key
         self.secret_key.take();
         self.blackbox.take();
         self.public_key.take();
+        // HybridSeed::drop will zeroize the PQ seed (ZeroizeOnDrop)
+        self.pq_seed.take();
         // Kek::drop will zeroize the KEK (ZeroizeOnDrop)
         self.kek.take();
         self.kek_version = 0;
@@ -249,9 +273,10 @@ impl AgentState {
     /// Load and cache a vault's KEK.
     ///
     /// The `kek_dir` is the path to the vault's `.blu/` directory
-    /// (the KekStore lives under `.blu/keys/`). The agent uses its
-    /// cached age identity string to unwrap the KEK from the
-    /// age-encrypted `wrapped.age` files.
+    /// (the KekStore lives under `.blu/keys/`). The agent provides
+    /// both its PQ identity (for new mlkem768x25519-wrapped KEKs) and
+    /// its X25519 identity (for old X25519-wrapped KEKs) so that
+    /// either format can be decrypted.
     pub fn load_kek(&mut self, kek_dir: &str) -> Result<u16> {
         let identity_str = self
             .secret_key
@@ -259,7 +284,19 @@ impl AgentState {
             .ok_or(BluError::Internal("agent is locked".into()))?;
 
         let store = keys::kek::KekStore::new(std::path::Path::new(kek_dir));
-        let (kek, version) = store.unwrap_current_kek(&identity_str.inner)?;
+
+        // Build a list of identities to try: PQ first, then X25519
+        let pq_identity = self.pq_seed.as_ref().map(|s| PqIdentity::new(s.clone()));
+        let x25519_identity = age::x25519::Identity::from_str(&identity_str.inner)
+            .map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?;
+
+        let mut identities: Vec<&dyn age::Identity> = Vec::new();
+        if let Some(ref pq_id) = pq_identity {
+            identities.push(pq_id as &dyn age::Identity);
+        }
+        identities.push(&x25519_identity as &dyn age::Identity);
+
+        let (kek, version) = store.unwrap_current_kek_with(&identities)?;
 
         self.kek = Some(kek);
         self.kek_version = version;
@@ -336,6 +373,7 @@ impl AgentState {
 #[cfg(test)]
 mod test {
     use super::*;
+    use rand::RngCore;
 
     const TEST_KEY_PATH: &str = "test/blu_secrets/blu.key";
 
@@ -541,5 +579,65 @@ mod test {
         let result = state.unlock_with_secret("not-a-valid-key");
         assert!(result.is_err());
         assert!(!state.is_unlocked());
+    }
+
+    #[test]
+    fn set_pq_seed_and_lock_clears() {
+        let mut state = AgentState::new();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        state.unlock_with_secret(secret).unwrap();
+
+        let mut seed_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        state.set_pq_seed(HybridSeed::new(seed_bytes));
+        assert!(state.has_pq());
+
+        state.lock();
+        assert!(!state.has_pq());
+        assert!(!state.is_unlocked());
+    }
+
+    #[test]
+    fn load_kek_with_pq_identity() {
+        use crate::keys::hybrid_kem::public_key_from_seed;
+        use crate::keys::pq::PqRecipient;
+
+        let mut state = AgentState::new();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        state.unlock_with_secret(secret).unwrap();
+
+        // Create a PQ seed and set it
+        let mut seed_bytes = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        let seed = HybridSeed::new(seed_bytes);
+        let recipient = PqRecipient::new(public_key_from_seed(&seed));
+        state.set_pq_seed(seed);
+
+        // Create a temp KEK store with a PQ-wrapped KEK
+        let tmp = tempfile::tempdir().unwrap();
+        let blu_dir = tmp.path().join(".blu");
+        std::fs::create_dir_all(&blu_dir).unwrap();
+
+        let store = keys::kek::KekStore::new(&blu_dir);
+        let recipient_str = recipient.to_string();
+        let expected_kek = store
+            .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap();
+
+        // load_kek should succeed using the PQ identity
+        let version = state.load_kek(blu_dir.to_str().unwrap()).unwrap();
+        assert_eq!(version, 0);
+        assert!(state.has_kek());
+
+        // Verify it's the right KEK by doing a DEK round-trip
+        let (dek_bytes, wrapped, _) = state.wrap_dek().unwrap();
+        let unwrapped = state.unwrap_dek(&wrapped, version).unwrap();
+        assert_eq!(unwrapped, dek_bytes);
+
+        // Also verify by directly checking KEK bytes
+        let dek = Dek::generate();
+        let wrapped_dek = dek.wrap(&expected_kek).unwrap();
+        let recovered = Dek::unwrap(&expected_kek, &wrapped_dek).unwrap();
+        assert_eq!(recovered.as_bytes(), dek.as_bytes());
     }
 }
