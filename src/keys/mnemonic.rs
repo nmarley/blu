@@ -12,9 +12,9 @@
 //!   |
 //!   +--> HKDF-SHA256(salt="blu-x25519-v1", info="") -> 32 bytes -> age x25519 identity
 //!   |
-//!   +--> HKDF-SHA256(salt="blu-device-key-v1", info="") -> 32 bytes -> device key
+//!   +--> HKDF-SHA256(salt="blu-pq-v1", info="") -> 32 bytes -> PQ seed (mlkem768x25519)
 //!   |
-//!   +--> (future derivation paths for PQ keys, etc.)
+//!   +--> HKDF-SHA256(salt="blu-device-key-v1", info="") -> 32 bytes -> device key
 //! ```
 //!
 //! The mnemonic is never stored on disk. Users must remember it or
@@ -31,6 +31,9 @@ use crate::error::{BluError, Result};
 
 /// HKDF salt for deriving the x25519 identity key from the seed.
 const X25519_SALT: &[u8] = b"blu-x25519-v1";
+
+/// HKDF salt for deriving the post-quantum identity seed.
+const PQ_SALT: &[u8] = b"blu-pq-v1";
 
 /// HKDF salt for deriving the device encryption key from the seed.
 const DEVICE_KEY_SALT: &[u8] = b"blu-device-key-v1";
@@ -122,6 +125,29 @@ pub fn derive_x25519_identity(seed: &Seed) -> Result<age::x25519::Identity> {
 /// Used to encrypt the seed for biometric storage.
 pub fn derive_device_key(seed: &Seed) -> Result<DerivedKey> {
     derive_key(seed, DEVICE_KEY_SALT)
+}
+
+/// Derive a post-quantum identity seed from the BIP39 seed.
+///
+/// The 32-byte output is the seed for the mlkem768x25519 hybrid KEM.
+/// SHAKE256 expands it to derive both ML-KEM-768 and X25519 keys
+/// (see `hybrid_kem::expand_seed`).
+pub fn derive_pq_seed(seed: &Seed) -> Result<crate::keys::hybrid_kem::HybridSeed> {
+    let key = derive_key(seed, PQ_SALT)?;
+    Ok(crate::keys::hybrid_kem::HybridSeed::new(*key.as_bytes()))
+}
+
+/// Derive a post-quantum identity from the BIP39 seed.
+pub fn derive_pq_identity(seed: &Seed) -> Result<crate::keys::pq::PqIdentity> {
+    let pq_seed = derive_pq_seed(seed)?;
+    Ok(crate::keys::pq::PqIdentity::new(pq_seed))
+}
+
+/// Derive a post-quantum recipient (public key) from the BIP39 seed.
+pub fn derive_pq_recipient(seed: &Seed) -> Result<crate::keys::pq::PqRecipient> {
+    let pq_seed = derive_pq_seed(seed)?;
+    let pk = crate::keys::hybrid_kem::public_key_from_seed(&pq_seed);
+    Ok(crate::keys::pq::PqRecipient::new(pk))
 }
 
 /// Construct an age x25519 Identity from raw 32-byte private key material.
@@ -338,5 +364,139 @@ mod test {
         let encrypted = bbox.encrypt(plaintext).unwrap();
         let decrypted = bbox.decrypt(&encrypted).unwrap();
         assert_eq!(&decrypted, plaintext);
+    }
+
+    #[test]
+    fn derive_pq_seed_deterministic() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let pq1 = derive_pq_seed(&seed).unwrap();
+        let pq2 = derive_pq_seed(&seed).unwrap();
+        assert_eq!(pq1.as_bytes(), pq2.as_bytes());
+    }
+
+    #[test]
+    fn derive_pq_seed_differs_from_x25519() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let x25519_key = derive_key(&seed, X25519_SALT).unwrap();
+        let pq_seed = derive_pq_seed(&seed).unwrap();
+        assert_ne!(x25519_key.as_bytes(), pq_seed.as_bytes());
+    }
+
+    #[test]
+    fn derive_pq_seed_differs_from_device_key() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let device_key = derive_device_key(&seed).unwrap();
+        let pq_seed = derive_pq_seed(&seed).unwrap();
+        assert_ne!(device_key.as_bytes(), pq_seed.as_bytes());
+    }
+
+    #[test]
+    fn derive_pq_identity_round_trip() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let identity = derive_pq_identity(&seed).unwrap();
+        let recipient = derive_pq_recipient(&seed).unwrap();
+
+        // Identity should derive the same public key as the recipient
+        let derived_recipient = identity.to_public();
+        assert_eq!(
+            derived_recipient.public_key().as_bytes(),
+            recipient.public_key().as_bytes()
+        );
+    }
+
+    #[test]
+    fn derive_pq_identity_differs_by_passphrase() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+
+        let seed1 = mnemonic_to_seed(&m, "");
+        let seed2 = mnemonic_to_seed(&m, "different");
+
+        let pq1 = derive_pq_seed(&seed1).unwrap();
+        let pq2 = derive_pq_seed(&seed2).unwrap();
+        assert_ne!(pq1.as_bytes(), pq2.as_bytes());
+    }
+
+    #[test]
+    fn derive_pq_recipient_bech32_starts_with_age1pq() {
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let recipient = derive_pq_recipient(&seed).unwrap();
+        let encoded = recipient.to_string();
+        assert!(encoded.starts_with("age1pq"));
+    }
+
+    #[test]
+    fn pq_encrypt_decrypt_from_mnemonic() {
+        use age::Identity;
+        use age::Recipient;
+        use age_core::secrecy::ExposeSecret;
+
+        let m = parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic_to_seed(&m, "");
+
+        let identity = derive_pq_identity(&seed).unwrap();
+        let recipient = derive_pq_recipient(&seed).unwrap();
+
+        // Wrap a file key
+        let file_key = age_core::format::FileKey::init_with_mut(|fk| {
+            rand::rngs::OsRng.fill_bytes(fk);
+        });
+
+        let (stanzas, labels) = recipient.wrap_file_key(&file_key).unwrap();
+        assert!(labels.contains("postquantum"));
+
+        let recovered = identity.unwrap_stanza(&stanzas[0]).unwrap().unwrap();
+        assert_eq!(recovered.expose_secret(), file_key.expose_secret());
     }
 }
