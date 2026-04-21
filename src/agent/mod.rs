@@ -20,6 +20,7 @@ mod blackbox;
 mod client;
 mod config;
 mod daemon;
+mod memlock;
 mod paths;
 mod protocol;
 mod state;

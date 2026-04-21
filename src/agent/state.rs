@@ -10,6 +10,12 @@
 //! Timeout tracking: the state records when the agent was unlocked
 //! and when the last RPC activity occurred. The daemon polls
 //! `check_timeouts()` on each iteration of the accept loop.
+//!
+//! Memory locking: on unlock, secret buffers are mlocked to prevent
+//! the OS from paging them to swap. On lock, they are munlocked
+//! before being zeroized. The `age::x25519::Identity` internal
+//! Curve25519 scalar cannot be mlocked because it is owned by the
+//! `age` crate and does not expose its backing memory.
 
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -18,6 +24,7 @@ use zeroize::Zeroize;
 
 use crate::age::BlackBox;
 use crate::agent::config::AgentConfig;
+use crate::agent::memlock;
 use crate::error::{BluError, Result};
 use crate::keys;
 use crate::keys::dek::Dek;
@@ -50,6 +57,13 @@ pub struct AgentState {
 
     /// Timeout configuration.
     config: AgentConfig,
+
+    /// Whether the secret_key heap buffer is currently mlocked.
+    secret_key_mlocked: bool,
+    /// Whether the KEK bytes are currently mlocked.
+    kek_mlocked: bool,
+    /// Whether the PQ seed bytes are currently mlocked.
+    pq_seed_mlocked: bool,
 }
 
 /// A string that zeroizes its contents on drop.
@@ -77,6 +91,9 @@ impl AgentState {
             unlocked_at: None,
             last_activity: None,
             config: AgentConfig::default(),
+            secret_key_mlocked: false,
+            kek_mlocked: false,
+            pq_seed_mlocked: false,
         }
     }
 
@@ -92,6 +109,9 @@ impl AgentState {
             unlocked_at: None,
             last_activity: None,
             config,
+            secret_key_mlocked: false,
+            kek_mlocked: false,
+            pq_seed_mlocked: false,
         }
     }
 
@@ -207,6 +227,8 @@ impl AgentState {
         self.blackbox = Some(bbox);
         self.public_key = Some(public_key.clone());
 
+        self.mlock_secret_key();
+
         let now = Instant::now();
         self.unlocked_at = Some(now);
         self.last_activity = Some(now);
@@ -232,6 +254,8 @@ impl AgentState {
         self.blackbox = Some(bbox);
         self.public_key = Some(public_key.clone());
 
+        self.mlock_secret_key();
+
         let now = Instant::now();
         self.unlocked_at = Some(now);
         self.last_activity = Some(now);
@@ -247,6 +271,7 @@ impl AgentState {
     #[allow(dead_code)]
     pub fn set_pq_seed(&mut self, seed: HybridSeed) {
         self.pq_seed = Some(seed);
+        self.mlock_pq_seed();
     }
 
     /// Whether the agent has a PQ identity loaded.
@@ -255,8 +280,13 @@ impl AgentState {
         self.pq_seed.is_some()
     }
 
-    /// Lock the agent: zeroize and drop all secret material.
+    /// Lock the agent: munlock and zeroize all secret material.
     pub fn lock(&mut self) {
+        // munlock before drop so the pages are unlocked before zeroize
+        self.munlock_secret_key();
+        self.munlock_pq_seed();
+        self.munlock_kek();
+
         // SecretString::drop will zeroize the key
         self.secret_key.take();
         self.blackbox.take();
@@ -300,6 +330,7 @@ impl AgentState {
 
         self.kek = Some(kek);
         self.kek_version = version;
+        self.mlock_kek();
 
         Ok(version)
     }
@@ -310,6 +341,77 @@ impl AgentState {
     pub fn set_kek(&mut self, kek: Kek, version: u16) {
         self.kek = Some(kek);
         self.kek_version = version;
+        self.mlock_kek();
+    }
+
+    /// Lock the secret key's heap buffer into physical memory.
+    fn mlock_secret_key(&mut self) {
+        if let Some(ref sk) = self.secret_key {
+            let ptr = sk.inner.as_ptr();
+            let len = sk.inner.capacity();
+            if memlock::mlock_slice(ptr, len) {
+                memlock::mark_dontdump(ptr, len);
+                self.secret_key_mlocked = true;
+            }
+        }
+    }
+
+    /// Unlock the secret key's heap buffer from physical memory.
+    fn munlock_secret_key(&mut self) {
+        if self.secret_key_mlocked {
+            if let Some(ref sk) = self.secret_key {
+                memlock::munlock_slice(sk.inner.as_ptr(), sk.inner.capacity());
+            }
+            self.secret_key_mlocked = false;
+        }
+    }
+
+    /// Lock the PQ seed bytes into physical memory.
+    fn mlock_pq_seed(&mut self) {
+        if let Some(ref seed) = self.pq_seed {
+            let bytes = seed.as_bytes();
+            let ptr = bytes.as_ptr();
+            let len = bytes.len();
+            if memlock::mlock_slice(ptr, len) {
+                memlock::mark_dontdump(ptr, len);
+                self.pq_seed_mlocked = true;
+            }
+        }
+    }
+
+    /// Unlock the PQ seed bytes from physical memory.
+    fn munlock_pq_seed(&mut self) {
+        if self.pq_seed_mlocked {
+            if let Some(ref seed) = self.pq_seed {
+                let bytes = seed.as_bytes();
+                memlock::munlock_slice(bytes.as_ptr(), bytes.len());
+            }
+            self.pq_seed_mlocked = false;
+        }
+    }
+
+    /// Lock the KEK bytes into physical memory.
+    fn mlock_kek(&mut self) {
+        if let Some(ref kek) = self.kek {
+            let bytes = kek.as_bytes();
+            let ptr = bytes.as_ptr();
+            let len = bytes.len();
+            if memlock::mlock_slice(ptr, len) {
+                memlock::mark_dontdump(ptr, len);
+                self.kek_mlocked = true;
+            }
+        }
+    }
+
+    /// Unlock the KEK bytes from physical memory.
+    fn munlock_kek(&mut self) {
+        if self.kek_mlocked {
+            if let Some(ref kek) = self.kek {
+                let bytes = kek.as_bytes();
+                memlock::munlock_slice(bytes.as_ptr(), bytes.len());
+            }
+            self.kek_mlocked = false;
+        }
     }
 
     /// Generate a new DEK, wrap it with the cached KEK, and return
