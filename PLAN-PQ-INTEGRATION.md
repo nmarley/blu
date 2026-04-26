@@ -1,138 +1,223 @@
 # PQ Integration Plan
 
-Finishes the post-quantum integration for `blu init`. The crypto primitives are complete and tested. This plan wires them into the vault initialization flow.
+Finishes the post-quantum integration for `blu init`. The crypto
+primitives are complete and tested. This plan wires them into the
+vault initialization and agent unlock flows.
+
+Written April 2026 after reviewing PLAN-PQ.md, ENVELOPE_ENCRYPTION_DESIGN.md,
+and the existing implementation.
 
 ## Problem
 
-`cargo run init` only generates X25519 keys. The PQ stack (hybrid KEM, HPKE, age PQ recipient/identity, BIP39 derivation, KEK store) exists but is never invoked from the init command. The `AgentState::set_pq_seed()` method is dead code.
+`blu init` only generates X25519 keys. The PQ stack (hybrid KEM,
+HPKE, age PQ recipient/identity, BIP39 derivation, KEK store) is
+fully implemented and tested at the library level, but is never
+invoked from the vault init command. `AgentState::set_pq_seed()` and
+`AgentState::has_pq()` are dead code.
 
-## Design Decision: Vault-Local BIP39
+## Design: Global Identity, Per-Vault KEK
 
-Each vault gets its own BIP39 mnemonic. This keeps vaults self-contained and avoids coupling to the global identity (which doesn't store the mnemonic on disk, so the PQ seed cannot be derived later).
+Identity is global (per user, in `~/.blu/`), not per vault. This is
+consistent with every design document in the repo:
 
-The `blu identity init` command (global identity) already has PQ working. This plan makes `blu init` (vault) work the same way.
+- PLAN-PQ.md: one BIP39 mnemonic derives all key types
+- ENVELOPE_ENCRYPTION_DESIGN.md line 124: "UK is vault-independent.
+  The same mnemonic = same UK = same identity across all vaults.
+  This is intentional - your identity follows you."
+- PLAN.md line 561: "Identity is global (per user). Vault init is
+  separate."
+- identity_cmd.rs line 4: "Identity is global (per user, lives in
+  ~/.blu/), not per-vault."
 
-## Key Changes
+`blu identity init` already generates both X25519 and PQ keys from
+the mnemonic and stores both public keys in `~/.blu/identity.toml`.
+`blu init` needs to read those public keys and use them to wrap the
+vault's KEK. No new mnemonic generation. No new identity file format.
 
-The identity file (`.blu/identity.age`) needs to carry the mnemonic so the agent can derive the PQ seed on unlock. The current format only stores the X25519 secret key string. New format wraps both the key and the mnemonic in an age-encrypted blob (passphrase-protected).
+The PQ seed is derived at runtime, never stored on disk:
 
-The agent unlock flow will load the mnemonic from the identity file and derive the PQ seed internally, eliminating the need for a new RPC method.
+- Biometric path: `biometric::unlock()` recovers the 64-byte BIP39
+  Seed from `~/.blu/identity.enc`. The PQ seed is derived from that
+  Seed via `mnemonic::derive_pq_seed()`.
+- Passphrase path: the mnemonic is not available (intentionally not
+  stored on disk). The agent cannot derive PQ internally from
+  `identity_path` + `passphrase` alone. The CLI must derive it and
+  send it via RPC. See Stage 3.
 
-## Stage 1: Identity file format with mnemonic
+## What Already Works
 
-**Files:** `src/keys/mod.rs`, `src/keys/identity_file.rs` (new)
+Before listing changes, here is what is already wired up and needs
+no modification:
 
-Create a new module for the versioned identity file format. The file stores:
-- The X25519 secret key string (existing)
-- The BIP39 mnemonic words (new, needed to derive PQ seed later)
+- `AgentState::load_kek()` (state.rs:310) already builds a list of
+  identities with PQ first, X25519 fallback. Once `set_pq_seed()` is
+  called, PQ-wrapped KEKs decrypt automatically.
+- `handle_wrap_dek` and `handle_unwrap_dek` in daemon.rs lazily call
+  `state.load_kek(kek_dir)` on first use. No changes needed.
+- `KekStore::init_with()` accepts `&[&dyn age::Recipient]` and works
+  with PQ recipients (tested in kek.rs `pq_store_init_and_unwrap`).
+- All PQ crypto primitives: hybrid_kem, hpke, pq, mnemonic derivation.
 
-When passphrase-protected, both are encrypted together. When unprotected, both are stored plaintext (same security model as today).
+## Stage 1: `EncryptionConfig` gains PQ recipient field
 
-Add `save_identity_with_mnemonic()` and `load_identity_with_mnemonic()` functions. Keep the existing `save_identity()` / `load_identity()` for backward compat (used by `--key-file` import path).
+**Files:** `src/config.rs`
 
-## Stage 2: `blu init` generates BIP39 + PQ keys
+Add an optional PQ recipient field to `EncryptionConfig`:
 
-**Files:** `src/cli/init.rs`, `src/config.rs`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pq_recipient: Option<String>,
 
-Replace the X25519-only key generation with BIP39 flow:
+The field is `Option` for backward compatibility: old config.toml
+files without this field deserialize cleanly with `None`.
 
-1. Generate a 24-word BIP39 mnemonic
-2. Derive X25519 identity via `mnemonic::derive_x25519_identity()`
-3. Derive PQ recipient via `mnemonic::derive_pq_recipient()`
-4. Display the mnemonic to the user with the same "write it down" warning as `blu identity init`
-5. Prompt for optional mnemonic passphrase (25th word)
-6. Save identity file with mnemonic using the new format from Stage 1
-7. Display both public keys
+New vaults get both `recipient` (X25519) and `pq_recipient`
+(mlkem768x25519) written to config.toml.
 
-Update `EncryptionConfig` to store the PQ recipient:
-- Add `pq_recipient: Option<String>` field
-- Serialize as `pq_recipient = "age1pq..."` in config.toml
-
-The `--key-file` import path remains X25519-only (no mnemonic, no PQ). This is backward compatible but prints a warning that PQ is not available.
-
-## Stage 3: Initialize KEK store with PQ recipient
+## Stage 2: `blu init` reads global identity, creates KEK store
 
 **Files:** `src/cli/init.rs`
 
-After generating keys, create the KEK store:
+Replace the X25519-only key generation with a flow that reads the
+global identity:
 
-1. Instantiate `KekStore::new(&bludir)`
-2. Call `store.init_with(&[&pq_recipient], &[pq_recipient_str])` to create the KEK wrapped for the PQ recipient
-3. The KEK is also wrapped for the X25519 recipient for backward compat (both recipients in the same age file)
+1. Check for `~/.blu/identity.toml`
+  1a. If found, read both `public_key` and `pq_public_key` from it
+  1b. If not found and `--key-file` was provided, import X25519 key
+      (existing behavior), print warning that PQ is not available,
+      skip KEK store creation
+  1c. If neither found, error with message: "no global identity found
+      (run `blu identity init` first)" and suggest `--key-file` for
+      legacy X25519-only mode
 
-This creates `.blu/keys/kek.toml` and `.blu/keys/kek_v0/wrapped.age` with mlkem768x25519 stanzas.
+2. Read the X25519 identity from `~/.blu/identity.age` (or
+   `--key-file` if provided)
 
-## Stage 4: Agent unlock derives PQ seed
+3. Save the identity to `.blu/identity.age` (existing behavior,
+   keeps vault self-contained for the passphrase unlock path)
 
-**Files:** `src/agent/state.rs`
+4. Write config.toml with both `recipient` and `pq_recipient`
 
-Update `unlock()` and `unlock_with_secret()` to derive the PQ seed from the mnemonic stored in the identity file:
+5. Initialize the KEK store:
+  5a. Parse the PQ recipient string into a `PqRecipient`
+  5b. Parse the X25519 recipient string into an `x25519::Recipient`
+  5c. Call `KekStore::init_with()` with both recipients, so the
+      wrapped.age file contains both mlkem768x25519 and X25519
+      stanzas (either identity can unwrap it)
+  5d. This creates `.blu/keys/kek.toml` and
+      `.blu/keys/kek_v0/wrapped.age`
 
-1. Load identity file with mnemonic (new format)
-2. Re-derive the BIP39 seed from the mnemonic + passphrase
-3. Derive PQ seed via `mnemonic::derive_pq_seed()`
-4. Call `self.set_pq_seed(pq_seed)` (removes `#[allow(dead_code)]`)
+6. Create indexes and empty index file (existing behavior)
 
-The `unlock_with_secret()` path (used by biometric unlock) receives the X25519 secret key string. It needs the mnemonic to derive PQ. Options:
-- The biometric CLI path can send the mnemonic separately
-- Or the agent loads the mnemonic from the identity file itself
+When `--key-file` is used (legacy import), no KEK store is created
+and no PQ recipient is stored. The vault operates in X25519-only
+mode, same as today.
 
-The cleaner approach: have `unlock()` load the full identity file (including mnemonic), derive both keys, and set both. The `unlock_with_secret()` path remains X25519-only unless extended.
+## Stage 3: `unlock_with_secret` RPC gains optional PQ seed
 
-## Stage 5: Agent protocol for PQ-aware unlock
+**Files:** `src/agent/protocol.rs`, `src/agent/daemon.rs`,
+`src/agent/state.rs`, `src/agent/client.rs`,
+`src/cli/agent_cmd.rs`
 
-**Files:** `src/agent/protocol.rs`, `src/agent/daemon.rs`
+The biometric path already has the full BIP39 Seed (recovered from
+`~/.blu/identity.enc` via Touch ID). Today it derives only the X25519
+identity and sends the secret key string to the agent. It should also
+derive the PQ seed and send it.
 
-Add a `set_pq_seed` RPC method so the CLI can send the PQ seed after unlock. This is needed for the biometric flow where the CLI derives the seed from the device key and sends it to the agent.
+3a. Extend `unlock_with_secret` RPC to accept an optional `pq_seed`
+    parameter (base64-encoded 32 bytes):
 
-Alternatively, if the agent loads the mnemonic from the identity file itself (Stage 4 approach), this RPC is not needed. The agent derives PQ internally.
+    In daemon.rs `handle_unlock_with_secret`:
+      - After calling `state.unlock_with_secret(secret)`, check for
+        `params["pq_seed"]`
+      - If present, base64-decode to 32 bytes, construct
+        `HybridSeed::new()`, call `state.set_pq_seed()`
 
-Recommendation: Skip this stage. Have the agent derive PQ from the mnemonic in the identity file. This keeps the protocol simple and avoids sending additional secret material over the socket.
+    In client.rs:
+      - Add `unlock_with_secret_pq(secret, pq_seed_bytes)` method
+        that sends both fields
 
-## Stage 6: Recovery and display commands
+3b. Update `try_biometric_unlock` in agent_cmd.rs:
+      - After deriving X25519 identity from seed, also derive PQ seed
+        via `mnemonic::derive_pq_seed(&seed)`
+      - Call `client.unlock_with_secret_pq(secret_str, pq_seed_bytes)`
 
-**Files:** `src/cli/init.rs` (new subcommand), or new `src/cli/recovery.rs`
+3c. The passphrase path (`handle_unlock` in daemon.rs) does not have
+    the mnemonic or BIP39 seed. It cannot derive PQ. For now, the
+    passphrase unlock path is X25519-only for KEK unwrapping.
+    `load_kek()` will fall back to the X25519 identity, which works
+    because Stage 2 wraps the KEK to both recipients.
 
-Add a command to display the vault's mnemonic for recovery:
+    This is acceptable because:
+    - The KEK wrapped.age contains both stanza types (Stage 2, step 5c)
+    - X25519 identity can always unwrap KEKs created by our init
+    - The PQ stanza provides harvest-now-decrypt-later protection for
+      the KEK blob at rest; the X25519 stanza is the online fallback
+    - Future work: if the passphrase path needs PQ-only KEK unwrap
+      (e.g., after X25519 stanzas are removed in a future KEK
+      rotation), the CLI can prompt for the mnemonic and derive PQ
 
-```
-blu init show-mnemonic
-```
+3d. Remove `#[allow(dead_code)]` from `set_pq_seed()` and `has_pq()`
+    in state.rs.
 
-Prompts for the identity passphrase, decrypts the identity file, and displays the 24 words.
+## Stage 4: Integration tests
 
-## Stage 7: Integration tests
+**Files:** tests in `src/cli/init.rs`, `src/agent/state.rs`
 
-**Files:** `src/cli/init.rs` (tests), `src/agent/state.rs` (tests)
+Tests to add:
 
-Add tests for:
-- `blu init` generates PQ key and creates KEK store
-- Agent unlock derives PQ seed and can unwrap PQ-wrapped KEK
-- Full round-trip: init -> unlock -> wrap DEK -> unwrap DEK -> encrypt/decrypt
-- `--key-file` import still works (X25519-only, no PQ)
-- Backward compat: old identity files (no mnemonic) still load
+- `blu init` with global identity present: creates KEK store,
+  config.toml has both recipients, wrapped.age is decryptable by
+  both PQ and X25519 identities
+- `blu init --key-file`: no KEK store, no PQ recipient in config,
+  prints warning
+- `blu init` without global identity and without `--key-file`: errors
+  with helpful message
+- Agent unlock via biometric path sets PQ seed, `load_kek()` uses PQ
+  identity to unwrap KEK
+- Agent unlock via passphrase path: no PQ seed, `load_kek()` falls
+  back to X25519 identity
+- Full round-trip: init -> unlock -> wrap DEK -> unwrap DEK
+- Backward compat: old vaults without KEK store still work
+- Backward compat: old config.toml without `pq_recipient` loads fine
+
 
 ## Execution Order
 
-Stage 1 -> Stage 2 -> Stage 3 -> Stage 4 -> Stage 6 -> Stage 7
+Stage 1 -> Stage 2 -> Stage 3 -> Stage 4
 
-Stage 5 is skipped (agent derives PQ internally from the mnemonic).
+Each stage is one commit.
+
 
 ## Backward Compatibility
 
-- Old vaults (no KEK store, no PQ): continue to work with X25519-only encryption
-- Old identity files (no mnemonic): agent loads X25519 key only, no PQ
-- `--key-file` import: X25519-only, no PQ, no mnemonic stored
-- New vaults: BIP39 + PQ by default, KEK store initialized with PQ recipient
+- Old vaults (no KEK store, no PQ): continue to work unchanged with
+  X25519-only encryption via BlackBox
+- Old config.toml (no `pq_recipient` field): deserializes as `None`,
+  no behavior change
+- `--key-file` import: X25519-only, no KEK store, no PQ
+- New vaults: KEK store initialized with both PQ and X25519
+  recipients, PQ recipient in config.toml
+
 
 ## Files Summary
 
 | File | Change |
 |------|--------|
-| `src/keys/mod.rs` | Add `identity_file` module, export new functions |
-| `src/keys/identity_file.rs` | **New** - Versioned identity file with mnemonic |
-| `src/config.rs` | Add `pq_recipient` field to `EncryptionConfig` |
-| `src/cli/init.rs` | BIP39 flow, KEK store init, display mnemonic |
-| `src/cli/clapargs.rs` | Add `show-mnemonic` subcommand (if Stage 6) |
-| `src/agent/state.rs` | Derive PQ seed in `unlock()`, remove `#[allow(dead_code)]` |
-| `src/agent/protocol.rs` | No changes (agent derives PQ internally) |
+| `src/config.rs` | Add `pq_recipient: Option<String>` to `EncryptionConfig` |
+| `src/cli/init.rs` | Read global identity, create KEK store with both recipients |
+| `src/agent/state.rs` | Remove `#[allow(dead_code)]` from PQ methods |
+| `src/agent/daemon.rs` | Extend `handle_unlock_with_secret` to accept optional `pq_seed` |
+| `src/agent/client.rs` | Add `unlock_with_secret_pq()` method |
+| `src/agent/protocol.rs` | No changes (reuses `UnlockWithSecret` method) |
+| `src/cli/agent_cmd.rs` | Derive PQ seed in `try_biometric_unlock`, send to agent |
+
+
+## Out of Scope
+
+- Multi-user access (PLAN-PQ.md Stage 3): separate plan
+- Recovery kit CLI (PLAN-PQ.md Stage 4): separate plan
+- Removing X25519 stanzas from KEK wraps: future KEK rotation concern
+- PQ for the BlackBox encrypt/decrypt path (file-level encryption):
+  the threat model in PLAN-PQ.md identifies the UK->KEK asymmetric
+  layer as the vulnerability; the symmetric layers (KEK->DEK, DEK->data)
+  are already quantum-safe (256-bit keys)
