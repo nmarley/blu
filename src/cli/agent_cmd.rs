@@ -55,7 +55,7 @@ pub fn unlock() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Attempt biometric unlock: retrieve seed via Touch ID, derive
-/// identity, send secret to agent.
+/// identity and PQ seed, send both to agent.
 fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::Error>> {
     let seed = biometric::unlock().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     let identity = mnemonic::derive_x25519_identity(&seed)?;
@@ -64,7 +64,10 @@ fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::
     let identity_secret = identity.to_string();
     let secret_str = identity_secret.expose_secret();
 
-    let pubkey = client.unlock_with_secret(secret_str)?;
+    // Derive PQ seed from the same BIP39 seed and send both to the
+    // agent so it can decrypt mlkem768x25519-wrapped KEKs.
+    let pq_seed = mnemonic::derive_pq_seed(&seed)?;
+    let pubkey = client.unlock_with_secret_pq(secret_str, pq_seed.as_bytes())?;
     println!("unlocked via Touch ID ({})", pubkey);
 
     Ok(())

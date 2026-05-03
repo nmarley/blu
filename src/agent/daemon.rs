@@ -196,6 +196,7 @@ fn handle_status(state: &AgentState, id: &serde_json::Value) -> serde_json::Valu
             "timeout_remaining": remaining,
             "has_kek": state.has_kek(),
             "kek_version": state.kek_version(),
+            "has_pq": state.has_pq(),
         }),
     )
 }
@@ -285,12 +286,34 @@ fn handle_unlock_with_secret(
     };
 
     match state.unlock_with_secret(secret) {
-        Ok(public_key) => protocol::success_response(
-            id,
-            serde_json::json!({
-                "public_key": public_key,
-            }),
-        ),
+        Ok(public_key) => {
+            // If a PQ seed was provided, set it on the agent state.
+            // The biometric unlock path derives the PQ seed from the
+            // BIP39 Seed and sends it alongside the X25519 secret.
+            if let Some(pq_seed_b64) = params.get("pq_seed").and_then(|v| v.as_str()) {
+                match BASE64.decode(pq_seed_b64) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut seed_bytes = [0u8; 32];
+                        seed_bytes.copy_from_slice(&bytes);
+                        state.set_pq_seed(crate::keys::hybrid_kem::HybridSeed::new(seed_bytes));
+                        info!("PQ seed loaded via unlock_with_secret");
+                    }
+                    Ok(bytes) => {
+                        warn!("ignoring pq_seed: expected 32 bytes, got {}", bytes.len());
+                    }
+                    Err(e) => {
+                        warn!("ignoring pq_seed: invalid base64: {}", e);
+                    }
+                }
+            }
+
+            protocol::success_response(
+                id,
+                serde_json::json!({
+                    "public_key": public_key,
+                }),
+            )
+        }
         Err(e) => protocol::error_response(
             id,
             protocol::error_code::CRYPTO_ERROR,

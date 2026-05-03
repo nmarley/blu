@@ -268,14 +268,12 @@ impl AgentState {
     /// Called after unlock when the seed is available (from BIP39
     /// derivation or biometric recovery). The PQ seed enables
     /// decryption of mlkem768x25519-wrapped KEKs.
-    #[allow(dead_code)]
     pub fn set_pq_seed(&mut self, seed: HybridSeed) {
         self.pq_seed = Some(seed);
         self.mlock_pq_seed();
     }
 
     /// Whether the agent has a PQ identity loaded.
-    #[allow(dead_code)]
     pub fn has_pq(&self) -> bool {
         self.pq_seed.is_some()
     }
