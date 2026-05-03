@@ -32,6 +32,7 @@ pub use defrag_blobs::defrag_blobs;
 pub use delete_files::delete_files;
 pub use encrypt_files::encrypt_files;
 pub use identity_cmd::identity;
+pub use identity_cmd::{global_identity_age_path, load_global_identity, IdentityMeta};
 pub use init::init;
 pub use list_files::list_files;
 pub use pull::pull;

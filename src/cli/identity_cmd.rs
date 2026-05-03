@@ -21,17 +21,35 @@ use crate::keys::mnemonic;
 /// This file is safe to share; it contains only public keys
 /// and creation date.
 #[derive(Debug, Serialize, Deserialize)]
-struct IdentityMeta {
+pub struct IdentityMeta {
     /// The age X25519 public key (age1...).
-    public_key: String,
+    pub public_key: String,
     /// The post-quantum hybrid public key (age1pq...).
     #[serde(default)]
-    pq_public_key: Option<String>,
+    pub pq_public_key: Option<String>,
     /// ISO 8601 timestamp of when the identity was created.
-    created: String,
+    pub created: String,
     /// Whether biometric unlock was set up.
     #[serde(default)]
-    biometric: bool,
+    pub biometric: bool,
+}
+
+/// Load the global identity metadata from `~/.blu/identity.toml`.
+///
+/// Returns `None` if no global identity exists.
+pub fn load_global_identity() -> Result<Option<IdentityMeta>, Box<dyn std::error::Error>> {
+    let toml_path = identity_toml_path()?;
+    if !toml_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&toml_path)?;
+    let meta: IdentityMeta = toml::from_str(&content)?;
+    Ok(Some(meta))
+}
+
+/// Path to the global identity age file (`~/.blu/identity.age`).
+pub fn global_identity_age_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    identity_age_path()
 }
 
 /// Dispatch identity subcommands.
