@@ -41,6 +41,11 @@ pub struct EncryptionConfig {
     /// The public key (recipient) used to encrypt data.
     /// Format: age1...
     pub recipient: String,
+    /// Post-quantum hybrid recipient (mlkem768x25519).
+    /// Format: age1pq...
+    /// None for legacy vaults or X25519-only key imports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pq_recipient: Option<String>,
     /// Path to the identity (private key) file, relative to .blu/
     /// Defaults to "identity.age"
     #[serde(default = "default_identity_file")]
@@ -55,6 +60,7 @@ impl Default for EncryptionConfig {
     fn default() -> Self {
         Self {
             recipient: String::new(),
+            pq_recipient: None,
             identity_file: default_identity_file(),
         }
     }

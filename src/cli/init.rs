@@ -93,6 +93,7 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut cfg = config::Config::default();
     cfg.set_encryption(EncryptionConfig {
         recipient: recipient_str,
+        pq_recipient: None,
         identity_file: IDENTITY_FILENAME.into(),
     });
 
