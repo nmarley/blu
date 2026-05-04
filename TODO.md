@@ -1,66 +1,57 @@
-## TODO
+# TODO
 
-### Release
+Consolidated backlog for blu. Crypto and key management work is
+tracked in PLAN-PQ.md. This file covers everything else.
+
+## Release Prep
 
 - [ ] Draft initial intro / release post
+- [ ] Set up GitHub Actions CI (cargo build + cargo test on push)
+- [ ] Update README with current features, commands, config examples
+- [ ] Add CI/build badges and header image to README
+- [ ] Crypto review (send Filippo an email?)
+- [ ] Start maintaining a [changelog](https://keepachangelog.com/en/1.1.0/)
 
-- [ ] Set up GitHub Actions CI (along w/something for aarch64, maybe BuildJet?)
+## Multi-Backend Support
 
-- [ ] Prep README w/CI/Build badges, header image, use cases, maybe a quicktime GIF/screen recording of the CLI in action?
+- [ ] Support multiple backends simultaneously for redundant backups
+      (e.g. local + S3, or S3 + Azure)
+- [ ] Config format: `[[backends]]` array with type/path/bucket fields
+- [ ] Additional storage backends: DigitalOcean Spaces, Google Cloud
+      Storage, Azure Blob Storage
 
-- Encryption part has to be solid. Maybe send Filippo an email asking his thoughts?
+## Data Management
 
+- [ ] Full data deletes (plain index deletes vs. full encrypted
+      chunk deletes with blob marking)
+- [ ] Blob defragmentation (reclaim space from deleted chunks by
+      repacking remaining chunks into new blob files)
+- [ ] Event collision handling (e.g. user deletes from one backend,
+      syncs from another where data is still active; consider event
+      sourcing pattern)
 
-### Functionality
+## Architecture
 
-- [ ] Design + implement an envelope encryption scheme w/DEKs, KEKs, that allow multiple users to access a piece of data. DEK should be linked to the plain-text chunks so as to prevent re-encrypting the same data and to prevent issues w/users not having access to certain DEKs to decrypt files that should have access to.
-  - [ ] Access scheme should be validated/built out according to existing DEKs and the data, _then_ map which users have access to which DEKs. A separate user/DEK map shouldn't exist for reasons of skew -- it could get outta skew and then expectations don't match reality.
-  - [ ] And honestly, users should have access to KEKs, not DEKs, but same principle applies.
+- [ ] Separate std/fs implementation from core API (accept bytes
+      instead of filenames in lib, keep fs operations in tools layer)
+- [ ] Async I/O with tokio (S3 already uses tokio; extend to local
+      storage and encryption pipeline)
+- [ ] Streaming index I/O instead of loading full index into memory
+      (memory-mapped files or streaming reads)
 
-- [ ] Consider event collisions, e.g. a user deletes data from one backend, but then syncs from another where it's still active. Should event sourcing pattern be used, and we also keep an event log?
+## UX
 
+- [ ] `--verbose` option for `list-files` (show chunk count, chunk
+      size, encryption status)
+- [ ] Add/edit/remove notes on files (larger text bodies than tags,
+      searchable)
+- [ ] `.bluignore` file (similar to `.gitignore`)
+- [ ] Progress bars, color output, `blu doctor` diagnostics
 
-- [ ] Multiple backends to allow for redundant backups. E.g. I can have both a local and S3 backend. Or and s3 and a Azure blob storage. Any combination.
-    - [ ] Should encrypt-files have a --no-local flag or something? Default to local?
+## Ideas (Low Priority)
 
-- [ ] Separate std/fs implementation from API. Tools can use std::fs, try to avoid in lib (accept bytes instead of filename, etc.)
-
-- [ ] Deletes, e.g. full data deletes. Also managing "plain index" deletes vs "full deletes" (deletes the encrypted chunks from blob files, or at least marks them for deletion). Which leads to ...
-- [ ] Blob defragmentation... e.g. when enough pieces of a blob file are marked for deletion, collect the remaining pieces and group them up all together in a new blob file. Should be fast, Just a straight copy TBH, and then the old blobs (the entire files) get marked for deletion and removed from the blob index. Might need a deletion staging area to ensure the blob index isn't bloated w/old stuff and also lets the "deletion backend sync" happen at a later time. This "deletion backend sync" will involve work on backends as well, basically it ensures that full blobfiles marked for deletion are removed from the storage backends. Obviously it should be after all other syncs (of new/fresh blobfiles) happen first, w/o errors, since those new pieces could contain valid chunks from old blob files.
-
-- Ideas:
-  - [ ] Work more on this Global Hash Table idea. Esp. ints to an array of multihashes, (and vice versa -- but a single multihash would map directly to an int. This would allow for expandability / different hashing algos, as well as keep indexes smaller. By making them multihashes, we know which type of hashing algo was used and can map multiple hashes from different algos w/o having to guess at which is which. Gonna hash it out (haha, no pun intended) a bit more.
-
-- [ ] remove hard-coded hashing algo and make it configurable -- also consider when changed, make sure new hashing algo doesn't conflict w/old, e.g. if sha3 is used then sha512, files shouldn't be considered "different" just b/c the hashes are different. if the old version was hashed sha512, that same algo should be used for any comparisons.
-
-- [ ] add a --verbose option to `list_files` which will show number of chunks a
-  file has been broken into and the chunk size, maybe also whether it's been
-  encrypted or not (but really this just depends on if a blob index exists ...)
-
-- [ ] add to Hash type and allow for different multihashes?
-  -- thinking on this, multihash is really just hash digest itself + type of hash algo
-
-- [ ] tokio for async
-
-- [ ] Add and start to maintain a [changelog](https://keepachangelog.com/en/1.1.0/)
-  - Yes, even now. For the changes below that are to-DONE, but I need/want to keep a record of it
-
--- STREAM INDEXING TO DISK, DO NOT KEEP IT ALL IN MEMORY ... or do?
-  - memory map it?
-
-- [ ] add/edit/remove notes on files, larger bodies of text than tag. Should also be searchable.
-
-- [ ] Seed Phrase generation / recovery for AGE keys + Recovery Kits (a la 1Password)
-  See: <https://electrum.readthedocs.io/en/latest/seedphrase.html>
-
-- [ ] multi-key encryption/recovery. How to handle this?
-
-Other storage backends such as s3, etc.
-- [x] s3
-- [ ] digital ocean one?
-- [ ] Google Cloud?
-- [ ] Azure?
-
-- [ ] Consider if there should be a .bluignore, similar to .gitignore? Or within .blu, e.g. .blu/ignore?
-
-- [ ] Consider licensing as Apache + MIT dual license or similar
+- [ ] Configurable hashing algorithm (with backward compat: old
+      hashes compared using the algorithm that produced them)
+- [ ] Global hash table with multihash support (integer IDs mapping
+      to multihash arrays for smaller indexes and algorithm agility)
+- [ ] Web UI for browsing vaults

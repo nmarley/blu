@@ -1,8 +1,28 @@
 # Envelope Encryption Design for blu
 
+Canonical design document for blu's encryption architecture. Covers
+key hierarchy, envelope encryption, agent protocol, multi-user access,
+key rotation, and recovery.
+
+Implementation status (May 2026):
+
+  Core key hierarchy (BIP39, UK, KEK, DEK)   DONE
+  Agent daemon with session management        DONE
+  v2 file format (header + DEK payload)       DONE
+  KEK storage and wrapping                    DONE
+  BIP39 identity with biometric unlock        DONE
+  Post-quantum hybrid KEM (ML-KEM-768)        DONE (see PLAN-PQ.md)
+  mlock for agent secrets                     DONE
+  Multi-user access (invite/accept/remove)    NOT STARTED
+  KEK rotation CLI                            NOT STARTED
+  Recovery kit (PDF export)                   NOT STARTED
+
 ## Overview
 
-This document describes a complete redesign of blu's encryption architecture using envelope encryption with BIP39-based key derivation. The design supports multiple users, key rotation, and provides a secure recovery mechanism.
+This document describes blu's encryption architecture using envelope
+encryption with BIP39-based key derivation. The design supports
+multiple users, key rotation, and provides a secure recovery
+mechanism.
 
 ## Goals
 
@@ -116,10 +136,32 @@ mnemonic + "mnemonic" + passphrase -> PBKDF2-HMAC-SHA512 (2048 rounds) -> 512-bi
 ```
 seed -> HKDF-SHA256(
     ikm = seed,
-    salt = "blu-user-key-v1",
+    salt = "blu-x25519-v1",
     info = ""  # No vault-specific binding at UK level
 ) -> 32 bytes -> X25519 keypair
 ```
+
+**Post-Quantum Key Derivation (added April 2026):**
+```
+seed -> HKDF-SHA256(
+    ikm = seed,
+    salt = "blu-pq-v1",
+    info = ""
+) -> 32 bytes -> HybridSeed -> SHAKE256 -> ML-KEM-768 + X25519 keypair
+```
+
+**Device Key Derivation (for biometric unlock):**
+```
+seed -> HKDF-SHA256(
+    ikm = seed,
+    salt = "blu-device-key-v1",
+    info = ""
+) -> 32 bytes -> Device Key (encrypts seed in Keychain)
+```
+
+Three distinct HKDF salts ensure domain separation between key types.
+All three key types are deterministically derived from the same BIP39
+seed, so recovering the mnemonic recovers everything.
 
 Note: UK is vault-independent. The same mnemonic = same UK = same identity across all vaults. This is intentional - your identity follows you.
 
@@ -558,37 +600,48 @@ where this identity was authorized.
 
 ## File Structure
 
+Run `find .blu -type f` or `tree .blu` to see the current layout.
+Key directories and files:
+
 ### Per-Vault (`.blu/`)
 
-```
-.blu/
-├── config.toml              # Backend config, settings
-├── vault.toml               # Vault identity
-├── keys/
-│   ├── kek.toml             # KEK metadata, version history
-│   ├── kek_v1/
-│   │   └── wrapped.age      # Current KEK (age multi-recipient)
-│   └── kek_v0/
-│       └── wrapped.age      # Previous KEK (deprecated)
-├── invitations/             # Pending user invitations
-│   └── age1bob.age          # KEK wrapped for Bob (pending accept)
-├── indexes/
-│   ├── index.dat            # Plain index (v2 format with DEK)
-│   ├── blob_index.dat       # Blob index (v2 format with DEK)
-│   └── tag_index.dat        # Tag index (v2 format with DEK)
-└── data/
-    └── a/ab/abc/abcd...     # Blob files (v2 format with DEK)
-```
+`.blu/config.toml` contains backend config, encryption settings
+(recipient, pq_recipient, identity_file path).
+
+`.blu/identity.age` is the vault's local copy of the user's age
+identity (optionally passphrase-encrypted).
+
+`.blu/keys/` contains the KEK store: `kek.toml` (metadata with
+version history and authorized users) and `kek_vN/wrapped.age`
+directories (one per KEK version, each containing the KEK encrypted
+via age to authorized recipients).
+
+`.blu/invitations/` (future, not yet implemented) will hold pending
+multi-user invitations.
+
+`.blu/indexes/` contains encrypted index files (index.dat,
+blob_index.dat, tag_index.dat) in v2 format with per-file DEKs.
+
+`.blu/data/` contains encrypted blob files in v2 format, organized
+by content hash prefix (e.g. `a/ab/abcd...`).
 
 ### Per-User (`~/.blu/`)
 
-```
-~/.blu/
-├── config.toml              # User preferences (timeout, etc.)
-├── identity.toml            # Public key (safe to share)
-├── agent.sock               # Agent Unix socket
-└── agent.pid                # Agent PID file
-```
+`~/.blu/identity.toml` holds public keys (X25519 and PQ) and
+creation metadata. Safe to share.
+
+`~/.blu/identity.age` is the age identity file (private key),
+optionally passphrase-encrypted.
+
+`~/.blu/identity.enc` (when biometric is configured) holds the
+BIP39 seed encrypted with the device key, stored in the macOS
+Keychain with biometric access policy.
+
+`~/.blu/agent.sock` and `~/.blu/agent.pid` are the agent daemon's
+Unix socket and PID file.
+
+`~/.blu/config.toml` holds user preferences (timeout profile,
+auto-start settings).
 
 **vault.toml:**
 ```toml
@@ -721,7 +774,8 @@ blu recovery-kit generate [--output <file.pdf>]
 - Compromised device while agent is unlocked (attacker has UK)
 - Rubber hose cryptanalysis (user reveals mnemonic under duress)
 - Compromised mnemonic (full access to all user's vaults)
-- Quantum computers (X25519 and ChaCha20 are not post-quantum)
+- Quantum computers targeting the X25519 UK->KEK layer (mitigated
+  by PQ hybrid KEM; see PLAN-PQ.md)
 
 ### Implementation Requirements
 
@@ -733,12 +787,21 @@ blu recovery-kit generate [--output <file.pdf>]
 
 ## Future Considerations
 
-### Post-Quantum Cryptography
+### Post-Quantum Cryptography (DONE)
 
-When PQ algorithms are standardized and available in age:
-- UK: Migrate to ML-KEM (Kyber) or hybrid X25519+ML-KEM
-- KEK wrapping: Migrate to PQ-safe KEM
-- DEK/Data: ChaCha20-Poly1305 is quantum-resistant (256-bit symmetric)
+Implemented April 2026 via ML-KEM-768 + X25519 hybrid KEM. See
+PLAN-PQ.md for full details. Summary:
+
+- UK->KEK: New vaults wrap KEK using mlkem768x25519 (HPKE,
+  spec-compliant with C2SP age v1.1.0). Interoperable with Go
+  age v1.3.1.
+- KEK->DEK: ChaCha20-Poly1305 with 256-bit keys (quantum-safe).
+- DEK->data: ChaCha20-Poly1305 with 256-bit keys (quantum-safe).
+- BIP39 seed derives PQ keys via separate HKDF path ("blu-pq-v1").
+- Agent receives PQ seed via biometric unlock path.
+- Passphrase-only unlock path is X25519-only (PQ KEKs require
+  biometric or mnemonic recovery). This is an age spec constraint:
+  PQ and classical recipients cannot be mixed in one age file.
 
 ### Hardware Key Support
 

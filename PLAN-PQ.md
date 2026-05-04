@@ -1,11 +1,21 @@
 # Post-Quantum Roadmap
 
-This plan supersedes the Stage 2e (migration) sections of PLAN.md and
-STAGE2.md. The `blu migrate` command is removed from the roadmap;
-this project has never had a public release, so v1-to-v2 migration is
-unnecessary. The v1/v2 auto-detection code stays for backward compat.
+Current roadmap for blu's post-quantum cryptography work.
+Written April 2026; updated May 2026 after completing the PQ
+integration.
 
-Written April 2026 after a full re-evaluation of the project state.
+Status summary:
+
+  Stage 0  Doc cleanup                     DONE
+  Stage 1  PQ hybrid KEM (all 1a-1h)       DONE
+  Stage 2  mlock for agent secrets          DONE
+  Stage 3  Multi-user access                NOT STARTED
+  Stage 4  Recovery kit                     NOT STARTED
+  Stage 5  CI/CD                            NOT STARTED
+
+Deleted planning docs (fully executed, no remaining value):
+STAGE2.md, PLAN-v0.5.md, PLAN-PQ-INTEGRATION.md, dev-notes.md,
+design.md. Non-crypto backlog is in TODO.md.
 
 ## Context
 
@@ -59,41 +69,14 @@ We use stable crates only: `ml-kem 0.2.3` + existing `x25519-dalek
 2.x` + `sha3 0.10`. No pre-release dependencies.
 
 
-## Stage 0: Strike `blu migrate` from Documentation
+## Stage 0: Doc Cleanup (DONE)
 
-Remove all references to the `blu migrate` command, Stage 2e, and
-v1-to-v2 migration workflow from planning and design docs.
-
-Files to edit:
-
-  PLAN.md
-    Remove lines 463-474 (Migration v1->v2 section)
-    Remove line 627 (2e row in roadmap table)
-    Remove lines 684-698 (Migration Path section)
-
-  STAGE2.md
-    Remove line 60 (2e row in roadmap table)
-    Remove lines 601-634 (entire 2e section)
-    Remove lines 671-674 (file touchlist rows for migrate)
-    Remove lines 712-740 (implementation order + open questions)
-
-  ENVELOPE_ENCRYPTION_DESIGN.md
-    Remove lines 734-751 (migration path section)
-    Keep lines 425-431, 455-483 (KEK rotation re-wrap; that is
-      rotation, not v1-to-v2 migration)
-
-  PLAN-v0.5.md
-    Remove line 229 (migration bullet)
-    Remove lines 251-263 (config migration section)
-
-Not changed:
-  - v2format.rs / age.rs: is_v2() detection and decrypt_auto() stay
-  - kek.rs: KekStatus::Archived stays (KEK rotation lifecycle)
-  - Error messages "vault not migrated?" should be reworded to
-    "no KEK available" since they are now permanent states
+Migration references (`blu migrate`, Stage 2e) removed from all
+planning docs. STAGE2.md, PLAN-v0.5.md, and other stale docs
+deleted in the May 2026 cleanup.
 
 
-## Stage 1: Post-Quantum Hybrid KEM
+## Stage 1: Post-Quantum Hybrid KEM (DONE)
 
 ### 1a: Dependencies and hybrid KEM module
 
@@ -342,7 +325,7 @@ internally; PQ key material stays in the agent's memory.
   -> wrap DEK -> encrypt data -> decrypt data.
 
 
-## Stage 2: mlock for Agent Secrets
+## Stage 2: mlock for Agent Secrets (DONE)
 
 ### 2a: mlock helper module
 
@@ -384,10 +367,10 @@ Modified file: src/agent/state.rs
   Graceful degradation: warn to stderr if mlock fails, continue.
 
 
-## Stage 3: Multi-User Access
+## Stage 3: Multi-User Access (NOT STARTED)
 
-Uses the existing design from ENVELOPE_ENCRYPTION_DESIGN.md (lines
-366-431), adapted for PQ recipients:
+Uses the existing design from ENVELOPE_ENCRYPTION_DESIGN.md,
+adapted for PQ recipients:
 
   blu user invite <age1pq...>
     Owner decrypts current KEK with their PQ identity.
@@ -417,8 +400,35 @@ KEKs remain readable for backward compat.
 Key exchange (sharing PQ public keys) is out-of-band.
 The vault (S3/local) is the relay for invitations.
 
+### age Spec Label Constraint
 
-## Stage 4: Recovery Kit
+The C2SP age spec v1.1.0 forbids encrypting to a PQ recipient
+(which carries the "postquantum" label) alongside a classical
+X25519 recipient (which has no labels) in the same age file. This
+means a single wrapped.age cannot contain both mlkem768x25519 and
+X25519 stanzas.
+
+Consequence: new vaults created with `blu init` wrap the KEK to
+the PQ recipient only. The passphrase-only unlock path (which
+derives X25519 but not PQ, because the mnemonic is not stored on
+disk) cannot unwrap PQ-wrapped KEKs. Biometric unlock (which
+recovers the full BIP39 Seed and derives both key types) or
+mnemonic recovery is required.
+
+This is acceptable because the PQ stanza protects against
+harvest-now-decrypt-later attacks on the KEK blob at rest. Online
+decryption via biometric is the primary day-to-day path.
+
+### Prerequisites
+
+Before implementing multi-user access:
+
+  1. Add `KekStore::rotate_with()` that accepts `&[&dyn Recipient]`
+     (currently `rotate()` only takes `&[&str]` for X25519 strings).
+  2. Design the invitation wire format and backend relay mechanism.
+
+
+## Stage 4: Recovery Kit (NOT STARTED)
 
   blu recovery-kit generate
     Displays the 24 BIP39 words.
@@ -433,7 +443,7 @@ Recovery kit format from ENVELOPE_ENCRYPTION_DESIGN.md (lines
 485-549) applies unchanged.
 
 
-## Stage 5: CI/CD (low priority)
+## Stage 5: CI/CD (NOT STARTED, low priority)
 
 GitHub Actions for cargo build + cargo test on push.
 

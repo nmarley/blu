@@ -1,5 +1,12 @@
 # blu Session Management and Envelope Encryption Design
 
+ALL THREE STAGES IN THIS DOCUMENT ARE FULLY IMPLEMENTED (May 2026).
+
+This document is retained as an architectural reference for the
+design decisions, agent protocol, and key hierarchy. For current
+roadmap (post-quantum, multi-user, recovery kit), see PLAN-PQ.md.
+For canonical design details, see ENVELOPE_ENCRYPTION_DESIGN.md.
+
 ## Summary
 
 This document describes the redesign of blu's key management and
@@ -8,7 +15,7 @@ session handling. The goal is to eliminate repeated passphrase entry
 for multi-user access, key rotation, and future post-quantum
 algorithms.
 
-Three stages, each independently shippable:
+Three stages, each independently shippable (all complete):
 
 1. **Agent and unlock/lock** -- fixes the immediate UX problem
 2. **Envelope encryption (KEK/DEK)** -- enables key rotation and
