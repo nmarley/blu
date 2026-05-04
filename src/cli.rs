@@ -33,7 +33,7 @@ pub use delete_files::delete_files;
 pub use encrypt_files::encrypt_files;
 pub use identity_cmd::identity;
 pub use identity_cmd::{global_identity_age_path, load_global_identity, IdentityMeta};
-pub use init::init;
+pub use init::{init, init_vault, InitVaultParams, InitVaultResult};
 pub use list_files::list_files;
 pub use pull::pull;
 pub use read_index::read_index;

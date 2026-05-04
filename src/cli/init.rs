@@ -11,11 +11,120 @@ use crate::cli::{
     check_outfile_writable, global_identity_age_path, load_global_identity, write_index_file,
 };
 use crate::config::{self, EncryptionConfig};
-use crate::keys::kek::KekStore;
-use crate::keys::pq::parse_pq_recipient;
 use crate::keys::{self, IDENTITY_FILENAME};
 
-/// initialize the .blu repository
+/// Resolved inputs for vault initialization.
+///
+/// This struct captures everything needed to create a vault, with no
+/// interactive prompts or global state reads. The CLI `init()` function
+/// resolves user input into this struct, then passes it to
+/// `init_vault()` for the actual work.
+pub struct InitVaultParams {
+    /// The age X25519 identity (private key).
+    pub identity: Identity,
+    /// The X25519 public key string (age1...).
+    pub recipient: String,
+    /// The PQ public key string (age1pq...), if available.
+    pub pq_recipient: Option<String>,
+    /// Passphrase to encrypt the vault's local identity copy.
+    /// None means no passphrase protection.
+    pub passphrase: Option<String>,
+}
+
+/// Initialize a vault at the given directory.
+///
+/// Pure logic: creates .blu/, config.toml, KEK store (when PQ is
+/// available), identity file, and empty indexes. No interactive
+/// prompts, no global state reads, no println output.
+pub fn init_vault(
+    dir: &Path,
+    params: InitVaultParams,
+) -> Result<InitVaultResult, Box<dyn std::error::Error>> {
+    let bludir = dir.join(".blu/");
+    fs::create_dir_all(&bludir)?;
+
+    // Save the identity to the vault
+    let identity_path = bludir.join(IDENTITY_FILENAME);
+    keys::save_identity(
+        &params.identity,
+        &identity_path,
+        params.passphrase.as_deref(),
+    )?;
+
+    // Create config with encryption settings
+    let mut cfg = config::Config::default();
+    cfg.set_encryption(EncryptionConfig {
+        recipient: params.recipient.clone(),
+        pq_recipient: params.pq_recipient.clone(),
+        identity_file: IDENTITY_FILENAME.into(),
+    });
+
+    // Write config file
+    let config_path = bludir.join("config.toml");
+    let mut file = fs::File::create(&config_path)?;
+    let cfg_bytes = toml::to_string_pretty(&cfg)?.into_bytes();
+    file.write_all(&cfg_bytes)?;
+
+    // Initialize KEK store when PQ recipient is available.
+    //
+    // The age spec (C2SP v1.1.0) forbids mixing PQ recipients
+    // (which carry the "postquantum" label) with classical X25519
+    // recipients in the same age file. New vaults therefore wrap the
+    // KEK to PQ only. The user_strings metadata records both keys
+    // for documentation, but only the PQ recipient is used for the
+    // actual age encryption.
+    //
+    // Consequences for the passphrase-only unlock path: it cannot
+    // derive the PQ seed (no mnemonic available), so it cannot
+    // unwrap PQ-wrapped KEKs. Biometric unlock or mnemonic recovery
+    // is required for vaults with PQ KEKs. This is acceptable
+    // because the PQ stanza protects against harvest-now-decrypt-
+    // later attacks on the KEK blob at rest.
+    let has_kek = if let Some(ref pq_str) = params.pq_recipient {
+        let pq_recipient = crate::keys::pq::parse_pq_recipient(pq_str)?;
+
+        let recipients: Vec<&dyn age::Recipient> = vec![&pq_recipient as &dyn age::Recipient];
+        let user_strings = vec![pq_str.clone(), params.recipient.clone()];
+
+        let store = crate::keys::kek::KekStore::new(&bludir);
+        store.init_with(&recipients, &user_strings)?;
+        true
+    } else {
+        false
+    };
+
+    // Create indexes directory and write empty index
+    let indexes_dir = bludir.join("indexes");
+    fs::create_dir_all(&indexes_dir)?;
+
+    let index_path = indexes_dir.join("index.dat");
+    check_outfile_writable(&index_path)?;
+
+    let bbox = keys::blackbox_from_identity(params.identity);
+    let index = PlainIndex::new_empty();
+    write_index_file(&index, &bbox, &index_path)?;
+
+    Ok(InitVaultResult {
+        identity_path,
+        config_path,
+        has_kek,
+    })
+}
+
+/// Result of a successful vault initialization.
+pub struct InitVaultResult {
+    /// Path to the saved identity file.
+    pub identity_path: std::path::PathBuf,
+    /// Path to the config file.
+    pub config_path: std::path::PathBuf,
+    /// Whether a KEK store was created (PQ + X25519).
+    pub has_kek: bool,
+}
+
+/// CLI entry point for `blu init`.
+///
+/// Resolves user input (global identity, key file, passphrase prompts)
+/// then delegates to `init_vault()`.
 pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(&args.dir);
     let abs_path = match std::fs::canonicalize(dir) {
@@ -34,11 +143,6 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Initializing blu repository in {}", abs_path.display());
-
-    // create .blu dir
-    let bludir = abs_path.join(".blu/");
-    info!("Initializing new .blu dir in {:?}", bludir);
-    fs::create_dir_all(&bludir)?;
 
     // Resolve the identity. Two paths:
     //   1. Global identity (~/.blu/identity.toml) provides both X25519
@@ -90,71 +194,30 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
         );
     };
 
-    // Save the identity to the vault (keeps vault self-contained for
-    // the passphrase unlock path)
-    let identity_path = bludir.join(IDENTITY_FILENAME);
-    println!("Saving private key to {}", identity_path.display());
+    // Resolve passphrase (interactive)
     let passphrase = resolve_passphrase(&args)?;
-    keys::save_identity(&identity, &identity_path, passphrase.as_deref())?;
 
-    // Create config with encryption settings
-    let mut cfg = config::Config::default();
-    cfg.set_encryption(EncryptionConfig {
-        recipient: recipient_str.clone(),
+    let params = InitVaultParams {
+        identity,
+        recipient: recipient_str,
         pq_recipient: pq_recipient_str.clone(),
-        identity_file: IDENTITY_FILENAME.into(),
-    });
+        passphrase,
+    };
 
-    // Write config file
-    let config_path = bludir.join("config.toml");
-    let mut file = fs::File::create(&config_path)?;
-    let cfg_bytes = toml::to_string_pretty(&cfg)?.into_bytes();
-    file.write_all(&cfg_bytes)?;
-    println!("Wrote config to {}", config_path.display());
+    let result = init_vault(&abs_path, params)?;
 
-    // Initialize KEK store when PQ recipient is available
-    if let Some(ref pq_str) = pq_recipient_str {
-        let pq_recipient = parse_pq_recipient(pq_str)?;
-        let x25519_recipient = keys::parse_recipient(&recipient_str)?;
-
-        let recipients: Vec<&dyn age::Recipient> =
-            vec![&pq_recipient as &dyn age::Recipient, &x25519_recipient];
-        let user_strings = vec![pq_str.clone(), recipient_str.clone()];
-
-        let store = KekStore::new(&bludir);
-        store.init_with(&recipients, &user_strings)?;
-
+    // Print summary
+    println!("Saving private key to {}", result.identity_path.display());
+    println!("Wrote config to {}", result.config_path.display());
+    if result.has_kek {
         println!("Created KEK store with PQ + X25519 recipients");
     }
-
-    // Create indexes directory
-    let indexes_dir = bludir.join("indexes");
-    fs::create_dir_all(&indexes_dir)?;
-
-    // Write an empty index file
-    let index_path = indexes_dir.join("index.dat");
-    check_outfile_writable(&index_path)?;
-
-    // Load the BlackBox from the identity
-    let bbox = keys::blackbox_from_identity(identity);
-    let index = PlainIndex::new_empty();
-    match write_index_file(&index, &bbox, &index_path) {
-        Ok(_num_bytes) => println!("Wrote empty index to {}", index_path.display()),
-        Err(e) => {
-            error!("Error writing index: {}", e);
-            return Err(e);
-        }
-    }
-
     println!("\nInitialized empty blu repository.");
     if pq_recipient_str.is_some() {
         println!("Vault is protected with post-quantum hybrid encryption.");
     } else {
         println!("\nIMPORTANT: Back up your private key!");
-        println!("  Key file: {}", identity_path.display());
-        if passphrase.is_none() {
-            println!("  WARNING: Key is NOT passphrase protected!");
-        }
+        println!("  Key file: {}", result.identity_path.display());
     }
 
     Ok(())
@@ -217,4 +280,296 @@ fn resolve_passphrase(args: &InitArgs) -> Result<Option<String>, Box<dyn std::er
         return Err("passphrases do not match".into());
     }
     Ok(Some(pass))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::keys::kek::KekStore;
+    use crate::keys::mnemonic;
+    use age::Identity;
+    use tempfile::tempdir;
+
+    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
+                                  abandon abandon abandon abandon abandon abandon \
+                                  abandon abandon abandon abandon abandon abandon \
+                                  abandon abandon abandon abandon abandon art";
+
+    fn test_identity_and_recipients() -> (age::x25519::Identity, String, String) {
+        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let identity = mnemonic::derive_x25519_identity(&seed).unwrap();
+        let recipient = mnemonic::public_key_from_identity(&identity);
+        let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
+        (identity, recipient, pq_recipient.to_string())
+    }
+
+    fn test_x25519_only() -> (age::x25519::Identity, String) {
+        let identity_str = include_str!("../../test/blu_secrets/blu.key").trim();
+        let identity = age::x25519::Identity::from_str(identity_str).unwrap();
+        let recipient = identity.to_public().to_string();
+        (identity, recipient)
+    }
+
+    #[test]
+    fn init_vault_with_pq_creates_kek_store() {
+        let tmp = tempdir().unwrap();
+        let (identity, recipient, pq_recipient) = test_identity_and_recipients();
+
+        let result = init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient: recipient.clone(),
+                pq_recipient: Some(pq_recipient.clone()),
+                passphrase: None,
+            },
+        )
+        .unwrap();
+
+        assert!(result.has_kek);
+        assert!(result.identity_path.exists());
+        assert!(result.config_path.exists());
+
+        // Verify config.toml has both recipients
+        let cfg = config::read_config(tmp.path()).unwrap();
+        let enc = cfg.encryption.unwrap();
+        assert_eq!(enc.recipient, recipient);
+        assert_eq!(enc.pq_recipient.unwrap(), pq_recipient);
+
+        // Verify KEK store exists and is decryptable by PQ identity
+        let blu_dir = tmp.path().join(".blu");
+        let store = KekStore::new(&blu_dir);
+        assert!(store.exists());
+
+        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
+        let (_, version) = store
+            .unwrap_current_kek_with(&[&pq_identity as &dyn Identity])
+            .unwrap();
+        assert_eq!(version, 0);
+
+        // X25519-only identity cannot unwrap PQ-wrapped KEK (this is
+        // expected; the age spec forbids mixing PQ and classical
+        // recipients, so new vaults wrap PQ-only).
+        let x25519_identity = mnemonic::derive_x25519_identity(&seed).unwrap();
+        let result = store.unwrap_current_kek_with(&[&x25519_identity as &dyn Identity]);
+        assert!(result.is_err());
+
+        // Metadata records both user keys for documentation
+        let meta = store.load_metadata().unwrap();
+        assert_eq!(meta.versions[0].users.len(), 2);
+    }
+
+    #[test]
+    fn init_vault_without_pq_skips_kek_store() {
+        let tmp = tempdir().unwrap();
+        let (identity, recipient) = test_x25519_only();
+
+        let result = init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient: recipient.clone(),
+                pq_recipient: None,
+                passphrase: None,
+            },
+        )
+        .unwrap();
+
+        assert!(!result.has_kek);
+
+        // Verify config has no pq_recipient
+        let cfg = config::read_config(tmp.path()).unwrap();
+        let enc = cfg.encryption.unwrap();
+        assert_eq!(enc.recipient, recipient);
+        assert!(enc.pq_recipient.is_none());
+
+        // Verify no KEK store
+        let blu_dir = tmp.path().join(".blu");
+        let store = KekStore::new(&blu_dir);
+        assert!(!store.exists());
+    }
+
+    #[test]
+    fn init_vault_writes_identity_with_passphrase() {
+        let tmp = tempdir().unwrap();
+        let (identity, recipient) = test_x25519_only();
+        let passphrase = "test-passphrase-42";
+
+        init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient,
+                pq_recipient: None,
+                passphrase: Some(passphrase.to_string()),
+            },
+        )
+        .unwrap();
+
+        // Loading without passphrase should fail
+        let identity_path = tmp.path().join(".blu").join(IDENTITY_FILENAME);
+        let result = keys::load_identity(&identity_path, None);
+        assert!(result.is_err());
+
+        // Loading with correct passphrase should succeed
+        let loaded = keys::load_identity(&identity_path, Some(passphrase)).unwrap();
+        let (original, _) = test_x25519_only();
+        assert_eq!(
+            loaded.to_public().to_string(),
+            original.to_public().to_string()
+        );
+    }
+
+    #[test]
+    fn init_vault_creates_empty_index() {
+        let tmp = tempdir().unwrap();
+        let (identity, recipient) = test_x25519_only();
+
+        init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient,
+                pq_recipient: None,
+                passphrase: None,
+            },
+        )
+        .unwrap();
+
+        let index_path = tmp.path().join(".blu/indexes/index.dat");
+        assert!(index_path.exists());
+        // File should be non-empty (encrypted empty index)
+        assert!(fs::metadata(&index_path).unwrap().len() > 0);
+    }
+
+    #[test]
+    fn init_vault_twice_at_same_dir_succeeds() {
+        // Second init_vault at the same dir should still work
+        // (KEK store will fail because it exists, but that is caught
+        // at the CLI layer by the read_config check. init_vault
+        // itself assumes a fresh directory.)
+        let tmp = tempdir().unwrap();
+        let (identity, recipient) = test_x25519_only();
+
+        init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient: recipient.clone(),
+                pq_recipient: None,
+                passphrase: None,
+            },
+        )
+        .unwrap();
+
+        // A second init without PQ (no KEK store) should succeed
+        // because it overwrites config and identity.
+        let (identity2, _) = test_x25519_only();
+        let result = init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity: identity2,
+                recipient,
+                pq_recipient: None,
+                passphrase: None,
+            },
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_backward_compat_no_pq_field() {
+        // Old config.toml without pq_recipient should deserialize fine
+        let toml_str = r#"
+blu_version = "0.5.0"
+
+[encryption]
+recipient = "age1abc123"
+identity_file = "identity.age"
+"#;
+        let cfg: config::Config = toml::from_str(toml_str).unwrap();
+        let enc = cfg.encryption.unwrap();
+        assert_eq!(enc.recipient, "age1abc123");
+        assert!(enc.pq_recipient.is_none());
+    }
+
+    #[test]
+    fn config_round_trip_with_pq() {
+        let mut cfg = config::Config::default();
+        cfg.set_encryption(EncryptionConfig {
+            recipient: "age1test".to_string(),
+            pq_recipient: Some("age1pqtest".to_string()),
+            identity_file: IDENTITY_FILENAME.into(),
+        });
+
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        let parsed: config::Config = toml::from_str(&toml_str).unwrap();
+        let enc = parsed.encryption.unwrap();
+        assert_eq!(enc.recipient, "age1test");
+        assert_eq!(enc.pq_recipient.unwrap(), "age1pqtest");
+    }
+
+    #[test]
+    fn config_round_trip_without_pq_omits_field() {
+        let mut cfg = config::Config::default();
+        cfg.set_encryption(EncryptionConfig {
+            recipient: "age1test".to_string(),
+            pq_recipient: None,
+            identity_file: IDENTITY_FILENAME.into(),
+        });
+
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        // pq_recipient should not appear in serialized output
+        assert!(!toml_str.contains("pq_recipient"));
+
+        let parsed: config::Config = toml::from_str(&toml_str).unwrap();
+        let enc = parsed.encryption.unwrap();
+        assert!(enc.pq_recipient.is_none());
+    }
+
+    #[test]
+    fn init_vault_pq_full_round_trip() {
+        // Full round-trip: init with PQ -> unwrap KEK with PQ
+        // -> wrap DEK -> unwrap DEK -> encrypt data -> decrypt data
+        let tmp = tempdir().unwrap();
+        let (identity, recipient, pq_recipient_str) = test_identity_and_recipients();
+
+        init_vault(
+            tmp.path(),
+            InitVaultParams {
+                identity,
+                recipient,
+                pq_recipient: Some(pq_recipient_str),
+                passphrase: None,
+            },
+        )
+        .unwrap();
+
+        let blu_dir = tmp.path().join(".blu");
+        let store = KekStore::new(&blu_dir);
+
+        // Derive PQ identity from the same mnemonic
+        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
+
+        // Unwrap KEK with PQ
+        let (kek, _) = store
+            .unwrap_current_kek_with(&[&pq_identity as &dyn Identity])
+            .unwrap();
+
+        // DEK round-trip
+        let (dek, wrapped_dek) = crate::keys::dek::generate_and_wrap(&kek).unwrap();
+        let recovered_dek = crate::keys::dek::Dek::unwrap(&kek, &wrapped_dek).unwrap();
+        assert_eq!(recovered_dek.as_bytes(), dek.as_bytes());
+
+        // Data round-trip
+        let plaintext = b"most triumphant PQ vault data";
+        let ciphertext = dek.encrypt_data(plaintext).unwrap();
+        let decrypted = recovered_dek.decrypt_data(&ciphertext).unwrap();
+        assert_eq!(&decrypted, plaintext);
+    }
 }

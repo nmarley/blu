@@ -1061,4 +1061,149 @@ mod test {
         );
         handle.join().unwrap();
     }
+
+    #[test]
+    fn daemon_unlock_with_secret_and_pq_seed() {
+        use crate::keys::mnemonic;
+
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        // Derive identity and PQ seed from a test mnemonic
+        let mnemonic_str = "abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon abandon abandon \
+                            abandon abandon abandon abandon abandon art";
+        let m = mnemonic::parse_mnemonic(mnemonic_str).unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let identity = mnemonic::derive_x25519_identity(&seed).unwrap();
+        let pq_seed = mnemonic::derive_pq_seed(&seed).unwrap();
+
+        let identity_secret = identity.to_string();
+        let secret_str = age::secrecy::ExposeSecret::expose_secret(&identity_secret);
+
+        // Unlock without PQ seed: status should show has_pq=false
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock_with_secret",
+                "params": { "secret": secret_str },
+                "id": 1
+            }),
+        );
+        assert!(resp["result"]["public_key"].is_string());
+
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 2
+            }),
+        );
+        assert_eq!(resp["result"]["unlocked"], true);
+        assert_eq!(resp["result"]["has_pq"], false);
+
+        // Lock, then re-unlock WITH PQ seed
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "lock",
+                "params": {},
+                "id": 3
+            }),
+        );
+
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock_with_secret",
+                "params": {
+                    "secret": secret_str,
+                    "pq_seed": BASE64.encode(pq_seed.as_bytes()),
+                },
+                "id": 4
+            }),
+        );
+        assert!(resp["result"]["public_key"].is_string());
+
+        // Status should now show has_pq=true
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 5
+            }),
+        );
+        assert_eq!(resp["result"]["unlocked"], true);
+        assert_eq!(resp["result"]["has_pq"], true);
+
+        // Set up a PQ-wrapped KEK store and verify the agent
+        // can load it using the PQ seed
+        let blu_dir = tmp.path().join(".blu");
+        std::fs::create_dir_all(&blu_dir).unwrap();
+
+        let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
+        let store = crate::keys::kek::KekStore::new(&blu_dir);
+        let recipient_str = pq_recipient.to_string();
+        store
+            .init_with(&[&pq_recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap();
+
+        // wrap_dek should succeed (agent loads KEK via PQ identity)
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "wrap_dek",
+                "params": {
+                    "kek_dir": blu_dir.to_str().unwrap()
+                },
+                "id": 6
+            }),
+        );
+        assert!(resp["result"]["dek"].is_string());
+        assert!(resp["result"]["wrapped_dek"].is_string());
+
+        // Lock should clear PQ seed
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "lock",
+                "params": {},
+                "id": 7
+            }),
+        );
+
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "status",
+                "params": {},
+                "id": 8
+            }),
+        );
+        assert_eq!(resp["result"]["has_pq"], false);
+
+        // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
 }
