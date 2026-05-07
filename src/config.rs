@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
-use crate::error::{BluError, Result as BluResult};
+use crate::error::Result as BluResult;
 use crate::io::BlackBoxSerializable;
-use crate::keys::{self, IDENTITY_FILENAME};
+use crate::keys;
 use crate::storage::{AmazonS3, Local, StorageBackend};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
@@ -36,6 +36,9 @@ pub struct KeyID {
 }
 
 /// Encryption configuration for a blu vault.
+///
+/// The identity (private key) lives at `~/.blu/identity.age` and is
+/// resolved at runtime; it is not stored in the vault config.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
 pub struct EncryptionConfig {
     /// The public key (recipient) used to encrypt data.
@@ -46,14 +49,6 @@ pub struct EncryptionConfig {
     /// None for legacy vaults or X25519-only key imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pq_recipient: Option<String>,
-    /// Path to the identity (private key) file, relative to .blu/
-    /// Defaults to "identity.age"
-    #[serde(default = "default_identity_file")]
-    pub identity_file: PathBuf,
-}
-
-fn default_identity_file() -> PathBuf {
-    PathBuf::from(IDENTITY_FILENAME)
 }
 
 impl Default for EncryptionConfig {
@@ -61,7 +56,6 @@ impl Default for EncryptionConfig {
         Self {
             recipient: String::new(),
             pq_recipient: None,
-            identity_file: default_identity_file(),
         }
     }
 }
@@ -74,7 +68,7 @@ pub struct Config {
     /// blu version that created this config
     blu_version: String,
 
-    /// Encryption settings (public key, identity file location)
+    /// Encryption settings (public key, recipients)
     #[serde(default)]
     pub encryption: Option<EncryptionConfig>,
 
@@ -190,23 +184,20 @@ impl Config {
         self.bludir().join("indexes")
     }
 
-    /// Returns the path to the identity (private key) file.
-    pub fn identity_path(&self) -> BluResult<PathBuf> {
-        let enc = self.encryption.as_ref().ok_or(BluError::NoKeyConfigured)?;
-        Ok(self.bludir().join(&enc.identity_file))
-    }
-
     /// Check if encryption is configured.
     pub fn has_encryption(&self) -> bool {
         self.encryption.is_some()
     }
 
-    /// Load the BlackBox (encryption context) from the configured identity.
+    /// Load the BlackBox (encryption context) from the identity at the given path.
     ///
     /// If the identity file is passphrase-protected, a passphrase must be provided.
-    pub fn load_blackbox(&self, passphrase: Option<&str>) -> BluResult<BlackBox> {
-        let identity_path = self.identity_path()?;
-        let identity = keys::load_identity(&identity_path, passphrase)?;
+    pub fn load_blackbox(
+        &self,
+        identity_path: &Path,
+        passphrase: Option<&str>,
+    ) -> BluResult<BlackBox> {
+        let identity = keys::load_identity(identity_path, passphrase)?;
         Ok(keys::blackbox_from_identity(identity))
     }
 
