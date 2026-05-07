@@ -5,7 +5,6 @@ use age::secrecy::ExposeSecret;
 use crate::agent::biometric;
 use crate::agent::AgentClient;
 use crate::cli::clapargs::{AgentArgs, AgentCommand};
-use crate::config;
 use crate::error::BluError;
 use crate::keys;
 use crate::keys::mnemonic;
@@ -20,9 +19,8 @@ pub fn agent(args: AgentArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Unlock the agent: try biometric first, then fall back to passphrase.
 ///
-/// The biometric path does not require being inside a blu repository
-/// (identity is global in `~/.blu/`). The passphrase path requires
-/// a repository to find the identity file.
+/// Neither path requires being inside a blu repository. The identity
+/// lives at `~/.blu/identity.age` and the agent resolves it directly.
 pub fn unlock() -> Result<(), Box<dyn std::error::Error>> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
@@ -73,22 +71,13 @@ fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Unlock using the identity file from vault config + passphrase.
+/// Unlock using the global identity file + passphrase.
+///
+/// No vault config is needed; the agent resolves `~/.blu/identity.age`
+/// itself. This means `blu agent unlock` works from any directory.
 fn unlock_with_passphrase(client: &AgentClient) -> Result<(), Box<dyn std::error::Error>> {
-    let cfg = config::read_config(".").map_err(|e| {
-        eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
-        Box::new(BluError::InvalidConfig(e.to_string())) as Box<dyn std::error::Error>
-    })?;
-
-    if cfg.encryption.is_none() {
-        return Err(Box::new(BluError::NoKeyConfigured));
-    }
-
-    let identity_path = cfg.identity_path()?;
-    let identity_str = identity_path.to_string_lossy().to_string();
-
     // Try without passphrase first (unencrypted key file)
-    match client.unlock(&identity_str, "") {
+    match client.unlock("") {
         Ok(pubkey) => {
             println!("unlocked ({})", pubkey);
             return Ok(());
@@ -100,7 +89,7 @@ fn unlock_with_passphrase(client: &AgentClient) -> Result<(), Box<dyn std::error
     }
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
-    let pubkey = client.unlock(&identity_str, &pass)?;
+    let pubkey = client.unlock(&pass)?;
     println!("unlocked ({})", pubkey);
 
     Ok(())

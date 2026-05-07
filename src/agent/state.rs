@@ -206,9 +206,11 @@ impl AgentState {
         }
     }
 
-    /// Unlock the agent by decrypting an identity file.
-    pub fn unlock(&mut self, identity_path: &str, passphrase: &str) -> Result<String> {
-        let identity = keys::load_identity(identity_path, Some(passphrase))?;
+    /// Unlock the agent by decrypting the global identity file
+    /// (`~/.blu/identity.age`) with the given passphrase.
+    pub fn unlock(&mut self, passphrase: &str) -> Result<String> {
+        let identity_path = keys::global_identity_path()?;
+        let identity = keys::load_identity(&identity_path, Some(passphrase))?;
 
         // Extract the secret key string
         let identity_secret = identity.to_string();
@@ -475,7 +477,12 @@ mod test {
     use super::*;
     use rand::RngCore;
 
-    const TEST_KEY_PATH: &str = "test/blu_secrets/blu.key";
+    const TEST_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+
+    /// Helper: unlock the agent with the test secret key.
+    fn unlock_test_state(state: &mut AgentState) -> String {
+        state.unlock_with_secret(TEST_SECRET_KEY.trim()).unwrap()
+    }
 
     #[test]
     fn new_state_is_locked() {
@@ -489,7 +496,7 @@ mod test {
     #[test]
     fn unlock_plaintext_key() {
         let mut state = AgentState::new();
-        let result = state.unlock(TEST_KEY_PATH, "unused");
+        let result = state.unlock_with_secret(TEST_SECRET_KEY.trim());
         assert!(result.is_ok());
         assert!(state.is_unlocked());
         assert!(state.public_key().is_some());
@@ -501,7 +508,7 @@ mod test {
     #[test]
     fn encrypt_decrypt_round_trip() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
 
         let plaintext = b"hello, agent!";
         let ciphertext = state.encrypt(plaintext).unwrap();
@@ -521,7 +528,7 @@ mod test {
     #[test]
     fn lock_clears_state() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
         assert!(state.is_unlocked());
 
         state.lock();
@@ -540,7 +547,7 @@ mod test {
             ..AgentConfig::default()
         };
         let mut state = AgentState::with_config(config);
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
         assert!(state.is_unlocked());
 
         // Sleep past the idle timeout
@@ -557,7 +564,7 @@ mod test {
             ..AgentConfig::default()
         };
         let mut state = AgentState::with_config(config);
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
         assert!(state.is_unlocked());
 
         std::thread::sleep(Duration::from_millis(10));
@@ -573,7 +580,7 @@ mod test {
             ..AgentConfig::default()
         };
         let mut state = AgentState::with_config(config);
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
 
         // Sleep 30ms, then touch (resets idle)
         std::thread::sleep(Duration::from_millis(30));
@@ -599,21 +606,21 @@ mod test {
     #[test]
     fn wrap_dek_without_kek_fails() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
         assert!(state.wrap_dek().is_err());
     }
 
     #[test]
     fn unwrap_dek_without_kek_fails() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
         assert!(state.unwrap_dek(b"fake", 0).is_err());
     }
 
     #[test]
     fn wrap_unwrap_dek_round_trip() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
 
         let kek = Kek::generate();
         state.set_kek(kek, 0);
@@ -630,7 +637,7 @@ mod test {
     #[test]
     fn unwrap_dek_version_mismatch() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
 
         let kek = Kek::generate();
         state.set_kek(kek, 0);
@@ -645,7 +652,7 @@ mod test {
     #[test]
     fn lock_clears_kek() {
         let mut state = AgentState::new();
-        state.unlock(TEST_KEY_PATH, "unused").unwrap();
+        unlock_test_state(&mut state);
 
         let kek = Kek::generate();
         state.set_kek(kek, 5);

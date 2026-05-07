@@ -19,23 +19,25 @@ use crate::keys::{self, IDENTITY_FILENAME};
 /// interactive prompts or global state reads. The CLI `init()` function
 /// resolves user input into this struct, then passes it to
 /// `init_vault()` for the actual work.
+///
+/// The identity (private key) lives at `~/.blu/identity.age` and is not
+/// stored in the vault. Pass it separately for the initial index write.
 pub struct InitVaultParams {
-    /// The age X25519 identity (private key).
+    /// The age X25519 identity (private key), used only to write the
+    /// initial empty index. Not persisted in the vault.
     pub identity: Identity,
     /// The X25519 public key string (age1...).
     pub recipient: String,
     /// The PQ public key string (age1pq...), if available.
     pub pq_recipient: Option<String>,
-    /// Passphrase to encrypt the vault's local identity copy.
-    /// None means no passphrase protection.
-    pub passphrase: Option<String>,
 }
 
 /// Initialize a vault at the given directory.
 ///
 /// Pure logic: creates .blu/, config.toml, KEK store (when PQ is
-/// available), identity file, and empty indexes. No interactive
-/// prompts, no global state reads, no println output.
+/// available), and empty indexes. No interactive prompts, no global
+/// state reads, no println output. The identity is used only to
+/// encrypt the initial empty index; it is not persisted in the vault.
 pub fn init_vault(
     dir: &Path,
     params: InitVaultParams,
@@ -43,20 +45,11 @@ pub fn init_vault(
     let bludir = dir.join(".blu/");
     fs::create_dir_all(&bludir)?;
 
-    // Save the identity to the vault
-    let identity_path = bludir.join(IDENTITY_FILENAME);
-    keys::save_identity(
-        &params.identity,
-        &identity_path,
-        params.passphrase.as_deref(),
-    )?;
-
     // Create config with encryption settings
     let mut cfg = config::Config::default();
     cfg.set_encryption(EncryptionConfig {
         recipient: params.recipient.clone(),
         pq_recipient: params.pq_recipient.clone(),
-        identity_file: IDENTITY_FILENAME.into(),
     });
 
     // Write config file
@@ -105,7 +98,6 @@ pub fn init_vault(
     write_index_file(&index, &bbox, &index_path)?;
 
     Ok(InitVaultResult {
-        identity_path,
         config_path,
         has_kek,
     })
@@ -113,8 +105,6 @@ pub fn init_vault(
 
 /// Result of a successful vault initialization.
 pub struct InitVaultResult {
-    /// Path to the saved identity file.
-    pub identity_path: std::path::PathBuf,
     /// Path to the config file.
     pub config_path: std::path::PathBuf,
     /// Whether a KEK store was created (PQ + X25519).
@@ -194,20 +184,15 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
         );
     };
 
-    // Resolve passphrase (interactive)
-    let passphrase = resolve_passphrase(&args)?;
-
     let params = InitVaultParams {
         identity,
         recipient: recipient_str,
         pq_recipient: pq_recipient_str.clone(),
-        passphrase,
     };
 
     let result = init_vault(&abs_path, params)?;
 
     // Print summary
-    println!("Saving private key to {}", result.identity_path.display());
     println!("Wrote config to {}", result.config_path.display());
     if result.has_kek {
         println!("Created KEK store with PQ + X25519 recipients");
@@ -215,9 +200,6 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     println!("\nInitialized empty blu repository.");
     if pq_recipient_str.is_some() {
         println!("Vault is protected with post-quantum hybrid encryption.");
-    } else {
-        println!("\nIMPORTANT: Back up your private key!");
-        println!("  Key file: {}", result.identity_path.display());
     }
 
     Ok(())
@@ -257,29 +239,6 @@ fn import_key_file(key_file: &str) -> Result<Identity, Box<dyn std::error::Error
         .trim();
     Identity::from_str(key_str)
         .map_err(|e| format!("invalid age key in '{}': {}", key_file, e).into())
-}
-
-/// Resolve passphrase from args (prompt or skip).
-fn resolve_passphrase(args: &InitArgs) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    if args.no_passphrase {
-        println!("Storing key without passphrase protection (--no-passphrase)");
-        return Ok(None);
-    }
-
-    let pass = keys::prompt_passphrase(
-        "Enter passphrase to protect key (empty for no passphrase): ",
-        false,
-    )?;
-    if pass.is_empty() {
-        println!("Warning: storing key without passphrase protection");
-        return Ok(None);
-    }
-
-    let confirm = keys::prompt_passphrase("Confirm passphrase: ", false)?;
-    if pass != confirm {
-        return Err("passphrases do not match".into());
-    }
-    Ok(Some(pass))
 }
 
 #[cfg(test)]
@@ -322,13 +281,11 @@ mod test {
                 identity,
                 recipient: recipient.clone(),
                 pq_recipient: Some(pq_recipient.clone()),
-                passphrase: None,
             },
         )
         .unwrap();
 
         assert!(result.has_kek);
-        assert!(result.identity_path.exists());
         assert!(result.config_path.exists());
 
         // Verify config.toml has both recipients
@@ -373,7 +330,6 @@ mod test {
                 identity,
                 recipient: recipient.clone(),
                 pq_recipient: None,
-                passphrase: None,
             },
         )
         .unwrap();
@@ -393,37 +349,6 @@ mod test {
     }
 
     #[test]
-    fn init_vault_writes_identity_with_passphrase() {
-        let tmp = tempdir().unwrap();
-        let (identity, recipient) = test_x25519_only();
-        let passphrase = "test-passphrase-42";
-
-        init_vault(
-            tmp.path(),
-            InitVaultParams {
-                identity,
-                recipient,
-                pq_recipient: None,
-                passphrase: Some(passphrase.to_string()),
-            },
-        )
-        .unwrap();
-
-        // Loading without passphrase should fail
-        let identity_path = tmp.path().join(".blu").join(IDENTITY_FILENAME);
-        let result = keys::load_identity(&identity_path, None);
-        assert!(result.is_err());
-
-        // Loading with correct passphrase should succeed
-        let loaded = keys::load_identity(&identity_path, Some(passphrase)).unwrap();
-        let (original, _) = test_x25519_only();
-        assert_eq!(
-            loaded.to_public().to_string(),
-            original.to_public().to_string()
-        );
-    }
-
-    #[test]
     fn init_vault_creates_empty_index() {
         let tmp = tempdir().unwrap();
         let (identity, recipient) = test_x25519_only();
@@ -434,7 +359,6 @@ mod test {
                 identity,
                 recipient,
                 pq_recipient: None,
-                passphrase: None,
             },
         )
         .unwrap();
@@ -460,13 +384,12 @@ mod test {
                 identity,
                 recipient: recipient.clone(),
                 pq_recipient: None,
-                passphrase: None,
             },
         )
         .unwrap();
 
         // A second init without PQ (no KEK store) should succeed
-        // because it overwrites config and identity.
+        // because it overwrites config and index.
         let (identity2, _) = test_x25519_only();
         let result = init_vault(
             tmp.path(),
@@ -474,7 +397,6 @@ mod test {
                 identity: identity2,
                 recipient,
                 pq_recipient: None,
-                passphrase: None,
             },
         );
         assert!(result.is_ok());
@@ -482,7 +404,9 @@ mod test {
 
     #[test]
     fn config_backward_compat_no_pq_field() {
-        // Old config.toml without pq_recipient should deserialize fine
+        // Old config.toml without pq_recipient (and with the legacy
+        // identity_file field) should deserialize fine; unknown fields
+        // are silently ignored by serde.
         let toml_str = r#"
 blu_version = "0.5.0"
 
@@ -502,7 +426,6 @@ identity_file = "identity.age"
         cfg.set_encryption(EncryptionConfig {
             recipient: "age1test".to_string(),
             pq_recipient: Some("age1pqtest".to_string()),
-            identity_file: IDENTITY_FILENAME.into(),
         });
 
         let toml_str = toml::to_string_pretty(&cfg).unwrap();
@@ -518,7 +441,6 @@ identity_file = "identity.age"
         cfg.set_encryption(EncryptionConfig {
             recipient: "age1test".to_string(),
             pq_recipient: None,
-            identity_file: IDENTITY_FILENAME.into(),
         });
 
         let toml_str = toml::to_string_pretty(&cfg).unwrap();
@@ -543,7 +465,6 @@ identity_file = "identity.age"
                 identity,
                 recipient,
                 pq_recipient: Some(pq_recipient_str),
-                passphrase: None,
             },
         )
         .unwrap();

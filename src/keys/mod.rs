@@ -22,7 +22,7 @@ mod pq_integration_test;
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use age::secrecy::ExposeSecret;
@@ -33,6 +33,14 @@ use crate::error::{BluError, Result};
 
 /// Default filename for the identity (private key) file
 pub const IDENTITY_FILENAME: &str = "identity.age";
+
+/// Return the canonical path to the global identity file
+/// (`~/.blu/identity.age`).
+pub fn global_identity_path() -> Result<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| BluError::Internal("could not determine home directory".to_string()))?;
+    Ok(home.join(".blu").join(IDENTITY_FILENAME))
+}
 
 /// Generate a new age keypair.
 ///

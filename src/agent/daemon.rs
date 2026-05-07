@@ -222,17 +222,6 @@ fn handle_unlock(
     id: &serde_json::Value,
     params: &serde_json::Value,
 ) -> serde_json::Value {
-    let identity_path = match params.get("identity_path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => {
-            return protocol::error_response(
-                id,
-                protocol::error_code::INVALID_PARAMS,
-                "missing identity_path",
-            );
-        }
-    };
-
     let passphrase = match params.get("passphrase").and_then(|v| v.as_str()) {
         Some(p) => p,
         None => {
@@ -244,7 +233,7 @@ fn handle_unlock(
         }
     };
 
-    match state.unlock(identity_path, passphrase) {
+    match state.unlock(passphrase) {
         Ok(public_key) => protocol::success_response(
             id,
             serde_json::json!({
@@ -712,15 +701,15 @@ mod test {
         );
         assert_eq!(resp["error"]["code"], protocol::error_code::AGENT_LOCKED);
 
-        // Unlock with the test key (plaintext, no passphrase needed)
+        // Unlock with the test key via unlock_with_secret
+        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
-                "method": "unlock",
+                "method": "unlock_with_secret",
                 "params": {
-                    "identity_path": "test/blu_secrets/blu.key",
-                    "passphrase": "unused"
+                    "secret": test_secret
                 },
                 "id": 11
             }),
@@ -786,15 +775,15 @@ mod test {
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Unlock
+        // Unlock via secret key
+        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
         send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
-                "method": "unlock",
+                "method": "unlock_with_secret",
                 "params": {
-                    "identity_path": "test/blu_secrets/blu.key",
-                    "passphrase": "unused"
+                    "secret": test_secret
                 },
                 "id": 1
             }),
@@ -848,15 +837,15 @@ mod test {
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Unlock
+        // Unlock via secret key
+        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
         send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
-                "method": "unlock",
+                "method": "unlock_with_secret",
                 "params": {
-                    "identity_path": "test/blu_secrets/blu.key",
-                    "passphrase": "unused"
+                    "secret": test_secret
                 },
                 "id": 1
             }),

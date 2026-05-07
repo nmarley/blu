@@ -108,7 +108,7 @@ pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result
 ///
 /// Connects to the agent (auto-starting if needed), checks status,
 /// prompts for passphrase if locked, and returns an agent-backed BlackBox.
-fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
+fn try_agent_blackbox(_cfg: &Config) -> Result<BlackBox> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
 
@@ -119,12 +119,8 @@ fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
         return Ok(BlackBox::from_agent(client));
     }
 
-    // Agent is running but locked; we need to unlock it
-    let identity_path = cfg.identity_path()?;
-    let identity_str = identity_path.to_string_lossy().to_string();
-
-    // Try without passphrase first (unencrypted key file)
-    match client.unlock(&identity_str, "") {
+    // Agent is running but locked; try without passphrase first
+    match client.unlock("") {
         Ok(_) => return Ok(BlackBox::from_agent(client)),
         Err(BluError::WrongPassphrase) | Err(BluError::Internal(_)) => {
             // Key is passphrase-protected, need to prompt
@@ -133,25 +129,24 @@ fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
     }
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
-    client.unlock(&identity_str, &pass)?;
+    client.unlock(&pass)?;
     Ok(BlackBox::from_agent(client))
 }
 
 /// Load a BlackBox via the agent using an explicit passphrase.
-fn load_blackbox_via_agent(cfg: &Config, passphrase: &str) -> Result<BlackBox> {
+fn load_blackbox_via_agent(_cfg: &Config, passphrase: &str) -> Result<BlackBox> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
 
-    let identity_path = cfg.identity_path()?;
-    let identity_str = identity_path.to_string_lossy().to_string();
-
-    client.unlock(&identity_str, passphrase)?;
+    client.unlock(passphrase)?;
     Ok(BlackBox::from_agent(client))
 }
 
 /// Load a BlackBox in-process (the old direct path, no agent).
-fn load_blackbox_inprocess(cfg: &Config, passphrase: Option<&str>) -> Result<BlackBox> {
-    cfg.load_blackbox(passphrase)
+fn load_blackbox_inprocess(_cfg: &Config, passphrase: Option<&str>) -> Result<BlackBox> {
+    let identity_path = keys::global_identity_path()?;
+    let identity = keys::load_identity(&identity_path, passphrase)?;
+    Ok(keys::blackbox_from_identity(identity))
 }
 
 /// Load just the config (for commands that don't need encryption).

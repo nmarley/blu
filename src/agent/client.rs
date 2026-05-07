@@ -131,14 +131,14 @@ impl AgentClient {
         self.request("status", serde_json::json!({}))
     }
 
-    /// Unlock the agent with a passphrase and identity file path.
+    /// Unlock the agent with a passphrase.
     ///
-    /// Returns the public key on success.
-    pub fn unlock(&self, identity_path: &str, passphrase: &str) -> Result<String> {
+    /// The agent resolves the global identity file (`~/.blu/identity.age`)
+    /// itself. Returns the public key on success.
+    pub fn unlock(&self, passphrase: &str) -> Result<String> {
         let resp = self.request(
             "unlock",
             serde_json::json!({
-                "identity_path": identity_path,
                 "passphrase": passphrase,
             }),
         )?;
