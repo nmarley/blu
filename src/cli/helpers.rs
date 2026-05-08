@@ -87,6 +87,7 @@ pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result
     // Try the agent path
     match try_agent_blackbox(cfg) {
         Ok(bbox) => return Ok(bbox),
+        Err(BluError::WrongPassphrase) => return Err(BluError::WrongPassphrase),
         Err(e) => {
             info!("agent path failed, falling back to in-process: {}", e);
         }
