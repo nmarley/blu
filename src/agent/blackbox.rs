@@ -33,7 +33,8 @@ mod test {
         }
 
         let client = AgentClient::with_paths(paths.clone());
-        client.unlock("test/blu_secrets/blu.key", "unused").unwrap();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        client.unlock_with_secret(secret).unwrap();
 
         let bbox = BlackBox::from_agent(client);
 

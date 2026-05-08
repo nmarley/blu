@@ -97,11 +97,10 @@ blu search passport
 The configuration is stored in `.blu/config.toml`:
 
 ```toml
-blu_version = "0.4.4"
+blu_version = "0.5.0"
 
 [encryption]
 recipient = "age1..."  # Your public key
-identity_file = "identity.age"
 
 [backend]
 type = "local"
@@ -131,7 +130,7 @@ AWS credentials are loaded from the environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRE
 
 ## Security
 
-- **Key Management**: Your private key is stored locally in `.blu/identity.age`. Back it up securely! Without it, your data cannot be decrypted.
+- **Key Management**: Your private key lives at `~/.blu/identity.age` (one copy, shared across all vaults). Back it up securely! Without it, your data cannot be decrypted.
 - **Passphrase Protection**: By default, your private key is encrypted with a passphrase. Use `--no-passphrase` only for automation scenarios.
 - **No Key Escrow**: blu never stores or transmits your keys. You are solely responsible for key backup.
 

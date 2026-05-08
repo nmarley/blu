@@ -605,11 +605,9 @@ Key directories and files:
 
 ### Per-Vault (`.blu/`)
 
-`.blu/config.toml` contains backend config, encryption settings
-(recipient, pq_recipient, identity_file path).
-
-`.blu/identity.age` is the vault's local copy of the user's age
-identity (optionally passphrase-encrypted).
+`.blu/config.toml` contains backend config and encryption settings
+(recipient, pq_recipient). The identity is not stored per-vault;
+see Global below.
 
 `.blu/keys/` contains the KEK store: `kek.toml` (metadata with
 version history and authorized users) and `kek_vN/wrapped.age`

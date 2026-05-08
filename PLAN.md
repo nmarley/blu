@@ -133,8 +133,7 @@ The JSON payload follows JSON-RPC 2.0. All methods:
 {
   "jsonrpc": "2.0", "method": "unlock",
   "params": {
-    "passphrase": "...",
-    "identity_path": "/path/to/.blu/identity.age"
+    "passphrase": "..."
   },
   "id": 2
 }

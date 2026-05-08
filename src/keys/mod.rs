@@ -1,8 +1,8 @@
 //! Key management for blu.
 //!
 //! This module handles loading, storing, and managing age encryption keys.
-//! Keys are stored in the `.blu/` directory, with the private key optionally
-//! encrypted with a passphrase.
+//! The private key lives at `~/.blu/identity.age` (optionally passphrase-
+//! encrypted) and is resolved at runtime by [`global_identity_path`].
 
 /// Data Encryption Key (DEK) generation, wrapping, and data encryption.
 pub mod dek;
@@ -31,8 +31,8 @@ use age::x25519::{Identity, Recipient};
 use crate::age::{passphrase_decrypt, passphrase_encrypt, BlackBox};
 use crate::error::{BluError, Result};
 
-/// Default filename for the identity (private key) file
-pub const IDENTITY_FILENAME: &str = "identity.age";
+/// Default filename for the identity (private key) file.
+const IDENTITY_FILENAME: &str = "identity.age";
 
 /// Return the canonical path to the global identity file
 /// (`~/.blu/identity.age`).

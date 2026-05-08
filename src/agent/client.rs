@@ -382,7 +382,8 @@ mod test {
     fn client_unlock_lock_cycle() {
         let (client, _paths, handle) = start_test_client();
 
-        let pubkey = client.unlock("test/blu_secrets/blu.key", "unused").unwrap();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        let pubkey = client.unlock_with_secret(secret).unwrap();
         assert!(pubkey.starts_with("age1"));
 
         let resp = client.status().unwrap();
@@ -400,7 +401,8 @@ mod test {
     #[test]
     fn client_encrypt_decrypt() {
         let (client, _paths, handle) = start_test_client();
-        client.unlock("test/blu_secrets/blu.key", "unused").unwrap();
+        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        client.unlock_with_secret(secret).unwrap();
 
         let plaintext = b"agent encrypt/decrypt test data";
         let ciphertext = client.encrypt(plaintext).unwrap();

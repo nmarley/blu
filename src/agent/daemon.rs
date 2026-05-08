@@ -933,37 +933,36 @@ mod test {
     }
 
     #[test]
-    fn daemon_unlock_bad_passphrase() {
+    fn daemon_unlock_missing_params() {
         let tmp = tempdir().unwrap();
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Try to unlock with a nonexistent key file
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "unlock",
-                "params": {
-                    "identity_path": "/nonexistent/path/identity.age",
-                    "passphrase": "test"
-                },
-                "id": 1
-            }),
-        );
-        assert_eq!(resp["error"]["code"], protocol::error_code::KEY_NOT_FOUND);
-
-        // Missing params
+        // unlock RPC with missing passphrase -> INVALID_PARAMS
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock",
                 "params": {},
-                "id": 2
+                "id": 1
             }),
         );
         assert_eq!(resp["error"]["code"], protocol::error_code::INVALID_PARAMS);
+
+        // unlock_with_secret with invalid secret -> CRYPTO_ERROR
+        let resp = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock_with_secret",
+                "params": {
+                    "secret": "not-a-valid-age-secret-key"
+                },
+                "id": 2
+            }),
+        );
+        assert_eq!(resp["error"]["code"], protocol::error_code::CRYPTO_ERROR);
 
         // Shutdown
         send_request(

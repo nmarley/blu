@@ -11,7 +11,7 @@ use crate::cli::{
     check_outfile_writable, global_identity_age_path, load_global_identity, write_index_file,
 };
 use crate::config::{self, EncryptionConfig};
-use crate::keys::{self, IDENTITY_FILENAME};
+use crate::keys;
 
 /// Resolved inputs for vault initialization.
 ///
