@@ -39,7 +39,7 @@ pub struct KeyID {
 ///
 /// The identity (private key) lives at `~/.blu/identity.age` and is
 /// resolved at runtime; it is not stored in the vault config.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq, Default)]
 pub struct EncryptionConfig {
     /// The public key (recipient) used to encrypt data.
     /// Format: age1...
@@ -49,15 +49,6 @@ pub struct EncryptionConfig {
     /// None for legacy vaults or X25519-only key imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pq_recipient: Option<String>,
-}
-
-impl Default for EncryptionConfig {
-    fn default() -> Self {
-        Self {
-            recipient: String::new(),
-            pq_recipient: None,
-        }
-    }
 }
 
 /// Config is the configuration for blu. It is stored in the .blu directory in

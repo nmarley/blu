@@ -101,10 +101,13 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
                     .map_err(|e| BluError::Internal(format!("stream config: {}", e)))?;
 
                 match handle_connection(&mut stream, &mut state, &running) {
-                    Ok(()) => {
-                        // Record activity to reset the idle timer
+                    Ok(true) => {
+                        // Only reset the idle timer for real activity
+                        // (crypto ops, unlock). Passive queries like
+                        // status do not count.
                         state.touch();
                     }
+                    Ok(false) => {}
                     Err(e) => {
                         warn!("error handling connection: {}", e);
                     }
@@ -126,11 +129,13 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
 }
 
 /// Handle a single client connection: read request, dispatch, write response.
+/// Returns `Ok(true)` when the method is a real activity that should reset
+/// the idle timer, `Ok(false)` for passive/lifecycle methods.
 fn handle_connection(
     stream: &mut std::os::unix::net::UnixStream,
     state: &mut AgentState,
     running: &Arc<AtomicBool>,
-) -> Result<()> {
+) -> Result<bool> {
     // Read 4-byte big-endian length prefix
     let mut len_buf = [0u8; 4];
     stream
@@ -159,7 +164,10 @@ fn handle_connection(
         .cloned()
         .unwrap_or(serde_json::json!({}));
 
-    let response = match Method::from_str(method_str) {
+    let method = Method::from_str(method_str);
+    let is_activity = method.as_ref().is_some_and(Method::is_activity);
+
+    let response = match method {
         Some(Method::Status) => handle_status(state, &id),
         Some(Method::Unlock) => handle_unlock(state, &id, &params),
         Some(Method::Lock) => handle_lock(state, &id),
@@ -180,7 +188,7 @@ fn handle_connection(
     };
 
     write_response(stream, &response)?;
-    Ok(())
+    Ok(is_activity)
 }
 
 fn handle_status(state: &AgentState, id: &serde_json::Value) -> serde_json::Value {

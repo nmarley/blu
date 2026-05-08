@@ -30,6 +30,21 @@ impl Method {
             _ => None,
         }
     }
+
+    /// Whether this method represents real cryptographic activity that
+    /// should reset the agent's idle timer.  Passive or lifecycle
+    /// operations (status, lock, shutdown) do not count.
+    pub fn is_activity(&self) -> bool {
+        matches!(
+            self,
+            Self::Encrypt
+                | Self::Decrypt
+                | Self::WrapDek
+                | Self::UnwrapDek
+                | Self::Unlock
+                | Self::UnlockWithSecret
+        )
+    }
 }
 
 /// JSON-RPC 2.0 error codes used by the agent.
