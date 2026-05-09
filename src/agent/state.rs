@@ -1,11 +1,11 @@
-//! Agent in-memory state: holds the decrypted identity and BlackBox.
+//! Agent in-memory state: holds the decrypted PQ hybrid seed and
+//! cached KEK.
 //!
 //! All secret material is zeroized on drop and when the agent is
-//! locked. The BlackBox is constructed from the decrypted identity
-//! and provides encrypt/decrypt operations.
+//! locked.
 //!
-//! When a vault's KEK is loaded, the agent can also perform DEK
-//! wrap/unwrap operations without exposing the KEK to CLI processes.
+//! When a vault's KEK is loaded, the agent can perform DEK wrap/unwrap
+//! operations without exposing the KEK to CLI processes.
 //!
 //! Timeout tracking: the state records when the agent was unlocked
 //! and when the last RPC activity occurred. The daemon polls
@@ -13,16 +13,10 @@
 //!
 //! Memory locking: on unlock, secret buffers are mlocked to prevent
 //! the OS from paging them to swap. On lock, they are munlocked
-//! before being zeroized. The `age::x25519::Identity` internal
-//! Curve25519 scalar cannot be mlocked because it is owned by the
-//! `age` crate and does not expose its backing memory.
+//! before being zeroized.
 
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 
-use zeroize::Zeroize;
-
-use crate::age::BlackBox;
 use crate::agent::config::AgentConfig;
 use crate::agent::memlock;
 use crate::error::{BluError, Result};
@@ -32,18 +26,17 @@ use crate::keys::hybrid_kem::HybridSeed;
 use crate::keys::kek::Kek;
 use crate::keys::pq::PqIdentity;
 
-/// The agent's mutable state. Holds an optional decrypted identity.
+/// The agent's mutable state.
+///
+/// Holds the PQ hybrid seed (the operational secret for unwrapping
+/// KEKs) and a cached KEK for the current vault.
 pub struct AgentState {
-    /// The decrypted secret key string (AGE-SECRET-KEY-...).
-    /// Zeroized when locked or dropped.
-    secret_key: Option<SecretString>,
-    /// The BlackBox built from the decrypted identity.
-    blackbox: Option<BlackBox>,
-    /// The public key string (age1...).
-    public_key: Option<String>,
-
-    /// Post-quantum identity seed (zeroized on lock/drop).
+    /// Post-quantum hybrid seed (zeroized on lock/drop).
+    /// This is the only identity secret the agent holds.
     pq_seed: Option<HybridSeed>,
+
+    /// The PQ public key string (age1pq...) for display.
+    public_key: Option<String>,
 
     /// Cached KEK for the current vault (zeroized on lock/drop).
     kek: Option<Kek>,
@@ -58,23 +51,10 @@ pub struct AgentState {
     /// Timeout configuration.
     config: AgentConfig,
 
-    /// Whether the secret_key heap buffer is currently mlocked.
-    secret_key_mlocked: bool,
     /// Whether the KEK bytes are currently mlocked.
     kek_mlocked: bool,
     /// Whether the PQ seed bytes are currently mlocked.
     pq_seed_mlocked: bool,
-}
-
-/// A string that zeroizes its contents on drop.
-struct SecretString {
-    inner: String,
-}
-
-impl Drop for SecretString {
-    fn drop(&mut self) {
-        self.inner.zeroize();
-    }
 }
 
 impl AgentState {
@@ -82,16 +62,13 @@ impl AgentState {
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
-            secret_key: None,
-            blackbox: None,
-            public_key: None,
             pq_seed: None,
+            public_key: None,
             kek: None,
             kek_version: 0,
             unlocked_at: None,
             last_activity: None,
             config: AgentConfig::default(),
-            secret_key_mlocked: false,
             kek_mlocked: false,
             pq_seed_mlocked: false,
         }
@@ -100,16 +77,13 @@ impl AgentState {
     /// Create a new locked agent state with the given config.
     pub fn with_config(config: AgentConfig) -> Self {
         Self {
-            secret_key: None,
-            blackbox: None,
-            public_key: None,
             pq_seed: None,
+            public_key: None,
             kek: None,
             kek_version: 0,
             unlocked_at: None,
             last_activity: None,
             config,
-            secret_key_mlocked: false,
             kek_mlocked: false,
             pq_seed_mlocked: false,
         }
@@ -117,7 +91,7 @@ impl AgentState {
 
     /// Whether the agent holds a decrypted identity.
     pub fn is_unlocked(&self) -> bool {
-        self.blackbox.is_some()
+        self.pq_seed.is_some()
     }
 
     /// Whether the agent has a cached KEK.
@@ -208,28 +182,21 @@ impl AgentState {
 
     /// Unlock the agent by decrypting the global identity file
     /// (`~/.blu/identity.age`) with the given passphrase.
+    ///
+    /// The identity file contains a PQ hybrid seed encoded as a
+    /// bech32 `AGE-SECRET-KEY-PQ-` string, optionally encrypted
+    /// with age scrypt.
     pub fn unlock(&mut self, passphrase: &str) -> Result<String> {
         let identity_path = keys::global_identity_path()?;
-        let identity = keys::load_identity(&identity_path, Some(passphrase))?;
+        let seed = keys::load_pq_seed(&identity_path, Some(passphrase))?;
 
-        // Extract the secret key string
-        let identity_secret = identity.to_string();
-        let secret_str = age::secrecy::ExposeSecret::expose_secret(&identity_secret);
-        let secret_owned = secret_str.to_string();
+        let pq_identity = PqIdentity::new(seed.clone());
+        let public_key = pq_identity.to_public().to_string();
 
-        // Derive the public key
-        let public_key = identity.to_public().to_string();
-
-        // Build the BlackBox
-        let bbox = keys::blackbox_from_identity(identity);
-
-        self.secret_key = Some(SecretString {
-            inner: secret_owned,
-        });
-        self.blackbox = Some(bbox);
+        self.pq_seed = Some(seed);
         self.public_key = Some(public_key.clone());
 
-        self.mlock_secret_key();
+        self.mlock_pq_seed();
 
         let now = Instant::now();
         self.unlocked_at = Some(now);
@@ -238,25 +205,18 @@ impl AgentState {
         Ok(public_key)
     }
 
-    /// Unlock the agent with a raw secret key string (AGE-SECRET-KEY-...).
+    /// Unlock the agent with a PQ seed directly.
     ///
-    /// Used by the biometric unlock path: the CLI derives the identity
-    /// from the seed and sends the secret key directly, bypassing the
-    /// identity file.
-    pub fn unlock_with_secret(&mut self, secret_key_str: &str) -> Result<String> {
-        let identity = age::x25519::Identity::from_str(secret_key_str)
-            .map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?;
+    /// Used by the biometric unlock path: the CLI recovers the BIP39
+    /// Seed via Touch ID, derives the PQ seed, and sends it here.
+    pub fn unlock_with_pq_seed(&mut self, seed: HybridSeed) -> Result<String> {
+        let pq_identity = PqIdentity::new(seed.clone());
+        let public_key = pq_identity.to_public().to_string();
 
-        let public_key = identity.to_public().to_string();
-        let bbox = keys::blackbox_from_identity(identity);
-
-        self.secret_key = Some(SecretString {
-            inner: secret_key_str.to_string(),
-        });
-        self.blackbox = Some(bbox);
+        self.pq_seed = Some(seed);
         self.public_key = Some(public_key.clone());
 
-        self.mlock_secret_key();
+        self.mlock_pq_seed();
 
         let now = Instant::now();
         self.unlocked_at = Some(now);
@@ -267,9 +227,9 @@ impl AgentState {
 
     /// Set the PQ seed for this agent session.
     ///
-    /// Called after unlock when the seed is available (from BIP39
-    /// derivation or biometric recovery). The PQ seed enables
-    /// decryption of mlkem768x25519-wrapped KEKs.
+    /// Called after unlock when the seed is provided separately
+    /// (e.g., via the biometric path which sends the PQ seed
+    /// alongside the X25519 key for backward compat).
     pub fn set_pq_seed(&mut self, seed: HybridSeed) {
         self.pq_seed = Some(seed);
         self.mlock_pq_seed();
@@ -282,17 +242,12 @@ impl AgentState {
 
     /// Lock the agent: munlock and zeroize all secret material.
     pub fn lock(&mut self) {
-        // munlock before drop so the pages are unlocked before zeroize
-        self.munlock_secret_key();
         self.munlock_pq_seed();
         self.munlock_kek();
 
-        // SecretString::drop will zeroize the key
-        self.secret_key.take();
-        self.blackbox.take();
-        self.public_key.take();
         // HybridSeed::drop will zeroize the PQ seed (ZeroizeOnDrop)
         self.pq_seed.take();
+        self.public_key.take();
         // Kek::drop will zeroize the KEK (ZeroizeOnDrop)
         self.kek.take();
         self.kek_version = 0;
@@ -303,28 +258,18 @@ impl AgentState {
     /// Load and cache a vault's KEK.
     ///
     /// The `kek_dir` is the path to the vault's `.blu/` directory
-    /// (the KekStore lives under `.blu/keys/`). The agent provides
-    /// both its PQ identity (for new mlkem768x25519-wrapped KEKs) and
-    /// its X25519 identity (for old X25519-wrapped KEKs) so that
-    /// either format can be decrypted.
+    /// (the KekStore lives under `.blu/keys/`). The agent uses its
+    /// PQ identity to unwrap the KEK.
     pub fn load_kek(&mut self, kek_dir: &str) -> Result<u16> {
-        let identity_str = self
-            .secret_key
+        let seed = self
+            .pq_seed
             .as_ref()
             .ok_or(BluError::Internal("agent is locked".into()))?;
 
         let store = keys::kek::KekStore::new(std::path::Path::new(kek_dir));
 
-        // Build a list of identities to try: PQ first, then X25519
-        let pq_identity = self.pq_seed.as_ref().map(|s| PqIdentity::new(s.clone()));
-        let x25519_identity = age::x25519::Identity::from_str(&identity_str.inner)
-            .map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?;
-
-        let mut identities: Vec<&dyn age::Identity> = Vec::new();
-        if let Some(ref pq_id) = pq_identity {
-            identities.push(pq_id as &dyn age::Identity);
-        }
-        identities.push(&x25519_identity as &dyn age::Identity);
+        let pq_identity = PqIdentity::new(seed.clone());
+        let identities: Vec<&dyn age::Identity> = vec![&pq_identity as &dyn age::Identity];
 
         let (kek, version) = store.unwrap_current_kek_with(&identities)?;
 
@@ -342,28 +287,6 @@ impl AgentState {
         self.kek = Some(kek);
         self.kek_version = version;
         self.mlock_kek();
-    }
-
-    /// Lock the secret key's heap buffer into physical memory.
-    fn mlock_secret_key(&mut self) {
-        if let Some(ref sk) = self.secret_key {
-            let ptr = sk.inner.as_ptr();
-            let len = sk.inner.capacity();
-            if memlock::mlock_slice(ptr, len) {
-                memlock::mark_dontdump(ptr, len);
-                self.secret_key_mlocked = true;
-            }
-        }
-    }
-
-    /// Unlock the secret key's heap buffer from physical memory.
-    fn munlock_secret_key(&mut self) {
-        if self.secret_key_mlocked {
-            if let Some(ref sk) = self.secret_key {
-                memlock::munlock_slice(sk.inner.as_ptr(), sk.inner.capacity());
-            }
-            self.secret_key_mlocked = false;
-        }
     }
 
     /// Lock the PQ seed bytes into physical memory.

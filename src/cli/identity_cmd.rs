@@ -18,15 +18,12 @@ use crate::keys::mnemonic;
 
 /// Identity metadata, stored in `~/.blu/identity.toml`.
 ///
-/// This file is safe to share; it contains only public keys
+/// This file is safe to share; it contains only the public key
 /// and creation date.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdentityMeta {
-    /// The age X25519 public key (age1...).
-    pub public_key: String,
     /// The post-quantum hybrid public key (age1pq...).
-    #[serde(default)]
-    pub pq_public_key: Option<String>,
+    pub pq_public_key: String,
     /// ISO 8601 timestamp of when the identity was created.
     pub created: String,
     /// Whether biometric unlock was set up.
@@ -95,10 +92,9 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
         "Enter mnemonic passphrase (optional \"25th word\", press Enter to skip): ",
     )?;
 
-    // Derive identity (X25519 + PQ)
+    // Derive keys from BIP39 seed
     let seed = mnemonic::mnemonic_to_seed(&m, &mnemonic_pass);
-    let identity = mnemonic::derive_x25519_identity(&seed)?;
-    let public_key = mnemonic::public_key_from_identity(&identity);
+    let pq_seed = mnemonic::derive_pq_seed(&seed)?;
     let pq_recipient = mnemonic::derive_pq_recipient(&seed)?;
     let pq_public_key = pq_recipient.to_string();
 
@@ -136,18 +132,17 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
         return Err("aborted (mnemonic not confirmed)".into());
     }
 
-    // Save identity file
-    save_identity_age_file(&identity, &age_path, args.no_passphrase)?;
+    // Save PQ seed to identity file
+    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase)?;
 
     // Set up biometric unlock if available
     let biometric_ok = setup_biometric_if_available(&seed);
 
     // Save metadata
-    save_identity_meta(&public_key, Some(&pq_public_key), biometric_ok, &toml_path)?;
+    save_identity_meta(&pq_public_key, biometric_ok, &toml_path)?;
 
     println!();
     println!("Identity created.");
-    println!("Public key:    {}", public_key);
     println!("PQ public key: {}...", &pq_public_key[..40]);
     if biometric_ok {
         println!("Touch ID:      enabled");
@@ -178,25 +173,23 @@ fn identity_recover(args: IdentityRecoverArgs) -> Result<(), Box<dyn std::error:
     let mnemonic_pass =
         prompt_optional_passphrase("Enter mnemonic passphrase (press Enter if none): ")?;
 
-    // Derive identity (X25519 + PQ)
+    // Derive keys from BIP39 seed
     let seed = mnemonic::mnemonic_to_seed(&m, &mnemonic_pass);
-    let identity = mnemonic::derive_x25519_identity(&seed)?;
-    let public_key = mnemonic::public_key_from_identity(&identity);
+    let pq_seed = mnemonic::derive_pq_seed(&seed)?;
     let pq_recipient = mnemonic::derive_pq_recipient(&seed)?;
     let pq_public_key = pq_recipient.to_string();
 
-    // Save identity file
-    save_identity_age_file(&identity, &age_path, args.no_passphrase)?;
+    // Save PQ seed to identity file
+    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase)?;
 
     // Set up biometric unlock if available
     let biometric_ok = setup_biometric_if_available(&seed);
 
     // Save metadata
-    save_identity_meta(&public_key, Some(&pq_public_key), biometric_ok, &toml_path)?;
+    save_identity_meta(&pq_public_key, biometric_ok, &toml_path)?;
 
     println!();
     println!("Identity recovered.");
-    println!("Public key:    {}", public_key);
     println!("PQ public key: {}...", &pq_public_key[..40]);
     if biometric_ok {
         println!("Touch ID:      enabled");
@@ -215,12 +208,7 @@ fn identity_show() -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(&toml_path)?;
     let meta: IdentityMeta = toml::from_str(&content)?;
 
-    println!("Public key:    {}", meta.public_key);
-    if let Some(ref pq_pk) = meta.pq_public_key {
-        println!("PQ public key: {}...", &pq_pk[..40.min(pq_pk.len())]);
-    } else {
-        println!("PQ public key: not configured (re-run identity init or recover)");
-    }
+    println!("PQ public key: {}...", &meta.pq_public_key[..40.min(meta.pq_public_key.len())]);
     println!("Created:       {}", meta.created);
     if meta.biometric {
         let status = if biometric::has_biometric_identity() {
@@ -228,17 +216,17 @@ fn identity_show() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             "configured but identity.enc missing"
         };
-        println!("Touch ID:   {}", status);
+        println!("Touch ID:      {}", status);
     } else {
-        println!("Touch ID:   not configured");
+        println!("Touch ID:      not configured");
     }
 
     Ok(())
 }
 
-/// Save the age identity file (optionally passphrase-encrypted).
-fn save_identity_age_file(
-    identity: &age::x25519::Identity,
+/// Save the PQ seed to the identity file (optionally passphrase-encrypted).
+fn save_pq_seed_file(
+    seed: &keys::hybrid_kem::HybridSeed,
     age_path: &PathBuf,
     no_passphrase: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -253,20 +241,18 @@ fn save_identity_age_file(
         }
     };
 
-    keys::save_identity(identity, age_path, passphrase.as_deref())?;
+    keys::save_pq_seed(seed, age_path, passphrase.as_deref())?;
     Ok(())
 }
 
 /// Save identity metadata to `identity.toml`.
 fn save_identity_meta(
-    public_key: &str,
-    pq_public_key: Option<&str>,
+    pq_public_key: &str,
     biometric_enabled: bool,
     toml_path: &PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let meta = IdentityMeta {
-        public_key: public_key.to_string(),
-        pq_public_key: pq_public_key.map(|s| s.to_string()),
+        pq_public_key: pq_public_key.to_string(),
         created: Utc::now().to_rfc3339(),
         biometric: biometric_enabled,
     };

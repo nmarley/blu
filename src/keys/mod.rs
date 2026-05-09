@@ -1,8 +1,9 @@
 //! Key management for blu.
 //!
-//! This module handles loading, storing, and managing age encryption keys.
-//! The private key lives at `~/.blu/identity.age` (optionally passphrase-
-//! encrypted) and is resolved at runtime by [`global_identity_path`].
+//! This module handles loading, storing, and managing encryption keys.
+//! The PQ hybrid seed lives at `~/.blu/identity.age` (optionally
+//! passphrase-encrypted via age scrypt) and is resolved at runtime by
+//! [`global_identity_path`].
 
 /// Data Encryption Key (DEK) generation, wrapping, and data encryption.
 pub mod dek;
@@ -23,13 +24,11 @@ mod pq_integration_test;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
-use age::secrecy::ExposeSecret;
-use age::x25519::{Identity, Recipient};
-
-use crate::age::{passphrase_decrypt, passphrase_encrypt, BlackBox};
+use crate::age::{passphrase_decrypt, passphrase_encrypt};
 use crate::error::{BluError, Result};
+use crate::keys::hybrid_kem::HybridSeed;
+use crate::keys::pq::{parse_pq_identity, PqIdentity};
 
 /// Default filename for the identity (private key) file.
 const IDENTITY_FILENAME: &str = "identity.age";
@@ -42,27 +41,20 @@ pub fn global_identity_path() -> Result<PathBuf> {
     Ok(home.join(".blu").join(IDENTITY_FILENAME))
 }
 
-/// Generate a new age keypair.
+/// Save a PQ hybrid seed to a file, optionally encrypted with a
+/// passphrase.
 ///
-/// Returns the identity (private key) and recipient (public key).
-pub fn generate_keypair() -> (Identity, Recipient) {
-    let identity = Identity::generate();
-    let recipient = identity.to_public();
-    (identity, recipient)
-}
-
-/// Save an identity to a file, optionally encrypted with a passphrase.
-///
-/// If passphrase is Some, the identity is encrypted before saving.
-/// If passphrase is None, the identity is saved in plaintext (not recommended).
-pub fn save_identity<P: AsRef<Path>>(
-    identity: &Identity,
+/// The seed is bech32-encoded with the `AGE-SECRET-KEY-PQ-` HRP.
+/// When a passphrase is provided, the encoded string is encrypted
+/// using age's scrypt recipient before writing.
+pub fn save_pq_seed<P: AsRef<Path>>(
+    seed: &HybridSeed,
     path: P,
     passphrase: Option<&str>,
 ) -> Result<()> {
-    let identity_secret = identity.to_string();
-    let identity_str = identity_secret.expose_secret();
-    let bytes = identity_str.as_bytes();
+    let identity = PqIdentity::new(seed.clone());
+    let encoded = identity.to_bech32();
+    let bytes = encoded.as_bytes();
 
     let data = match passphrase {
         Some(pass) => passphrase_encrypt(bytes, pass)
@@ -70,7 +62,6 @@ pub fn save_identity<P: AsRef<Path>>(
         None => bytes.to_vec(),
     };
 
-    // Create parent directories if needed
     if let Some(parent) = path.as_ref().parent() {
         fs::create_dir_all(parent)?;
     }
@@ -79,10 +70,13 @@ pub fn save_identity<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Load an identity from a file, decrypting if necessary.
+/// Load a PQ hybrid seed from a file, decrypting if necessary.
 ///
-/// If the file is encrypted, a passphrase must be provided.
-pub fn load_identity<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Result<Identity> {
+/// Expects the file to contain a bech32-encoded PQ identity string
+/// (`AGE-SECRET-KEY-PQ-...`), optionally wrapped in age scrypt
+/// encryption. Returns an error if the file contains a legacy
+/// `AGE-SECRET-KEY-` (X25519) identity.
+pub fn load_pq_seed<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Result<HybridSeed> {
     let data = fs::read(&path).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound {
             BluError::KeyFileNotFound {
@@ -93,10 +87,9 @@ pub fn load_identity<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Resul
         }
     })?;
 
-    // Try to detect if the file is encrypted (age files start with "age-encryption.org")
     let is_encrypted = data.starts_with(b"age-encryption.org");
 
-    let identity_str = if is_encrypted {
+    let content = if is_encrypted {
         let pass = passphrase.ok_or(BluError::PassphraseRequired)?;
         let decrypted = passphrase_decrypt(&data, pass).map_err(|_| BluError::WrongPassphrase)?;
         String::from_utf8(decrypted).map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?
@@ -104,22 +97,17 @@ pub fn load_identity<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Resul
         String::from_utf8(data).map_err(|e| BluError::InvalidKeyFormat(e.to_string()))?
     };
 
-    // Parse the identity string (handle the AGE-SECRET-KEY-... format)
-    let identity_str = identity_str.trim();
-    Identity::from_str(identity_str).map_err(|e| BluError::InvalidKeyFormat(e.to_string()))
-}
+    let content = content.trim();
 
-/// Parse a recipient (public key) from a string.
-pub fn parse_recipient(s: &str) -> Result<Recipient> {
-    s.parse()
-        .map_err(|_| BluError::InvalidKeyFormat(format!("invalid recipient: {}", s)))
-}
+    if content.starts_with("AGE-SECRET-KEY-1") {
+        return Err(BluError::InvalidKeyFormat(
+            "legacy X25519 identity detected; run 'blu identity init' to create a PQ identity"
+                .into(),
+        ));
+    }
 
-/// Create a BlackBox from an identity.
-pub fn blackbox_from_identity(identity: Identity) -> BlackBox {
-    let identity_secret = identity.to_string();
-    let identity_str = identity_secret.expose_secret();
-    BlackBox::new(&[identity_str])
+    let identity = parse_pq_identity(content)?;
+    Ok(identity.seed().clone())
 }
 
 /// Prompt for a passphrase on stdin with hidden input.
@@ -146,58 +134,56 @@ mod test {
     use super::*;
     use tempfile::tempdir;
 
+    fn test_seed() -> HybridSeed {
+        HybridSeed::new([42u8; 32])
+    }
+
     #[test]
-    fn generate_and_save_load_plaintext() {
+    fn save_load_pq_seed_plaintext() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.key");
 
-        let (identity, _recipient) = generate_keypair();
-        save_identity(&identity, &path, None).unwrap();
+        let seed = test_seed();
+        save_pq_seed(&seed, &path, None).unwrap();
 
-        let loaded = load_identity(&path, None).unwrap();
-        assert_eq!(
-            identity.to_string().expose_secret(),
-            loaded.to_string().expose_secret()
-        );
+        let loaded = load_pq_seed(&path, None).unwrap();
+        assert_eq!(seed.as_bytes(), loaded.as_bytes());
     }
 
     #[test]
     #[ignore] // slow due to scrypt
-    fn generate_and_save_load_encrypted() {
+    fn save_load_pq_seed_encrypted() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test.key");
         let passphrase = "test-passphrase-123";
 
-        let (identity, _recipient) = generate_keypair();
-        save_identity(&identity, &path, Some(passphrase)).unwrap();
+        let seed = test_seed();
+        save_pq_seed(&seed, &path, Some(passphrase)).unwrap();
 
         // Should fail without passphrase
-        let result = load_identity(&path, None);
+        let result = load_pq_seed(&path, None);
         assert!(result.is_err());
 
         // Should fail with wrong passphrase
-        let result = load_identity(&path, Some("wrong"));
+        let result = load_pq_seed(&path, Some("wrong"));
         assert!(result.is_err());
 
         // Should succeed with correct passphrase
-        let loaded = load_identity(&path, Some(passphrase)).unwrap();
-        assert_eq!(
-            identity.to_string().expose_secret(),
-            loaded.to_string().expose_secret()
-        );
+        let loaded = load_pq_seed(&path, Some(passphrase)).unwrap();
+        assert_eq!(seed.as_bytes(), loaded.as_bytes());
     }
 
     #[test]
-    fn parse_recipient_valid() {
-        // A valid age recipient (generated for test)
-        let pubkey = "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p";
-        let result = parse_recipient(pubkey);
-        assert!(result.is_ok());
-    }
+    fn load_legacy_x25519_identity_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.key");
 
-    #[test]
-    fn parse_recipient_invalid() {
-        let result = parse_recipient("not-a-valid-key");
+        // Write a legacy AGE-SECRET-KEY format
+        fs::write(&path, "AGE-SECRET-KEY-1FAKE").unwrap();
+
+        let result = load_pq_seed(&path, None);
         assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("legacy X25519"));
     }
 }
