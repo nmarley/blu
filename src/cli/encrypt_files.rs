@@ -3,6 +3,7 @@ use itertools::Itertools;
 use crate::blob::BlobBuffer;
 use crate::cli::clapargs::EncryptFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 use crate::hash::{self, Hash};
 
 /// Encrypt the plain text files in the index
@@ -12,12 +13,16 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
 
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
-    let plain_index = cfg.load_plain_index(&bbox).unwrap();
+    let plain_index = cfg.load_plain_index(&bbox)?;
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?
 
-    let mut blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
+    let mut blob_index = match cfg.load_blob_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
     info!(
         "Blob index has {} blob files",
         blob_index.count_blob_files()

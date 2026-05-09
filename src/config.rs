@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
-use crate::error::Result as BluResult;
+use crate::error::{BluError, Result as BluResult};
 use crate::io::BlackBoxSerializable;
 use crate::keys;
 use crate::storage::{AmazonS3, Local, StorageBackend};
@@ -114,13 +114,20 @@ macro_rules! load_index {
     // TODO: implement as independent fn in Config, then wrap with impl version pass in path
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
         /// $name loads the index from the idxdir.
-        pub fn $name(&self, bbox: &BlackBox) -> Option<$idx_struct_name> {
+        pub fn $name(&self, bbox: &BlackBox) -> BluResult<$idx_struct_name> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
-            // info!("In config, index_path = {:?}", index_path);
-            // read index file data or return None
-            let index_data: Vec<u8> = fs::read(index_path).ok()?;
-            // deserialize + decompress + decrypt index or return None
-            $idx_struct_name::read(&index_data[..], bbox).ok()
+            let index_data: Vec<u8> = fs::read(&index_path).map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => {
+                    BluError::IndexNotFound(index_path.display().to_string())
+                }
+                _ => BluError::Internal(format!(
+                    "failed to read index at {}: {}",
+                    index_path.display(),
+                    e
+                )),
+            })?;
+            $idx_struct_name::read(&index_data[..], bbox)
+                .map_err(|e| BluError::IndexCorrupted(format!("{}: {}", index_path.display(), e)))
         }
     };
 }

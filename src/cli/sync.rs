@@ -4,6 +4,7 @@ use crate::blob::BlobBuffer;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::SyncArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 use crate::hash::{self, Hash};
 use itertools::Itertools;
 
@@ -21,10 +22,14 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
     // Load the plain index (or create a new one if none exists)
-    let mut plain_index = cfg.load_plain_index(&bbox).unwrap_or_else(|| {
-        info!("No existing index, creating new one");
-        PlainIndex::new_empty()
-    });
+    let mut plain_index = match cfg.load_plain_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => {
+            info!("No existing index, creating new one");
+            PlainIndex::new_empty()
+        }
+        Err(e) => return Err(e.into()),
+    };
 
     // Determine paths to add
     let paths_to_add = if args.paths.is_empty() {
@@ -47,7 +52,11 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     cfg.write_plain_index(&plain_index, &bbox)?;
 
     // Step 2: Encrypt chunks that are not yet encrypted
-    let mut blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
+    let mut blob_index = match cfg.load_blob_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
     let backend = cfg.init_storage_backend()?;
     let mut blob_buf = BlobBuffer::new(&(*backend), bbox.clone());
 

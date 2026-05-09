@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::cli::clapargs::TaggerArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 use crate::hash::Hash;
 use crate::tag::sanitize_tag;
 
@@ -33,8 +34,12 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     // than what is on the filesystem, introducing multiple points of
     // interaction w/the filesystem (bad).
 
-    let index = cfg.load_plain_index(&bbox).unwrap();
-    let mut tag_index = cfg.load_tag_index(&bbox).unwrap_or_default();
+    let index = cfg.load_plain_index(&bbox)?;
+    let mut tag_index = match cfg.load_tag_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
     let files_map = index.files_map_ref();
 
     let tag_action = &args.tag_action;

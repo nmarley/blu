@@ -23,6 +23,7 @@ use crate::block::PlainIndex;
 use crate::cli::clapargs::{StatusArgs, StatusCheckType};
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::cli::output::FileDisplay;
+use crate::error::BluError;
 use crate::hash::{self, Hash};
 
 // 1 GB? (before they ruined the abbreviation)
@@ -32,10 +33,7 @@ const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
 pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     let dir = Path::new(".");
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-    let index = match cfg.load_plain_index(&bbox) {
-        Some(idx) => idx,
-        None => return Err("unable to load index".into()),
-    };
+    let index = cfg.load_plain_index(&bbox)?;
 
     // TODO:
     // show files existing in FS but not in index ...
@@ -245,11 +243,12 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Now show encrypted status ... but the thing is, _files_ are not encrypted, but rather the chunks
     // are. So we need to iterate over the chunks and see if they are encrypted or not.
     let blob_index = match cfg.load_blob_index(&bbox) {
-        Some(idx) => idx,
-        None => {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => {
             println!("no blob index found, assuming no files are encrypted");
             return Ok(());
         }
+        Err(e) => return Err(e.into()),
     };
 
     let count_encrypted_chunks = index

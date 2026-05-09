@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::cli::clapargs::DeleteFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 
 // TODO: delete by hash (ONLY -- API will be built around this and search can
 // be used for getting hashesfrom files)
@@ -10,8 +11,12 @@ use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 /// Delete data from index and mark associated encrypted blobs as deleted.
 pub fn delete_files(args: DeleteFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-    let plain_index = cfg.load_plain_index(&bbox).unwrap();
-    let tag_index = cfg.load_tag_index(&bbox).unwrap_or_default();
+    let plain_index = cfg.load_plain_index(&bbox)?;
+    let tag_index = match cfg.load_tag_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
 
     // TODO: maybe add this (sorted file hashes) to index API and add the test there?
     let files_ref = plain_index.files_map_ref();

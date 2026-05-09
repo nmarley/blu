@@ -7,6 +7,7 @@ use glob::Pattern;
 use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 use crate::hash::Hash;
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
@@ -19,8 +20,12 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     }
 
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-    let plain_index = cfg.load_plain_index(&bbox).unwrap();
-    let blob_index = cfg.load_blob_index(&bbox).unwrap_or_default();
+    let plain_index = cfg.load_plain_index(&bbox)?;
+    let blob_index = match cfg.load_blob_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
     let files_map = plain_index.files_map_ref();
 
     let backend = cfg.init_storage_backend()?;

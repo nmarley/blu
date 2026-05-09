@@ -5,6 +5,7 @@ use crate::age::BlackBox;
 use crate::blob::BlobIndex;
 use crate::cli::clapargs::DefragBlobsArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 use crate::io::BlackBoxSerializable;
 
 /// Defrag blobs is still a WIP
@@ -15,7 +16,7 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Err
 
     let (_cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
-    let blob_index = load_blob_index(&bbox, args.blob_index_path).unwrap();
+    let blob_index = load_blob_index(&bbox, args.blob_index_path)?;
     info!(
         "Blob index has {} blob files",
         blob_index.count_blob_files()
@@ -51,9 +52,12 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn load_blob_index<P: AsRef<Path>>(bbox: &BlackBox, index_path: P) -> Option<BlobIndex> {
-    // read index file data or return None
-    let index_data: Vec<u8> = fs::read(index_path.as_ref()).ok()?;
-    // deserialize + decompress + decrypt index or return None
-    BlobIndex::read(&index_data[..], bbox).ok()
+fn load_blob_index<P: AsRef<Path>>(bbox: &BlackBox, index_path: P) -> Result<BlobIndex, BluError> {
+    let path = index_path.as_ref();
+    let index_data: Vec<u8> = fs::read(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => BluError::IndexNotFound(path.display().to_string()),
+        _ => BluError::Internal(format!("failed to read index at {}: {}", path.display(), e)),
+    })?;
+    BlobIndex::read(&index_data[..], bbox)
+        .map_err(|e| BluError::IndexCorrupted(format!("{}: {}", path.display(), e)))
 }

@@ -4,13 +4,18 @@ use std::path::PathBuf;
 
 use crate::cli::clapargs::ListFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::error::BluError;
 
 /// List files in the index, optionally filtered
 pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-    let plain_index = cfg.load_plain_index(&bbox).unwrap();
+    let plain_index = cfg.load_plain_index(&bbox)?;
 
-    let tag_index = cfg.load_tag_index(&bbox).unwrap_or_default();
+    let tag_index = match cfg.load_tag_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e.into()),
+    };
 
     // TODO: sort by file name? hash? should the order be deterministic? Since
     // this returns a hash(ref) and we'd have to delve to get filename and make

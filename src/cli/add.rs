@@ -12,10 +12,7 @@ pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
 
-    let mut plain_index = match cfg.load_plain_index(&bbox) {
-        Some(idx) => idx,
-        None => return Err("unable to load index".into()),
-    };
+    let mut plain_index = cfg.load_plain_index(&bbox)?;
 
     // iterate each path
     for p in args.add_paths {
