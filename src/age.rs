@@ -79,6 +79,12 @@ impl std::fmt::Debug for BlackBox {
     }
 }
 
+impl Default for BlackBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BlackBox {
     /// Create a new in-process BlackBox.
     pub fn new() -> BlackBox {

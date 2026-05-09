@@ -98,13 +98,20 @@ impl Default for Config {
 
 /// Read the vault config from the `.blu/config.toml` in the base directory.
 pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
-    let config_toml = base_dir.as_ref().join(".blu/config.toml");
+    let base_dir = base_dir.as_ref();
+    let config_toml = base_dir.join(".blu/config.toml");
 
     let toml_str = fs::read_to_string(&config_toml)
         .map_err(|_| format!("could not read config at {}", config_toml.display()))?;
 
     let mut cfg: Config = toml::from_str(&toml_str)?;
-    cfg.basedir = base_dir.as_ref().to_path_buf();
+    cfg.basedir = base_dir.canonicalize().map_err(|e| {
+        format!(
+            "could not resolve blu repository at {}: {}",
+            base_dir.display(),
+            e
+        )
+    })?;
     Ok(cfg)
 }
 
@@ -375,6 +382,7 @@ impl Config {
 #[cfg(test)]
 pub(crate) mod test {
     use super::Config;
+    use std::fs;
 
     #[test]
     fn read_config_missing_dir_errors() {
@@ -398,5 +406,25 @@ pub(crate) mod test {
         let parsed: Config = toml::from_str(&toml_str).unwrap();
         let enc = parsed.encryption.unwrap();
         assert_eq!(enc.pq_recipient, "age1pqtest");
+    }
+
+    #[test]
+    fn read_config_uses_canonical_basedir() {
+        let current_dir = std::env::current_dir().unwrap();
+        let tmp = tempfile::tempdir_in(&current_dir).unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join(".blu")).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.set_encryption(super::EncryptionConfig {
+            pq_recipient: "age1pqtest".to_string(),
+        });
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        fs::write(repo.join(".blu/config.toml"), toml_str).unwrap();
+
+        let relative_repo = repo.strip_prefix(&current_dir).unwrap();
+        let loaded = super::read_config(relative_repo).unwrap();
+
+        assert_eq!(loaded.bludir(), repo.canonicalize().unwrap().join(".blu"));
     }
 }
