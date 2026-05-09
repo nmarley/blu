@@ -48,7 +48,7 @@ mod test {
         let kek_dir = blu_dir.to_str().unwrap();
         client.wrap_dek(Some(kek_dir)).unwrap();
 
-        let bbox = BlackBox::from_agent(client);
+        let bbox = BlackBox::from_agent(client, Some(kek_dir.to_string()));
 
         let plaintext = b"agent BlackBox v2 round-trip test";
         let ciphertext = bbox.encrypt_blob(plaintext).unwrap();

@@ -90,6 +90,16 @@ pub enum BluError {
     #[error("index corrupted: {0}")]
     IndexCorrupted(String),
 
+    /// Index file could not be loaded (decryption, decompression, or
+    /// deserialization failed)
+    #[error("failed to load index at {path}: {reason}")]
+    IndexLoadFailed {
+        /// The path to the index file
+        path: PathBuf,
+        /// Human-readable description of why the load failed
+        reason: String,
+    },
+
     /// File hash not found in index
     #[error("file hash not found in index: {hash}")]
     FileHashNotFound {

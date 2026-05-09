@@ -44,6 +44,9 @@ enum BlackBoxInner {
 pub struct BlackBox {
     inner: BlackBoxInner,
     kek_ctx: Option<KekContext>,
+    /// Path to the vault's `.blu/` directory, passed to the agent
+    /// daemon so it can lazily load the KEK on first use.
+    kek_dir: Option<String>,
 }
 
 impl Clone for BlackBox {
@@ -61,6 +64,7 @@ impl Clone for BlackBox {
         BlackBox {
             inner,
             kek_ctx: self.kek_ctx.clone(),
+            kek_dir: self.kek_dir.clone(),
         }
     }
 }
@@ -75,6 +79,7 @@ impl std::fmt::Debug for BlackBox {
         f.debug_struct("BlackBox")
             .field("mode", &variant)
             .field("has_kek", &has_kek)
+            .field("kek_dir", &self.kek_dir)
             .finish()
     }
 }
@@ -89,14 +94,20 @@ impl BlackBox {
         BlackBox {
             inner: BlackBoxInner::InProcess { identities },
             kek_ctx: None,
+            kek_dir: None,
         }
     }
 
     /// Create a BlackBox that delegates to the agent daemon.
-    pub fn from_agent(client: AgentClient) -> BlackBox {
+    ///
+    /// `kek_dir` is the path to the vault's `.blu/` directory. It is
+    /// sent to the daemon on the first `wrap_dek`/`unwrap_dek` call so
+    /// the daemon can lazily load the KEK from disk.
+    pub fn from_agent(client: AgentClient, kek_dir: Option<String>) -> BlackBox {
         BlackBox {
             inner: BlackBoxInner::Agent(client),
             kek_ctx: None,
+            kek_dir,
         }
     }
 
@@ -159,7 +170,8 @@ impl BlackBox {
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             }
             BlackBoxInner::Agent(client) => {
-                let (dek_bytes, wrapped_dek, kek_version) = client.wrap_dek(None)?;
+                let (dek_bytes, wrapped_dek, kek_version) =
+                    client.wrap_dek(self.kek_dir.as_deref())?;
                 let dek = Dek::from_bytes(&dek_bytes)?;
                 let encrypted_payload = dek
                     .encrypt_data(data)
@@ -205,7 +217,11 @@ impl BlackBox {
                 let (header, payload_offset) = v2format::read_header(data)
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                 let dek_bytes = client
-                    .unwrap_dek(&header.wrapped_dek, header.kek_version, None)
+                    .unwrap_dek(
+                        &header.wrapped_dek,
+                        header.kek_version,
+                        self.kek_dir.as_deref(),
+                    )
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
                 let dek = Dek::from_bytes(&dek_bytes)
                     .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;

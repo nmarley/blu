@@ -126,8 +126,10 @@ macro_rules! load_index {
                     e
                 )),
             })?;
-            $idx_struct_name::read(&index_data[..], bbox)
-                .map_err(|e| BluError::IndexCorrupted(format!("{}: {}", index_path.display(), e)))
+            $idx_struct_name::read(&index_data[..], bbox).map_err(|e| BluError::IndexLoadFailed {
+                path: index_path.clone(),
+                reason: e.to_string(),
+            })
         }
     };
 }

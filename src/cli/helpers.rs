@@ -109,20 +109,21 @@ pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result
 ///
 /// Connects to the agent (auto-starting if needed), checks status,
 /// prompts for passphrase if locked, and returns an agent-backed BlackBox.
-fn try_agent_blackbox(_cfg: &Config) -> Result<BlackBox> {
+fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
+    let kek_dir = Some(cfg.bludir().to_string_lossy().into_owned());
 
     let resp = client.status()?;
     let unlocked = resp["result"]["unlocked"].as_bool().unwrap_or(false);
 
     if unlocked {
-        return Ok(BlackBox::from_agent(client));
+        return Ok(BlackBox::from_agent(client, kek_dir));
     }
 
     // Agent is running but locked; try without passphrase first
     match client.unlock("") {
-        Ok(_) => return Ok(BlackBox::from_agent(client)),
+        Ok(_) => return Ok(BlackBox::from_agent(client, kek_dir)),
         Err(BluError::WrongPassphrase) | Err(BluError::Internal(_)) => {
             // Key is passphrase-protected, need to prompt
         }
@@ -131,16 +132,17 @@ fn try_agent_blackbox(_cfg: &Config) -> Result<BlackBox> {
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
     client.unlock(&pass)?;
-    Ok(BlackBox::from_agent(client))
+    Ok(BlackBox::from_agent(client, kek_dir))
 }
 
 /// Load a BlackBox via the agent using an explicit passphrase.
-fn load_blackbox_via_agent(_cfg: &Config, passphrase: &str) -> Result<BlackBox> {
+fn load_blackbox_via_agent(cfg: &Config, passphrase: &str) -> Result<BlackBox> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
 
     client.unlock(passphrase)?;
-    Ok(BlackBox::from_agent(client))
+    let kek_dir = Some(cfg.bludir().to_string_lossy().into_owned());
+    Ok(BlackBox::from_agent(client, kek_dir))
 }
 
 /// Load a BlackBox in-process (the old direct path, no agent).

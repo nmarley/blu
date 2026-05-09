@@ -58,6 +58,8 @@ fn load_blob_index<P: AsRef<Path>>(bbox: &BlackBox, index_path: P) -> Result<Blo
         std::io::ErrorKind::NotFound => BluError::IndexNotFound(path.display().to_string()),
         _ => BluError::Internal(format!("failed to read index at {}: {}", path.display(), e)),
     })?;
-    BlobIndex::read(&index_data[..], bbox)
-        .map_err(|e| BluError::IndexCorrupted(format!("{}: {}", path.display(), e)))
+    BlobIndex::read(&index_data[..], bbox).map_err(|e| BluError::IndexLoadFailed {
+        path: path.to_path_buf(),
+        reason: e.to_string(),
+    })
 }
