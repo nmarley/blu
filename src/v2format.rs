@@ -1,9 +1,8 @@
-//! V2 file format for envelope-encrypted blobs and indexes.
+//! Envelope-encrypted file format for blobs and indexes.
 //!
-//! V2 files use a header containing a wrapped DEK (Data Encryption
-//! Key), followed by data encrypted with that DEK using
-//! ChaCha20-Poly1305. The DEK is wrapped with the vault's KEK (Key
-//! Encryption Key).
+//! Files use a header containing a wrapped DEK (Data Encryption Key),
+//! followed by data encrypted with that DEK using ChaCha20-Poly1305.
+//! The DEK is wrapped with the vault's KEK (Key Encryption Key).
 //!
 //! ## File layout
 //!
@@ -16,12 +15,6 @@
 //! 12       N        Wrapped DEK (nonce || ciphertext || tag)
 //! 12+N     ...      DEK-encrypted payload
 //! ```
-//!
-//! ## Backward compatibility
-//!
-//! Files without a recognized magic header are v1 (age-encrypted).
-//! The `decrypt_file` function detects the format and dispatches
-//! accordingly.
 
 use std::io::{self, Write};
 
@@ -208,49 +201,6 @@ where
     dek.decrypt_data(payload)
 }
 
-/// Decrypt file data, auto-detecting v1 (age) or v2 (envelope) format.
-///
-/// For v2: uses the kek_resolver to get the KEK for the version in
-/// the header.
-///
-/// For v1: falls back to `bbox.decrypt()` (age-based decryption via
-/// the BlackBox).
-pub fn decrypt_auto<F>(
-    data: &[u8],
-    bbox: &crate::age::BlackBox,
-    kek_resolver: Option<F>,
-) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>>
-where
-    F: FnOnce(u16) -> Result<Kek>,
-{
-    if is_v2(data) {
-        let resolver = kek_resolver.ok_or_else(|| {
-            BluError::DecryptionFailed("v2 file detected but no KEK available".into())
-        })?;
-        decrypt_v2(data, resolver).map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-    } else {
-        bbox.decrypt(data)
-    }
-}
-
-/// Encrypt data, choosing v1 or v2 format based on whether a KEK is
-/// provided.
-///
-/// If `kek` is Some, produces v2 format. Otherwise falls back to v1
-/// (age via BlackBox).
-pub fn encrypt_auto(
-    data: &[u8],
-    bbox: &crate::age::BlackBox,
-    kek: Option<(&Kek, u16)>,
-    file_type: FileType,
-) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
-    match kek {
-        Some((kek, kek_version)) => encrypt_v2(data, kek, kek_version, file_type)
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>),
-        None => bbox.encrypt(data),
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -353,58 +303,6 @@ mod test {
 
         let result = read_header(&data);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn decrypt_auto_v1_fallback() {
-        // Simulate v1: use BlackBox to encrypt, then decrypt_auto should
-        // detect non-v2 and fall back to bbox.decrypt()
-        let bbox = crate::age::BlackBox::new(&[include_str!("../test/blu_secrets/blu.key")]);
-        let plaintext = b"v1 age-encrypted data";
-
-        let encrypted = bbox.encrypt(plaintext).unwrap();
-        assert!(!is_v2(&encrypted));
-
-        let decrypted = decrypt_auto::<fn(u16) -> Result<Kek>>(&encrypted, &bbox, None).unwrap();
-        assert_eq!(&decrypted, plaintext);
-    }
-
-    #[test]
-    fn decrypt_auto_v2() {
-        let kek = Kek::generate();
-        let bbox = crate::age::BlackBox::new(&[include_str!("../test/blu_secrets/blu.key")]);
-        let plaintext = b"v2 envelope-encrypted data";
-
-        let encrypted = encrypt_v2(plaintext, &kek, 0, FileType::Blob).unwrap();
-
-        let kek_clone = kek.clone();
-        let decrypted = decrypt_auto(&encrypted, &bbox, Some(|_: u16| Ok(kek_clone))).unwrap();
-        assert_eq!(&decrypted, plaintext);
-    }
-
-    #[test]
-    fn encrypt_auto_v2_when_kek_provided() {
-        let kek = Kek::generate();
-        let bbox = crate::age::BlackBox::new(&[include_str!("../test/blu_secrets/blu.key")]);
-        let plaintext = b"auto-encrypt v2";
-
-        let encrypted = encrypt_auto(plaintext, &bbox, Some((&kek, 0)), FileType::Blob).unwrap();
-        assert!(is_v2(&encrypted));
-
-        let decrypted = decrypt_v2(&encrypted, |_| Ok(kek.clone())).unwrap();
-        assert_eq!(&decrypted, plaintext);
-    }
-
-    #[test]
-    fn encrypt_auto_v1_when_no_kek() {
-        let bbox = crate::age::BlackBox::new(&[include_str!("../test/blu_secrets/blu.key")]);
-        let plaintext = b"auto-encrypt v1";
-
-        let encrypted = encrypt_auto(plaintext, &bbox, None, FileType::Blob).unwrap();
-        assert!(!is_v2(&encrypted));
-
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-        assert_eq!(&decrypted, plaintext);
     }
 
     #[test]

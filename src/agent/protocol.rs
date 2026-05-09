@@ -7,8 +7,6 @@ pub enum Method {
     Status,
     Unlock,
     Lock,
-    Encrypt,
-    Decrypt,
     WrapDek,
     UnwrapDek,
     UnlockWithSecret,
@@ -21,8 +19,6 @@ impl Method {
             "status" => Some(Self::Status),
             "unlock" => Some(Self::Unlock),
             "lock" => Some(Self::Lock),
-            "encrypt" => Some(Self::Encrypt),
-            "decrypt" => Some(Self::Decrypt),
             "wrap_dek" => Some(Self::WrapDek),
             "unwrap_dek" => Some(Self::UnwrapDek),
             "unlock_with_secret" => Some(Self::UnlockWithSecret),
@@ -37,12 +33,7 @@ impl Method {
     pub fn is_activity(&self) -> bool {
         matches!(
             self,
-            Self::Encrypt
-                | Self::Decrypt
-                | Self::WrapDek
-                | Self::UnwrapDek
-                | Self::Unlock
-                | Self::UnlockWithSecret
+            Self::WrapDek | Self::UnwrapDek | Self::Unlock | Self::UnlockWithSecret
         )
     }
 }

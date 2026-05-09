@@ -6,11 +6,10 @@ use crate::keys::dek::Dek;
 use crate::keys::kek::Kek;
 use crate::v2format::{self, FileType};
 
-/// Optional KEK context for v2 envelope encryption.
+/// KEK context for v2 envelope encryption.
 ///
-/// When attached to a `BlackBox`, encrypt methods will produce v2
-/// format files (envelope encryption with KEK/DEK hierarchy).
-/// Decrypt will auto-detect v1 vs v2 regardless.
+/// Must be attached to a `BlackBox` for encrypt/decrypt to function.
+/// All data uses v2 format (envelope encryption with KEK/DEK hierarchy).
 #[derive(Clone)]
 pub struct KekContext {
     /// The unwrapped KEK for this session.
@@ -35,13 +34,13 @@ enum BlackBoxInner {
 ///
 /// Two modes exist:
 /// - In-process: holds age identities directly and performs crypto in the
-///   current process. This is the original behavior.
-/// - Agent: delegates encrypt/decrypt to the agent daemon over a Unix
+///   current process.
+/// - Agent: delegates key wrapping to the agent daemon over a Unix
 ///   socket, so key material never leaves the daemon process.
 ///
-/// An optional `KekContext` enables v2 envelope encryption. When
-/// present, `encrypt_blob()` and `encrypt_index()` produce v2
-/// format, and `decrypt()` auto-detects v1 vs v2.
+/// A `KekContext` must be attached (via `with_kek` or `set_kek`) before
+/// encrypting or decrypting data. All data uses v2 envelope format
+/// (KEK/DEK hierarchy with ChaCha20-Poly1305).
 pub struct BlackBox {
     inner: BlackBoxInner,
     kek_ctx: Option<KekContext>,
@@ -124,70 +123,26 @@ impl BlackBox {
         self.kek_ctx.is_some()
     }
 
-    fn identities(&self) -> Vec<age::x25519::Identity> {
-        match &self.inner {
-            BlackBoxInner::InProcess { identities } => identities.clone(),
-            BlackBoxInner::Agent(_) => {
-                panic!("cannot access identities on agent-backed BlackBox")
-            }
-        }
-    }
-
-    fn recipients(&self) -> Vec<age::x25519::Recipient> {
-        self.identities().iter().map(|x| x.to_public()).collect()
-    }
-
-    fn new_encryptor(&self) -> Result<age::Encryptor, age::EncryptError> {
-        let recipients = self.recipients();
-        let recipient_refs: Vec<&dyn age::Recipient> = recipients
-            .iter()
-            .map(|r| r as &dyn age::Recipient)
-            .collect();
-        age::Encryptor::with_recipients(recipient_refs.into_iter())
-    }
-
-    /// Encrypt using age (v1 format). This always produces v1 output
-    /// regardless of whether a KEK is attached.
+    /// Encrypt data as a blob file (v2 envelope format).
     ///
-    /// Prefer `encrypt_blob()` or `encrypt_index()` for new code.
-    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        match &self.inner {
-            BlackBoxInner::InProcess { .. } => {
-                let mut encrypted = vec![];
-                let encryptor = self.new_encryptor()?;
-                let mut writer = encryptor.wrap_output(&mut encrypted)?;
-                writer.write_all(data)?;
-                writer.finish()?;
-                Ok(encrypted)
-            }
-            BlackBoxInner::Agent(client) => client
-                .encrypt(data)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>),
-        }
-    }
-
-    /// Encrypt data as a blob file.
-    ///
-    /// For `InProcess` with a KEK, produces v2 format (envelope encryption).
+    /// For `InProcess`, uses the attached KEK context.
     /// For `Agent`, delegates DEK wrapping to the daemon via `wrap_dek` RPC,
     /// then encrypts data in-process with the DEK.
-    /// Without a KEK, falls back to v1 (age).
     pub fn encrypt_blob(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.encrypt_typed(data, FileType::Blob)
     }
 
-    /// Encrypt data as an index file.
+    /// Encrypt data as an index file (v2 envelope format).
     ///
-    /// For `InProcess` with a KEK, produces v2 format (envelope encryption).
+    /// For `InProcess`, uses the attached KEK context.
     /// For `Agent`, delegates DEK wrapping to the daemon via `wrap_dek` RPC,
     /// then encrypts data in-process with the DEK.
-    /// Without a KEK, falls back to v1 (age).
     pub fn encrypt_index(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.encrypt_typed(data, FileType::Index)
     }
 
     /// Internal: encrypt with a specific file type, dispatching to
-    /// the correct path based on InProcess vs Agent and KEK availability.
+    /// the correct path based on InProcess vs Agent.
     fn encrypt_typed(
         &self,
         data: &[u8],
@@ -195,84 +150,68 @@ impl BlackBox {
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         match &self.inner {
             BlackBoxInner::InProcess { .. } => {
-                let kek_arg = self.kek_ctx.as_ref().map(|ctx| (&ctx.kek, ctx.kek_version));
-                v2format::encrypt_auto(data, self, kek_arg, file_type)
+                let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
+                    crate::error::BluError::EncryptionFailed(
+                        "no KEK available for encryption".into(),
+                    )
+                })?;
+                v2format::encrypt_v2(data, &kek_ctx.kek, kek_ctx.kek_version, file_type)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             }
             BlackBoxInner::Agent(client) => {
-                // Try wrap_dek RPC; if agent has no KEK, it returns
-                // an error and we fall back to v1 age encryption.
-                match client.wrap_dek(None) {
-                    Ok((dek_bytes, wrapped_dek, kek_version)) => {
-                        let dek = Dek::from_bytes(&dek_bytes)?;
-                        let encrypted_payload = dek
-                            .encrypt_data(data)
-                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                        let mut output = Vec::new();
-                        v2format::write_v2(
-                            &mut output,
-                            file_type,
-                            kek_version,
-                            &wrapped_dek,
-                            &encrypted_payload,
-                        )?;
-                        Ok(output)
-                    }
-                    Err(_) => {
-                        // No KEK loaded in agent, fall back to v1
-                        client
-                            .encrypt(data)
-                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-                    }
-                }
+                let (dek_bytes, wrapped_dek, kek_version) = client.wrap_dek(None)?;
+                let dek = Dek::from_bytes(&dek_bytes)?;
+                let encrypted_payload = dek
+                    .encrypt_data(data)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                let mut output = Vec::new();
+                v2format::write_v2(
+                    &mut output,
+                    file_type,
+                    kek_version,
+                    &wrapped_dek,
+                    &encrypted_payload,
+                )?;
+                Ok(output)
             }
         }
     }
 
-    /// Decrypt data, auto-detecting v1 (age) or v2 (envelope) format.
+    /// Decrypt v2 envelope-encrypted data.
     ///
-    /// For v2 files with `InProcess`, uses the attached KEK context.
-    /// For v2 files with `Agent`, delegates DEK unwrapping to the
-    /// daemon via `unwrap_dek` RPC, then decrypts in-process.
-    /// For v1 files, uses age decryption directly.
+    /// For `InProcess`, uses the attached KEK context.
+    /// For `Agent`, delegates DEK unwrapping to the daemon via
+    /// `unwrap_dek` RPC, then decrypts in-process.
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        if v2format::is_v2(data) {
-            match &self.inner {
-                BlackBoxInner::InProcess { .. } => {
-                    let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
-                        crate::error::BluError::DecryptionFailed(
-                            "v2 file detected but no KEK available".into(),
-                        )
-                    })?;
-                    let kek_clone = kek_ctx.kek.clone();
-                    v2format::decrypt_v2(data, |_version| Ok(kek_clone))
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-                }
-                BlackBoxInner::Agent(client) => {
-                    let (header, payload_offset) = v2format::read_header(data)
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                    let dek_bytes = client
-                        .unwrap_dek(&header.wrapped_dek, header.kek_version, None)
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                    let dek = Dek::from_bytes(&dek_bytes)
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-                    let payload = &data[payload_offset..];
-                    dek.decrypt_data(payload)
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-                }
+        if !v2format::is_v2(data) {
+            return Err(crate::error::BluError::DecryptionFailed(
+                "not a v2 envelope-encrypted file".into(),
+            )
+            .into());
+        }
+
+        match &self.inner {
+            BlackBoxInner::InProcess { .. } => {
+                let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
+                    crate::error::BluError::DecryptionFailed(
+                        "v2 file detected but no KEK available".into(),
+                    )
+                })?;
+                let kek_clone = kek_ctx.kek.clone();
+                v2format::decrypt_v2(data, |_version| Ok(kek_clone))
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             }
-        } else {
-            match &self.inner {
-                BlackBoxInner::InProcess { .. } => {
-                    let mut decrypted = vec![];
-                    let decryptor = age::Decryptor::new(data)?;
-                    let mut reader = decryptor
-                        .decrypt(self.identities().iter().map(|x| x as &dyn age::Identity))?;
-                    let _ = reader.read_to_end(&mut decrypted);
-                    Ok(decrypted)
-                }
-                BlackBoxInner::Agent(client) => client
-                    .decrypt(data)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>),
+            BlackBoxInner::Agent(client) => {
+                let (header, payload_offset) = v2format::read_header(data)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                let dek_bytes = client
+                    .unwrap_dek(&header.wrapped_dek, header.kek_version, None)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                let dek = Dek::from_bytes(&dek_bytes)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                let payload = &data[payload_offset..];
+                dek.decrypt_data(payload)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
             }
         }
     }
@@ -318,18 +257,6 @@ pub mod test {
     pub(crate) const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     #[test]
-    fn asym_encrypt_decrypt() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let data: [u8; 5] = [0x64, 0xff, 0xcd, 0xbf, 0xbb];
-
-        let encrypted = bbox.encrypt(&data).unwrap();
-
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-
-        assert_eq!(decrypted, &data[..]);
-    }
-
-    #[test]
     #[ignore] // slow
     fn sym_encrypt_decrypt() {
         let data: [u8; 16] = [
@@ -369,27 +296,21 @@ pub mod test {
     }
 
     #[test]
-    fn encrypt_blob_v1_without_kek() {
+    fn encrypt_blob_without_kek_errors() {
         let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let data = b"blob data for v1";
+        let data = b"should fail without kek";
 
-        let encrypted = bbox.encrypt_blob(data).unwrap();
-        assert!(!v2format::is_v2(&encrypted));
-
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-        assert_eq!(&decrypted, data);
+        let result = bbox.encrypt_blob(data);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn decrypt_auto_detects_v1() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let data = b"v1 fallback";
+    fn decrypt_non_v2_data_errors() {
+        let kek = Kek::generate();
+        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 0);
 
-        let encrypted = bbox.encrypt(data).unwrap();
-        assert!(!v2format::is_v2(&encrypted));
-
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-        assert_eq!(&decrypted, data);
+        let result = bbox.decrypt(b"not a v2 file at all");
+        assert!(result.is_err());
     }
 
     #[test]

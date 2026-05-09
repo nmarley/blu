@@ -171,8 +171,6 @@ fn handle_connection(
         Some(Method::Status) => handle_status(state, &id),
         Some(Method::Unlock) => handle_unlock(state, &id, &params),
         Some(Method::Lock) => handle_lock(state, &id),
-        Some(Method::Encrypt) => handle_encrypt(state, &id, &params),
-        Some(Method::Decrypt) => handle_decrypt(state, &id, &params),
         Some(Method::WrapDek) => handle_wrap_dek(state, &id, &params),
         Some(Method::UnwrapDek) => handle_unwrap_dek(state, &id, &params),
         Some(Method::UnlockWithSecret) => handle_unlock_with_secret(state, &id, &params),
@@ -322,98 +320,6 @@ fn handle_unlock_with_secret(
 fn handle_lock(state: &mut AgentState, id: &serde_json::Value) -> serde_json::Value {
     state.lock();
     protocol::success_response(id, serde_json::json!({}))
-}
-
-fn handle_encrypt(
-    state: &AgentState,
-    id: &serde_json::Value,
-    params: &serde_json::Value,
-) -> serde_json::Value {
-    if !state.is_unlocked() {
-        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
-    }
-
-    let data_b64 = match params.get("data").and_then(|v| v.as_str()) {
-        Some(d) => d,
-        None => {
-            return protocol::error_response(
-                id,
-                protocol::error_code::INVALID_PARAMS,
-                "missing data",
-            );
-        }
-    };
-
-    let data = match BASE64.decode(data_b64) {
-        Ok(d) => d,
-        Err(e) => {
-            return protocol::error_response(
-                id,
-                protocol::error_code::INVALID_PARAMS,
-                &format!("invalid base64 data: {}", e),
-            );
-        }
-    };
-
-    match state.encrypt(&data) {
-        Ok(ciphertext) => protocol::success_response(
-            id,
-            serde_json::json!({
-                "ciphertext": BASE64.encode(&ciphertext),
-            }),
-        ),
-        Err(e) => protocol::error_response(
-            id,
-            protocol::error_code::CRYPTO_ERROR,
-            &format!("encryption failed: {}", e),
-        ),
-    }
-}
-
-fn handle_decrypt(
-    state: &AgentState,
-    id: &serde_json::Value,
-    params: &serde_json::Value,
-) -> serde_json::Value {
-    if !state.is_unlocked() {
-        return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
-    }
-
-    let data_b64 = match params.get("data").and_then(|v| v.as_str()) {
-        Some(d) => d,
-        None => {
-            return protocol::error_response(
-                id,
-                protocol::error_code::INVALID_PARAMS,
-                "missing data",
-            );
-        }
-    };
-
-    let data = match BASE64.decode(data_b64) {
-        Ok(d) => d,
-        Err(e) => {
-            return protocol::error_response(
-                id,
-                protocol::error_code::INVALID_PARAMS,
-                &format!("invalid base64 data: {}", e),
-            );
-        }
-    };
-
-    match state.decrypt(&data) {
-        Ok(plaintext) => protocol::success_response(
-            id,
-            serde_json::json!({
-                "plaintext": BASE64.encode(&plaintext),
-            }),
-        ),
-        Err(e) => protocol::error_response(
-            id,
-            protocol::error_code::CRYPTO_ERROR,
-            &format!("decryption failed: {}", e),
-        ),
-    }
 }
 
 fn handle_wrap_dek(
@@ -697,18 +603,6 @@ mod test {
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Encrypt while locked should fail
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "encrypt",
-                "params": { "data": BASE64.encode(b"hello") },
-                "id": 10
-            }),
-        );
-        assert_eq!(resp["error"]["code"], protocol::error_code::AGENT_LOCKED);
-
         // Unlock with the test key via unlock_with_secret
         let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
         let resp = send_request(
@@ -763,68 +657,6 @@ mod test {
             }),
         );
         assert_eq!(resp["result"]["unlocked"], false);
-
-        // Shutdown
-        send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "shutdown",
-                "params": {},
-                "id": 99
-            }),
-        );
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn daemon_encrypt_decrypt_round_trip() {
-        let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
-        let handle = start_test_daemon(&paths);
-
-        // Unlock via secret key
-        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "unlock_with_secret",
-                "params": {
-                    "secret": test_secret
-                },
-                "id": 1
-            }),
-        );
-
-        // Encrypt
-        let plaintext = b"the quick brown fox jumps over the lazy dog";
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "encrypt",
-                "params": { "data": BASE64.encode(plaintext) },
-                "id": 2
-            }),
-        );
-        let ciphertext_b64 = resp["result"]["ciphertext"].as_str().unwrap();
-        let ciphertext = BASE64.decode(ciphertext_b64).unwrap();
-        assert_ne!(&ciphertext, plaintext);
-
-        // Decrypt
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "decrypt",
-                "params": { "data": ciphertext_b64 },
-                "id": 3
-            }),
-        );
-        let decrypted_b64 = resp["result"]["plaintext"].as_str().unwrap();
-        let decrypted = BASE64.decode(decrypted_b64).unwrap();
-        assert_eq!(&decrypted, plaintext);
 
         // Shutdown
         send_request(
@@ -1017,33 +849,6 @@ mod test {
             }),
         );
         assert_eq!(resp["result"]["unlocked"], true);
-
-        // Should be able to encrypt/decrypt
-        let plaintext = b"biometric unlock test";
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "encrypt",
-                "params": { "data": BASE64.encode(plaintext) },
-                "id": 3
-            }),
-        );
-        let ct_b64 = resp["result"]["ciphertext"].as_str().unwrap();
-
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "decrypt",
-                "params": { "data": ct_b64 },
-                "id": 4
-            }),
-        );
-        let pt = BASE64
-            .decode(resp["result"]["plaintext"].as_str().unwrap())
-            .unwrap();
-        assert_eq!(&pt, plaintext);
 
         // Shutdown
         send_request(

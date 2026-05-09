@@ -197,38 +197,6 @@ impl AgentClient {
         Ok(())
     }
 
-    /// Encrypt data via the agent.
-    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let resp = self.request(
-            "encrypt",
-            serde_json::json!({ "data": BASE64.encode(data) }),
-        )?;
-
-        let ciphertext_b64 = resp["result"]["ciphertext"]
-            .as_str()
-            .ok_or_else(|| BluError::Internal("missing ciphertext in response".into()))?;
-
-        BASE64
-            .decode(ciphertext_b64)
-            .map_err(|e| BluError::Internal(format!("invalid base64 from agent: {}", e)))
-    }
-
-    /// Decrypt data via the agent.
-    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let resp = self.request(
-            "decrypt",
-            serde_json::json!({ "data": BASE64.encode(data) }),
-        )?;
-
-        let plaintext_b64 = resp["result"]["plaintext"]
-            .as_str()
-            .ok_or_else(|| BluError::Internal("missing plaintext in response".into()))?;
-
-        BASE64
-            .decode(plaintext_b64)
-            .map_err(|e| BluError::Internal(format!("invalid base64 from agent: {}", e)))
-    }
-
     /// Generate and wrap a new DEK via the agent.
     ///
     /// Returns `(dek_bytes, wrapped_dek, kek_version)`. The agent
@@ -393,34 +361,6 @@ mod test {
 
         let resp = client.status().unwrap();
         assert_eq!(resp["result"]["unlocked"], false);
-
-        client.shutdown().unwrap();
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn client_encrypt_decrypt() {
-        let (client, _paths, handle) = start_test_client();
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        client.unlock_with_secret(secret).unwrap();
-
-        let plaintext = b"agent encrypt/decrypt test data";
-        let ciphertext = client.encrypt(plaintext).unwrap();
-        assert_ne!(&ciphertext[..], &plaintext[..]);
-
-        let decrypted = client.decrypt(&ciphertext).unwrap();
-        assert_eq!(&decrypted, plaintext);
-
-        client.shutdown().unwrap();
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn client_encrypt_when_locked() {
-        let (client, _paths, handle) = start_test_client();
-
-        let result = client.encrypt(b"data");
-        assert!(result.is_err());
 
         client.shutdown().unwrap();
         handle.join().unwrap();

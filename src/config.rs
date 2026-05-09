@@ -39,16 +39,16 @@ pub struct KeyID {
 ///
 /// The identity (private key) lives at `~/.blu/identity.age` and is
 /// resolved at runtime; it is not stored in the vault config.
+///
+/// Only the PQ recipient is stored. The KEK is wrapped exclusively
+/// with the post-quantum hybrid key (ML-KEM-768 + X25519). The
+/// X25519 public key is recorded in `~/.blu/identity.toml` (global
+/// identity metadata) but is not needed in per-vault config.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq, Default)]
 pub struct EncryptionConfig {
-    /// The public key (recipient) used to encrypt data.
-    /// Format: age1...
-    pub recipient: String,
     /// Post-quantum hybrid recipient (mlkem768x25519).
     /// Format: age1pq...
-    /// None for legacy vaults or X25519-only key imports.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pq_recipient: Option<String>,
+    pub pq_recipient: String,
 }
 
 /// Config is the configuration for blu. It is stored in the .blu directory in
@@ -97,32 +97,14 @@ impl Default for Config {
     }
 }
 
-/// read_config reads the config from the .blu directory in the base_dir.
+/// Read the vault config from the `.blu/config.toml` in the base directory.
 pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
-    let cfg_dir = base_dir.as_ref().join(".blu");
-    let config_toml = cfg_dir.join("config.toml");
-    // TODO: remove deprecated JSON configs in v0.5.x
-    let config_json = cfg_dir.join("config.json");
+    let config_toml = base_dir.as_ref().join(".blu/config.toml");
 
-    // Avoid toctou race condition
-    // https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
+    let toml_str = fs::read_to_string(&config_toml)
+        .map_err(|_| format!("could not read config at {}", config_toml.display()))?;
 
-    let mut cfg: Config = match fs::read_to_string(config_toml) {
-        Ok(toml_str) => toml::from_str(&toml_str)?,
-        Err(_) => {
-            match fs::read_to_string(config_json) {
-                Ok(json_str) => match serde_json::from_str(&json_str) {
-                    Ok(json_cfg) => {
-                        println!("WARNING: using deprecated JSON config file, please update to TOML format");
-                        json_cfg
-                    }
-                    Err(e) => return Err(e.into()),
-                },
-                Err(_) => return Err("Could not read either TOML or JSON config file".into()),
-            }
-        }
-    };
-
+    let mut cfg: Config = toml::from_str(&toml_str)?;
     cfg.basedir = base_dir.as_ref().to_path_buf();
     Ok(cfg)
 }
@@ -396,35 +378,29 @@ impl Config {
 
 #[cfg(test)]
 pub(crate) mod test {
-    use super::{BlackBox, Config};
-    use crate::age::test::TEST_AGE_SECRET_KEY;
-
-    const TEST_DIR_T0: &str = "test/old/t0/";
-    const TEST_DIR_T1: &str = "test/old/t1/";
-    // const TEST_DIR_T2: &str = "test/old/t2/";
-    const TEST_DIR_BLOCKS_T4: &str = "test/blocks/t4/";
+    use super::Config;
 
     #[test]
-    fn read_config() {
-        assert!(super::read_config(TEST_DIR_T0).is_err());
-        let cfg = super::read_config(TEST_DIR_T1).unwrap();
-
-        assert_eq!(
-            cfg,
-            Config {
-                basedir: TEST_DIR_T1.into(),
-                blu_version: "0.0.1".to_string(),
-                ..Default::default()
-            }
-        );
+    fn read_config_missing_dir_errors() {
+        assert!(super::read_config("test/old/t0/").is_err());
     }
 
     #[test]
-    fn load_plain_index() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
-        let cfg = super::read_config(TEST_DIR_BLOCKS_T4).unwrap();
-        let index_opt = cfg.load_plain_index(&bbox);
-        assert!(index_opt.is_some());
-        let _index = index_opt.unwrap();
+    fn read_config_json_only_errors() {
+        // Legacy JSON configs are no longer supported
+        assert!(super::read_config("test/old/t1/").is_err());
+    }
+
+    #[test]
+    fn config_toml_round_trip() {
+        let mut cfg = Config::default();
+        cfg.set_encryption(super::EncryptionConfig {
+            pq_recipient: "age1pqtest".to_string(),
+        });
+
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        let enc = parsed.encryption.unwrap();
+        assert_eq!(enc.pq_recipient, "age1pqtest");
     }
 }

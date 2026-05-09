@@ -450,26 +450,6 @@ impl AgentState {
         let dek = Dek::unwrap(kek, wrapped_dek)?;
         Ok(dek.as_bytes().to_vec())
     }
-
-    /// Encrypt data using the cached BlackBox.
-    pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let bbox = self
-            .blackbox
-            .as_ref()
-            .ok_or(BluError::Internal("agent is locked".into()))?;
-        bbox.encrypt(data)
-            .map_err(|e| BluError::EncryptionFailed(e.to_string()))
-    }
-
-    /// Decrypt data using the cached BlackBox.
-    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let bbox = self
-            .blackbox
-            .as_ref()
-            .ok_or(BluError::Internal("agent is locked".into()))?;
-        bbox.decrypt(data)
-            .map_err(|e| BluError::DecryptionFailed(e.to_string()))
-    }
 }
 
 #[cfg(test)]
@@ -506,26 +486,6 @@ mod test {
     }
 
     #[test]
-    fn encrypt_decrypt_round_trip() {
-        let mut state = AgentState::new();
-        unlock_test_state(&mut state);
-
-        let plaintext = b"hello, agent!";
-        let ciphertext = state.encrypt(plaintext).unwrap();
-        assert_ne!(&ciphertext, plaintext);
-
-        let decrypted = state.decrypt(&ciphertext).unwrap();
-        assert_eq!(&decrypted, plaintext);
-    }
-
-    #[test]
-    fn encrypt_fails_when_locked() {
-        let state = AgentState::new();
-        let result = state.encrypt(b"data");
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn lock_clears_state() {
         let mut state = AgentState::new();
         unlock_test_state(&mut state);
@@ -535,7 +495,6 @@ mod test {
         assert!(!state.is_unlocked());
         assert!(!state.has_kek());
         assert!(state.public_key().is_none());
-        assert!(state.encrypt(b"data").is_err());
         assert!(state.time_remaining().is_none());
     }
 
@@ -672,12 +631,6 @@ mod test {
         let pubkey = state.unlock_with_secret(secret).unwrap();
         assert!(state.is_unlocked());
         assert!(pubkey.starts_with("age1"));
-
-        // Should be able to encrypt/decrypt
-        let plaintext = b"secret data";
-        let ciphertext = state.encrypt(plaintext).unwrap();
-        let decrypted = state.decrypt(&ciphertext).unwrap();
-        assert_eq!(&decrypted, plaintext);
     }
 
     #[test]

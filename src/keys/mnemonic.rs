@@ -351,17 +351,18 @@ mod test {
     }
 
     #[test]
-    fn identity_encrypts_decrypts() {
+    fn identity_encrypts_decrypts_v2() {
         let words = "abandon abandon abandon abandon abandon abandon \
                       abandon abandon abandon abandon abandon abandon \
                       abandon abandon abandon abandon abandon abandon \
                       abandon abandon abandon abandon abandon art";
 
         let id = identity_from_mnemonic(words, "test passphrase").unwrap();
-        let bbox = crate::keys::blackbox_from_identity(id);
+        let kek = crate::keys::kek::Kek::generate();
+        let bbox = crate::keys::blackbox_from_identity(id).with_kek(kek, 0);
 
         let plaintext = b"encrypted with mnemonic-derived key";
-        let encrypted = bbox.encrypt(plaintext).unwrap();
+        let encrypted = bbox.encrypt_blob(plaintext).unwrap();
         let decrypted = bbox.decrypt(&encrypted).unwrap();
         assert_eq!(&decrypted, plaintext);
     }

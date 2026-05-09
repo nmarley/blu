@@ -1,9 +1,7 @@
 //! Integration test for BlackBox::Agent variant.
 //!
-//! This module previously contained AgentBlackBox and BlackBoxProxy,
-//! which have been replaced by the BlackBox::Agent enum variant in
-//! src/age.rs. The test remains here to verify the agent-backed
-//! BlackBox works end-to-end.
+//! This module verifies that an agent-backed BlackBox can perform
+//! v2 envelope encryption (wrap_dek/unwrap_dek) end-to-end.
 
 #[cfg(test)]
 mod test {
@@ -11,11 +9,13 @@ mod test {
     use crate::agent::client::AgentClient;
     use crate::agent::daemon::run_daemon;
     use crate::agent::paths::AgentPaths;
+    use crate::keys::kek::KekStore;
+    use std::str::FromStr;
     use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
-    fn agent_blackbox_encrypt_decrypt() {
+    fn agent_blackbox_v2_round_trip() {
         let tmp = tempdir().unwrap();
         let tmp_path = tmp.keep();
         let paths = AgentPaths::from_base(&tmp_path).unwrap();
@@ -36,10 +36,22 @@ mod test {
         let secret = include_str!("../../test/blu_secrets/blu.key").trim();
         client.unlock_with_secret(secret).unwrap();
 
+        // Create a KEK store so the agent can load a KEK
+        let blu_dir = tmp_path.join(".blu");
+        std::fs::create_dir_all(&blu_dir).unwrap();
+        let identity = age::x25519::Identity::from_str(secret).unwrap();
+        let recipient = identity.to_public().to_string();
+        let store = KekStore::new(&blu_dir);
+        store.init(&[&recipient]).unwrap();
+
+        // Load KEK via wrap_dek with kek_dir
+        let kek_dir = blu_dir.to_str().unwrap();
+        client.wrap_dek(Some(kek_dir)).unwrap();
+
         let bbox = BlackBox::from_agent(client);
 
-        let plaintext = b"agent BlackBox round-trip test";
-        let ciphertext = bbox.encrypt(plaintext).unwrap();
+        let plaintext = b"agent BlackBox v2 round-trip test";
+        let ciphertext = bbox.encrypt_blob(plaintext).unwrap();
         let decrypted = bbox.decrypt(&ciphertext).unwrap();
         assert_eq!(&decrypted, plaintext);
 

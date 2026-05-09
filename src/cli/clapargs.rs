@@ -77,10 +77,6 @@ pub struct InitArgs {
     /// Directory to initialize as a blu vault
     pub dir: String,
 
-    /// Import an existing age key file instead of generating a new one
-    #[arg(long)]
-    pub key_file: Option<String>,
-
     /// Do not encrypt the private key with a passphrase
     #[arg(long)]
     pub no_passphrase: bool,

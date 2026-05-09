@@ -382,6 +382,11 @@ mod test {
 
     const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
+    fn test_bbox() -> BlackBox {
+        let kek = crate::keys::kek::Kek::generate();
+        BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 0)
+    }
+
     // helper func used in tests below
     fn temp_local_backend() -> Local {
         let datadir = tempdir().unwrap();
@@ -389,7 +394,7 @@ mod test {
     }
 
     fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let bbox = test_bbox();
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
@@ -426,7 +431,7 @@ mod test {
         ];
         let datadir = tempdir().unwrap();
         let backend = Local::new(&datadir);
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let bbox = test_bbox();
         let mut blob_index = BlobIndex::new();
         let mut blob_buf = BlobBuffer::with_capacity(&backend, bbox, 3);
         // load w/some data
