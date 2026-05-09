@@ -208,7 +208,10 @@ fn identity_show() -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(&toml_path)?;
     let meta: IdentityMeta = toml::from_str(&content)?;
 
-    println!("PQ public key: {}...", &meta.pq_public_key[..40.min(meta.pq_public_key.len())]);
+    println!(
+        "PQ public key: {}...",
+        &meta.pq_public_key[..40.min(meta.pq_public_key.len())]
+    );
     println!("Created:       {}", meta.created);
     if meta.biometric {
         let status = if biometric::has_biometric_identity() {
