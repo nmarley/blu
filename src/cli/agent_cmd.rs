@@ -1,7 +1,5 @@
 //! CLI handler for `blu agent`, `blu unlock`, and `blu lock` subcommands.
 
-use age::secrecy::ExposeSecret;
-
 use crate::agent::biometric;
 use crate::agent::AgentClient;
 use crate::cli::clapargs::{AgentArgs, AgentCommand};
@@ -53,19 +51,11 @@ pub fn unlock() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Attempt biometric unlock: retrieve seed via Touch ID, derive
-/// identity and PQ seed, send both to agent.
+/// the PQ seed, and send it to the agent.
 fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::Error>> {
     let seed = biometric::unlock().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    let identity = mnemonic::derive_x25519_identity(&seed)?;
-
-    // Extract the secret key string to send to the agent
-    let identity_secret = identity.to_string();
-    let secret_str = identity_secret.expose_secret();
-
-    // Derive PQ seed from the same BIP39 seed and send both to the
-    // agent so it can decrypt mlkem768x25519-wrapped KEKs.
     let pq_seed = mnemonic::derive_pq_seed(&seed)?;
-    let pubkey = client.unlock_with_secret_pq(secret_str, pq_seed.as_bytes())?;
+    let pubkey = client.unlock_with_pq_seed(pq_seed.as_bytes())?;
     println!("unlocked via Touch ID ({})", pubkey);
 
     Ok(())

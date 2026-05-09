@@ -1,5 +1,4 @@
 use std::io::{Read, Write};
-use std::str::FromStr;
 
 use crate::agent::AgentClient;
 use crate::keys::dek::Dek;
@@ -20,10 +19,8 @@ pub struct KekContext {
 
 /// The underlying crypto backend for a BlackBox.
 enum BlackBoxInner {
-    /// Crypto performed in-process using age identities.
-    InProcess {
-        identities: Vec<age::x25519::Identity>,
-    },
+    /// Crypto performed in-process using an attached KEK.
+    InProcess,
     /// Crypto delegated to the agent daemon.
     Agent(AgentClient),
 }
@@ -33,7 +30,7 @@ enum BlackBoxInner {
 /// Anything that needs encryption or decryption in the project should use this.
 ///
 /// Two modes exist:
-/// - In-process: holds age identities directly and performs crypto in the
+/// - In-process: holds an unwrapped KEK and performs DEK wrapping in the
 ///   current process.
 /// - Agent: delegates key wrapping to the agent daemon over a Unix
 ///   socket, so key material never leaves the daemon process.
@@ -52,9 +49,7 @@ pub struct BlackBox {
 impl Clone for BlackBox {
     fn clone(&self) -> Self {
         let inner = match &self.inner {
-            BlackBoxInner::InProcess { identities } => BlackBoxInner::InProcess {
-                identities: identities.clone(),
-            },
+            BlackBoxInner::InProcess => BlackBoxInner::InProcess,
             BlackBoxInner::Agent(_) => {
                 let client =
                     AgentClient::new().expect("failed to create agent client for BlackBox clone");
@@ -72,7 +67,7 @@ impl Clone for BlackBox {
 impl std::fmt::Debug for BlackBox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let variant = match &self.inner {
-            BlackBoxInner::InProcess { .. } => "InProcess",
+            BlackBoxInner::InProcess => "InProcess",
             BlackBoxInner::Agent(_) => "Agent",
         };
         let has_kek = self.kek_ctx.is_some();
@@ -85,14 +80,10 @@ impl std::fmt::Debug for BlackBox {
 }
 
 impl BlackBox {
-    /// Create a new in-process BlackBox with the given identities.
-    pub fn new(priv_keys: &[&str]) -> BlackBox {
-        let identities: Vec<age::x25519::Identity> = priv_keys
-            .iter()
-            .map(|x| age::x25519::Identity::from_str(x).unwrap())
-            .collect();
+    /// Create a new in-process BlackBox.
+    pub fn new() -> BlackBox {
         BlackBox {
-            inner: BlackBoxInner::InProcess { identities },
+            inner: BlackBoxInner::InProcess,
             kek_ctx: None,
             kek_dir: None,
         }
@@ -160,7 +151,7 @@ impl BlackBox {
         file_type: FileType,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         match &self.inner {
-            BlackBoxInner::InProcess { .. } => {
+            BlackBoxInner::InProcess => {
                 let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
                     crate::error::BluError::EncryptionFailed(
                         "no KEK available for encryption".into(),
@@ -203,7 +194,7 @@ impl BlackBox {
         }
 
         match &self.inner {
-            BlackBoxInner::InProcess { .. } => {
+            BlackBoxInner::InProcess => {
                 let kek_ctx = self.kek_ctx.as_ref().ok_or_else(|| {
                     crate::error::BluError::DecryptionFailed(
                         "v2 file detected but no KEK available".into(),
@@ -270,7 +261,6 @@ pub mod test {
     use crate::v2format;
 
     pub(crate) const TEST_PASSPHRASE_ENIGMA: &str = "correct horse battery staple";
-    pub(crate) const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     #[test]
     #[ignore] // slow
@@ -288,7 +278,7 @@ pub mod test {
     #[test]
     fn encrypt_blob_v2_with_kek() {
         let kek = Kek::generate();
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek.clone(), 0);
+        let bbox = BlackBox::new().with_kek(kek.clone(), 0);
         let data = b"blob data for v2";
 
         let encrypted = bbox.encrypt_blob(data).unwrap();
@@ -301,7 +291,7 @@ pub mod test {
     #[test]
     fn encrypt_index_v2_with_kek() {
         let kek = Kek::generate();
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek.clone(), 5);
+        let bbox = BlackBox::new().with_kek(kek.clone(), 5);
         let data = b"index data for v2";
 
         let encrypted = bbox.encrypt_index(data).unwrap();
@@ -313,7 +303,7 @@ pub mod test {
 
     #[test]
     fn encrypt_blob_without_kek_errors() {
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let bbox = BlackBox::new();
         let data = b"should fail without kek";
 
         let result = bbox.encrypt_blob(data);
@@ -323,7 +313,7 @@ pub mod test {
     #[test]
     fn decrypt_non_v2_data_errors() {
         let kek = Kek::generate();
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 0);
+        let bbox = BlackBox::new().with_kek(kek, 0);
 
         let result = bbox.decrypt(b"not a v2 file at all");
         assert!(result.is_err());
@@ -332,8 +322,8 @@ pub mod test {
     #[test]
     fn decrypt_v2_without_kek_errors() {
         let kek = Kek::generate();
-        let bbox_with = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 0);
-        let bbox_without = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let bbox_with = BlackBox::new().with_kek(kek, 0);
+        let bbox_without = BlackBox::new();
 
         let encrypted = bbox_with.encrypt_blob(b"secret").unwrap();
         let result = bbox_without.decrypt(&encrypted);
@@ -343,7 +333,7 @@ pub mod test {
     #[test]
     fn set_kek_on_existing_bbox() {
         let kek = Kek::generate();
-        let mut bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]);
+        let mut bbox = BlackBox::new();
         assert!(!bbox.has_kek());
 
         bbox.set_kek(kek, 0);
@@ -356,7 +346,7 @@ pub mod test {
     #[test]
     fn clone_preserves_kek() {
         let kek = Kek::generate();
-        let bbox = BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 3);
+        let bbox = BlackBox::new().with_kek(kek, 3);
         let bbox2 = bbox.clone();
 
         assert!(bbox2.has_kek());

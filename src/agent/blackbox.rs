@@ -9,8 +9,9 @@ mod test {
     use crate::agent::client::AgentClient;
     use crate::agent::daemon::run_daemon;
     use crate::agent::paths::AgentPaths;
+    use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
     use crate::keys::kek::KekStore;
-    use std::str::FromStr;
+    use crate::keys::pq::PqRecipient;
     use std::time::Duration;
     use tempfile::tempdir;
 
@@ -33,16 +34,17 @@ mod test {
         }
 
         let client = AgentClient::with_paths(paths.clone());
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        client.unlock_with_secret(secret).unwrap();
+        let seed = HybridSeed::new([7u8; 32]);
+        client.unlock_with_pq_seed(seed.as_bytes()).unwrap();
 
         // Create a KEK store so the agent can load a KEK
         let blu_dir = tmp_path.join(".blu");
         std::fs::create_dir_all(&blu_dir).unwrap();
-        let identity = age::x25519::Identity::from_str(secret).unwrap();
-        let recipient = identity.to_public().to_string();
+        let recipient = PqRecipient::new(public_key_from_seed(&seed)).to_string();
         let store = KekStore::new(&blu_dir);
-        store.init(&[&recipient]).unwrap();
+        let pq_recipient = crate::keys::pq::parse_pq_recipient(&recipient).unwrap();
+        let recipients: Vec<&dyn age::Recipient> = vec![&pq_recipient as &dyn age::Recipient];
+        store.init_with(&recipients, &[recipient]).unwrap();
 
         // Load KEK via wrap_dek with kek_dir
         let kek_dir = blu_dir.to_str().unwrap();

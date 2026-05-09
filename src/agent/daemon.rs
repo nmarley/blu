@@ -269,39 +269,42 @@ fn handle_unlock_with_secret(
     id: &serde_json::Value,
     params: &serde_json::Value,
 ) -> serde_json::Value {
-    let secret = match params.get("secret").and_then(|v| v.as_str()) {
+    let pq_seed_b64 = match params.get("pq_seed").and_then(|v| v.as_str()) {
         Some(s) => s,
         None => {
             return protocol::error_response(
                 id,
                 protocol::error_code::INVALID_PARAMS,
-                "missing secret",
+                "missing pq_seed",
             );
         }
     };
 
-    match state.unlock_with_secret(secret) {
-        Ok(public_key) => {
-            // If a PQ seed was provided, set it on the agent state.
-            // The biometric unlock path derives the PQ seed from the
-            // BIP39 Seed and sends it alongside the X25519 secret.
-            if let Some(pq_seed_b64) = params.get("pq_seed").and_then(|v| v.as_str()) {
-                match BASE64.decode(pq_seed_b64) {
-                    Ok(bytes) if bytes.len() == 32 => {
-                        let mut seed_bytes = [0u8; 32];
-                        seed_bytes.copy_from_slice(&bytes);
-                        state.set_pq_seed(crate::keys::hybrid_kem::HybridSeed::new(seed_bytes));
-                        info!("PQ seed loaded via unlock_with_secret");
-                    }
-                    Ok(bytes) => {
-                        warn!("ignoring pq_seed: expected 32 bytes, got {}", bytes.len());
-                    }
-                    Err(e) => {
-                        warn!("ignoring pq_seed: invalid base64: {}", e);
-                    }
-                }
-            }
+    let seed = match BASE64.decode(pq_seed_b64) {
+        Ok(bytes) if bytes.len() == 32 => {
+            let mut seed_bytes = [0u8; 32];
+            seed_bytes.copy_from_slice(&bytes);
+            crate::keys::hybrid_kem::HybridSeed::new(seed_bytes)
+        }
+        Ok(bytes) => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                &format!("pq_seed must be 32 bytes, got {}", bytes.len()),
+            );
+        }
+        Err(e) => {
+            return protocol::error_response(
+                id,
+                protocol::error_code::INVALID_PARAMS,
+                &format!("invalid pq_seed: {}", e),
+            );
+        }
+    };
 
+    match state.unlock_with_pq_seed(seed) {
+        Ok(public_key) => {
+            info!("PQ seed loaded via unlock_with_secret");
             protocol::success_response(
                 id,
                 serde_json::json!({
@@ -506,9 +509,18 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
 mod test {
     use super::*;
     use crate::agent::paths::AgentPaths;
+    use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
+    use crate::keys::pq::PqRecipient;
     use std::os::unix::net::UnixStream;
-    use std::str::FromStr;
     use tempfile::tempdir;
+
+    fn test_seed() -> HybridSeed {
+        HybridSeed::new([11u8; 32])
+    }
+
+    fn pq_seed_param(seed: &HybridSeed) -> String {
+        BASE64.encode(seed.as_bytes())
+    }
 
     /// Helper: send a JSON-RPC request to the agent and read the response.
     fn send_request(
@@ -603,22 +615,22 @@ mod test {
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Unlock with the test key via unlock_with_secret
-        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        // Unlock with a PQ seed
+        let seed = test_seed();
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock_with_secret",
                 "params": {
-                    "secret": test_secret
+                    "pq_seed": pq_seed_param(&seed)
                 },
                 "id": 11
             }),
         );
         assert!(resp["result"]["public_key"].is_string());
         let pubkey = resp["result"]["public_key"].as_str().unwrap();
-        assert!(pubkey.starts_with("age1"));
+        assert!(pubkey.starts_with("age1pq"));
 
         // Status should now show unlocked with timeout info
         let resp = send_request(
@@ -677,15 +689,15 @@ mod test {
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Unlock via secret key
-        let test_secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        // Unlock via PQ seed
+        let seed = test_seed();
         send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock_with_secret",
                 "params": {
-                    "secret": test_secret
+                    "pq_seed": pq_seed_param(&seed)
                 },
                 "id": 1
             }),
@@ -694,11 +706,12 @@ mod test {
         // Set up a KekStore in the temp dir so the agent can load it
         let blu_dir = tmp.path().join(".blu");
         std::fs::create_dir_all(&blu_dir).unwrap();
-        let identity_str = include_str!("../../test/blu_secrets/blu.key").trim();
-        let identity = age::x25519::Identity::from_str(identity_str).unwrap();
-        let recipient = identity.to_public().to_string();
+        let recipient = PqRecipient::new(public_key_from_seed(&seed));
+        let recipient_str = recipient.to_string();
         let store = crate::keys::kek::KekStore::new(&blu_dir);
-        store.init(&[&recipient]).unwrap();
+        store
+            .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap();
 
         // wrap_dek while no KEK is loaded and no kek_dir provided should fail
         let resp = send_request(
@@ -790,19 +803,18 @@ mod test {
         );
         assert_eq!(resp["error"]["code"], protocol::error_code::INVALID_PARAMS);
 
-        // unlock_with_secret with invalid secret -> CRYPTO_ERROR
+        // unlock_with_secret with missing pq_seed -> INVALID_PARAMS
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock_with_secret",
                 "params": {
-                    "secret": "not-a-valid-age-secret-key"
                 },
                 "id": 2
             }),
         );
-        assert_eq!(resp["error"]["code"], protocol::error_code::CRYPTO_ERROR);
+        assert_eq!(resp["error"]["code"], protocol::error_code::INVALID_PARAMS);
 
         // Shutdown
         send_request(
@@ -818,25 +830,25 @@ mod test {
     }
 
     #[test]
-    fn daemon_unlock_with_secret() {
+    fn daemon_unlock_with_pq_seed() {
         let tmp = tempdir().unwrap();
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
+        let seed = test_seed();
 
-        // Unlock with raw secret key
+        // Unlock with PQ seed
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock_with_secret",
-                "params": { "secret": secret },
+                "params": { "pq_seed": pq_seed_param(&seed) },
                 "id": 1
             }),
         );
         let pubkey = resp["result"]["public_key"].as_str().unwrap();
-        assert!(pubkey.starts_with("age1"));
+        assert!(pubkey.starts_with("age1pq"));
 
         // Status should show unlocked
         let resp = send_request(
@@ -864,38 +876,28 @@ mod test {
     }
 
     #[test]
-    fn daemon_unlock_with_secret_and_pq_seed() {
-        use crate::keys::mnemonic;
-
+    fn daemon_unlock_with_pq_seed_loads_kek() {
         let tmp = tempdir().unwrap();
         let paths = AgentPaths::from_base(tmp.path()).unwrap();
         let handle = start_test_daemon(&paths);
 
-        // Derive identity and PQ seed from a test mnemonic
-        let mnemonic_str = "abandon abandon abandon abandon abandon abandon \
-                            abandon abandon abandon abandon abandon abandon \
-                            abandon abandon abandon abandon abandon abandon \
-                            abandon abandon abandon abandon abandon art";
-        let m = mnemonic::parse_mnemonic(mnemonic_str).unwrap();
-        let seed = mnemonic::mnemonic_to_seed(&m, "");
-        let identity = mnemonic::derive_x25519_identity(&seed).unwrap();
-        let pq_seed = mnemonic::derive_pq_seed(&seed).unwrap();
+        let seed = test_seed();
 
-        let identity_secret = identity.to_string();
-        let secret_str = age::secrecy::ExposeSecret::expose_secret(&identity_secret);
-
-        // Unlock without PQ seed: status should show has_pq=false
+        // Unlock with PQ seed
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "unlock_with_secret",
-                "params": { "secret": secret_str },
+                "params": {
+                    "pq_seed": pq_seed_param(&seed),
+                },
                 "id": 1
             }),
         );
         assert!(resp["result"]["public_key"].is_string());
 
+        // Status should show has_pq=true
         let resp = send_request(
             &paths.socket,
             &serde_json::json!({
@@ -906,44 +908,6 @@ mod test {
             }),
         );
         assert_eq!(resp["result"]["unlocked"], true);
-        assert_eq!(resp["result"]["has_pq"], false);
-
-        // Lock, then re-unlock WITH PQ seed
-        send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "lock",
-                "params": {},
-                "id": 3
-            }),
-        );
-
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "unlock_with_secret",
-                "params": {
-                    "secret": secret_str,
-                    "pq_seed": BASE64.encode(pq_seed.as_bytes()),
-                },
-                "id": 4
-            }),
-        );
-        assert!(resp["result"]["public_key"].is_string());
-
-        // Status should now show has_pq=true
-        let resp = send_request(
-            &paths.socket,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "method": "status",
-                "params": {},
-                "id": 5
-            }),
-        );
-        assert_eq!(resp["result"]["unlocked"], true);
         assert_eq!(resp["result"]["has_pq"], true);
 
         // Set up a PQ-wrapped KEK store and verify the agent
@@ -951,7 +915,7 @@ mod test {
         let blu_dir = tmp.path().join(".blu");
         std::fs::create_dir_all(&blu_dir).unwrap();
 
-        let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
+        let pq_recipient = PqRecipient::new(public_key_from_seed(&seed));
         let store = crate::keys::kek::KekStore::new(&blu_dir);
         let recipient_str = pq_recipient.to_string();
         store
@@ -967,7 +931,7 @@ mod test {
                 "params": {
                     "kek_dir": blu_dir.to_str().unwrap()
                 },
-                "id": 6
+                "id": 3
             }),
         );
         assert!(resp["result"]["dek"].is_string());
@@ -980,7 +944,7 @@ mod test {
                 "jsonrpc": "2.0",
                 "method": "lock",
                 "params": {},
-                "id": 7
+                "id": 4
             }),
         );
 
@@ -990,7 +954,7 @@ mod test {
                 "jsonrpc": "2.0",
                 "method": "status",
                 "params": {},
-                "id": 8
+                "id": 5
             }),
         );
         assert_eq!(resp["result"]["has_pq"], false);

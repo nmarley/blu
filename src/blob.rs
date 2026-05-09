@@ -380,11 +380,9 @@ mod test {
     use super::*;
     use crate::storage::Local;
 
-    const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
-
     fn test_bbox() -> BlackBox {
         let kek = crate::keys::kek::Kek::generate();
-        BlackBox::new(&[TEST_AGE_SECRET_KEY]).with_kek(kek, 0)
+        BlackBox::new().with_kek(kek, 0)
     }
 
     // helper func used in tests below

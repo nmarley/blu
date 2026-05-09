@@ -10,8 +10,6 @@
 //! ```text
 //! seed (512 bits)
 //!   |
-//!   +--> HKDF-SHA256(salt="blu-x25519-v1", info="") -> 32 bytes -> age x25519 identity
-//!   |
 //!   +--> HKDF-SHA256(salt="blu-pq-v1", info="") -> 32 bytes -> PQ seed (mlkem768x25519)
 //!   |
 //!   +--> HKDF-SHA256(salt="blu-device-key-v1", info="") -> 32 bytes -> device key
@@ -20,17 +18,12 @@
 //! The mnemonic is never stored on disk. Users must remember it or
 //! use a recovery kit.
 
-use std::str::FromStr;
-
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
 use zeroize::ZeroizeOnDrop;
 
 use crate::error::{BluError, Result};
-
-/// HKDF salt for deriving the x25519 identity key from the seed.
-const X25519_SALT: &[u8] = b"blu-x25519-v1";
 
 /// HKDF salt for deriving the post-quantum identity seed.
 const PQ_SALT: &[u8] = b"blu-pq-v1";
@@ -110,16 +103,6 @@ fn derive_key(seed: &Seed, salt: &[u8]) -> Result<DerivedKey> {
     Ok(DerivedKey { bytes: okm })
 }
 
-/// Derive an age x25519 identity (private key) from a seed.
-///
-/// The 32 bytes are derived via HKDF-SHA256 with salt "blu-x25519-v1",
-/// then encoded as a bech32 AGE-SECRET-KEY string and parsed into an
-/// age identity.
-pub fn derive_x25519_identity(seed: &Seed) -> Result<age::x25519::Identity> {
-    let key = derive_key(seed, X25519_SALT)?;
-    identity_from_raw_bytes(key.as_bytes())
-}
-
 /// Derive a device encryption key from a seed.
 ///
 /// Used to encrypt the seed for biometric storage.
@@ -148,36 +131,6 @@ pub fn derive_pq_recipient(seed: &Seed) -> Result<crate::keys::pq::PqRecipient> 
     let pq_seed = derive_pq_seed(seed)?;
     let pk = crate::keys::hybrid_kem::public_key_from_seed(&pq_seed);
     Ok(crate::keys::pq::PqRecipient::new(pk))
-}
-
-/// Construct an age x25519 Identity from raw 32-byte private key material.
-fn identity_from_raw_bytes(bytes: &[u8; 32]) -> Result<age::x25519::Identity> {
-    use bech32::{ToBase32, Variant};
-
-    let encoded = bech32::encode("age-secret-key-", bytes.to_base32(), Variant::Bech32)
-        .map_err(|e| BluError::Internal(format!("bech32 encode failed: {}", e)))?;
-    let upper = encoded.to_uppercase();
-
-    age::x25519::Identity::from_str(&upper)
-        .map_err(|e| BluError::InvalidKeyFormat(format!("failed to create age identity: {}", e)))
-}
-
-/// Get the public key (recipient) string from an identity.
-pub fn public_key_from_identity(identity: &age::x25519::Identity) -> String {
-    identity.to_public().to_string()
-}
-
-/// Full pipeline: mnemonic string + passphrase -> age identity.
-///
-/// Convenience function that combines parsing, seed derivation, and
-/// key derivation in one call.
-pub fn identity_from_mnemonic(
-    mnemonic_str: &str,
-    passphrase: &str,
-) -> Result<age::x25519::Identity> {
-    let mnemonic = parse_mnemonic(mnemonic_str)?;
-    let seed = mnemonic_to_seed(&mnemonic, passphrase);
-    derive_x25519_identity(&seed)
 }
 
 #[cfg(test)]
@@ -262,47 +215,6 @@ mod test {
     }
 
     #[test]
-    fn derive_x25519_identity_deterministic() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
-        let seed = mnemonic_to_seed(&m, "");
-
-        let id1 = derive_x25519_identity(&seed).unwrap();
-        let id2 = derive_x25519_identity(&seed).unwrap();
-
-        let pub1 = public_key_from_identity(&id1);
-        let pub2 = public_key_from_identity(&id2);
-        assert_eq!(pub1, pub2);
-        assert!(pub1.starts_with("age1"));
-    }
-
-    #[test]
-    fn derive_x25519_identity_differs_by_passphrase() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
-
-        let seed1 = mnemonic_to_seed(&m, "");
-        let seed2 = mnemonic_to_seed(&m, "different");
-
-        let id1 = derive_x25519_identity(&seed1).unwrap();
-        let id2 = derive_x25519_identity(&seed2).unwrap();
-
-        let pub1 = public_key_from_identity(&id1);
-        let pub2 = public_key_from_identity(&id2);
-        assert_ne!(pub1, pub2);
-    }
-
-    #[test]
     fn derive_device_key_deterministic() {
         let m = parse_mnemonic(
             "abandon abandon abandon abandon abandon abandon \
@@ -319,55 +231,6 @@ mod test {
     }
 
     #[test]
-    fn derive_device_key_differs_from_x25519() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
-        let seed = mnemonic_to_seed(&m, "");
-
-        let x25519_key = derive_key(&seed, X25519_SALT).unwrap();
-        let device_key = derive_device_key(&seed).unwrap();
-        assert_ne!(x25519_key.as_bytes(), device_key.as_bytes());
-    }
-
-    #[test]
-    fn identity_from_mnemonic_convenience() {
-        let words = "abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon art";
-
-        let id = identity_from_mnemonic(words, "").unwrap();
-        let pubkey = public_key_from_identity(&id);
-        assert!(pubkey.starts_with("age1"));
-
-        // Should be deterministic
-        let id2 = identity_from_mnemonic(words, "").unwrap();
-        assert_eq!(pubkey, public_key_from_identity(&id2));
-    }
-
-    #[test]
-    fn identity_encrypts_decrypts_v2() {
-        let words = "abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon art";
-
-        let id = identity_from_mnemonic(words, "test passphrase").unwrap();
-        let kek = crate::keys::kek::Kek::generate();
-        let bbox = crate::keys::blackbox_from_identity(id).with_kek(kek, 0);
-
-        let plaintext = b"encrypted with mnemonic-derived key";
-        let encrypted = bbox.encrypt_blob(plaintext).unwrap();
-        let decrypted = bbox.decrypt(&encrypted).unwrap();
-        assert_eq!(&decrypted, plaintext);
-    }
-
-    #[test]
     fn derive_pq_seed_deterministic() {
         let m = parse_mnemonic(
             "abandon abandon abandon abandon abandon abandon \
@@ -381,22 +244,6 @@ mod test {
         let pq1 = derive_pq_seed(&seed).unwrap();
         let pq2 = derive_pq_seed(&seed).unwrap();
         assert_eq!(pq1.as_bytes(), pq2.as_bytes());
-    }
-
-    #[test]
-    fn derive_pq_seed_differs_from_x25519() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
-        let seed = mnemonic_to_seed(&m, "");
-
-        let x25519_key = derive_key(&seed, X25519_SALT).unwrap();
-        let pq_seed = derive_pq_seed(&seed).unwrap();
-        assert_ne!(x25519_key.as_bytes(), pq_seed.as_bytes());
     }
 
     #[test]

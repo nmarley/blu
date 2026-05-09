@@ -64,19 +64,20 @@ pub fn load_config_and_blackbox(opts: &LoadOptions<'_>) -> Result<(Config, Black
 /// Load the BlackBox from a config, handling agent and passphrase prompting.
 ///
 /// Strategy:
-/// 1. If --no-passphrase is set, try loading the key directly (for
-///    unencrypted keys). Skip the agent entirely since we cannot prompt.
-/// 2. Otherwise, try the agent path: connect (auto-starting if needed),
+/// 1. Always use the agent. PQ-only vaults require the agent-held PQ
+///    seed to unwrap KEKs.
+/// 2. If --no-passphrase is set, try unlocking with an empty
+///    passphrase only and never prompt.
+/// 3. Otherwise, connect to the agent (auto-starting if needed),
 ///    check if already unlocked, prompt and unlock if locked.
-/// 3. If the agent path fails for any reason, fall back to in-process.
 pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result<BlackBox> {
     if !cfg.has_encryption() {
         return Err(BluError::NoKeyConfigured);
     }
 
-    // --no-passphrase: skip agent, try direct load with no passphrase
+    // --no-passphrase: do not prompt, but still use the agent.
     if opts.no_passphrase {
-        return load_blackbox_inprocess(cfg, None);
+        return load_blackbox_via_agent(cfg, "");
     }
 
     // If an explicit passphrase was provided, use the agent with it
@@ -84,25 +85,7 @@ pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result
         return load_blackbox_via_agent(cfg, pass);
     }
 
-    // Try the agent path
-    match try_agent_blackbox(cfg) {
-        Ok(bbox) => return Ok(bbox),
-        Err(BluError::WrongPassphrase) => return Err(BluError::WrongPassphrase),
-        Err(e) => {
-            info!("agent path failed, falling back to in-process: {}", e);
-        }
-    }
-
-    // Fallback: try without passphrase first (unencrypted key)
-    match load_blackbox_inprocess(cfg, None) {
-        Ok(bbox) => return Ok(bbox),
-        Err(BluError::PassphraseRequired) => {}
-        Err(e) => return Err(e),
-    }
-
-    // Prompt for passphrase, load in-process
-    let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
-    load_blackbox_inprocess(cfg, Some(&pass))
+    try_agent_blackbox(cfg)
 }
 
 /// Try to get a BlackBox through the agent daemon.
@@ -143,13 +126,6 @@ fn load_blackbox_via_agent(cfg: &Config, passphrase: &str) -> Result<BlackBox> {
     client.unlock(passphrase)?;
     let kek_dir = Some(cfg.bludir().to_string_lossy().into_owned());
     Ok(BlackBox::from_agent(client, kek_dir))
-}
-
-/// Load a BlackBox in-process (the old direct path, no agent).
-fn load_blackbox_inprocess(_cfg: &Config, passphrase: Option<&str>) -> Result<BlackBox> {
-    let identity_path = keys::global_identity_path()?;
-    let identity = keys::load_identity(&identity_path, passphrase)?;
-    Ok(keys::blackbox_from_identity(identity))
 }
 
 /// Load just the config (for commands that don't need encryption).

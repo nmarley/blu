@@ -151,34 +151,15 @@ impl AgentClient {
         Ok(public_key)
     }
 
-    /// Unlock the agent with a raw secret key string (AGE-SECRET-KEY-...).
+    /// Unlock the agent with a PQ hybrid seed.
     ///
-    /// Used by the biometric unlock path where the identity is derived
-    /// from the seed rather than loaded from a file.
-    pub fn unlock_with_secret(&self, secret: &str) -> Result<String> {
-        let resp = self.request(
-            "unlock_with_secret",
-            serde_json::json!({ "secret": secret }),
-        )?;
-
-        let public_key = resp["result"]["public_key"]
-            .as_str()
-            .ok_or_else(|| BluError::Internal("missing public_key in unlock response".into()))?
-            .to_string();
-
-        Ok(public_key)
-    }
-
-    /// Unlock the agent with a raw secret key string and PQ seed.
-    ///
-    /// Same as `unlock_with_secret`, but also sends the 32-byte PQ
-    /// seed (base64-encoded) so the agent can decrypt
-    /// mlkem768x25519-wrapped KEKs.
-    pub fn unlock_with_secret_pq(&self, secret: &str, pq_seed: &[u8; 32]) -> Result<String> {
+    /// Used by the biometric unlock path where the PQ seed is derived
+    /// from the recovered BIP39 Seed rather than loaded from
+    /// `identity.age`.
+    pub fn unlock_with_pq_seed(&self, pq_seed: &[u8; 32]) -> Result<String> {
         let resp = self.request(
             "unlock_with_secret",
             serde_json::json!({
-                "secret": secret,
                 "pq_seed": BASE64.encode(pq_seed),
             }),
         )?;
@@ -350,9 +331,9 @@ mod test {
     fn client_unlock_lock_cycle() {
         let (client, _paths, handle) = start_test_client();
 
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        let pubkey = client.unlock_with_secret(secret).unwrap();
-        assert!(pubkey.starts_with("age1"));
+        let seed = crate::keys::hybrid_kem::HybridSeed::new([9u8; 32]);
+        let pubkey = client.unlock_with_pq_seed(seed.as_bytes()).unwrap();
+        assert!(pubkey.starts_with("age1pq"));
 
         let resp = client.status().unwrap();
         assert_eq!(resp["result"]["unlocked"], true);

@@ -7,7 +7,6 @@ use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::error::{BluError, Result as BluResult};
 use crate::io::BlackBoxSerializable;
-use crate::keys;
 use crate::storage::{AmazonS3, Local, StorageBackend};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
@@ -42,8 +41,8 @@ pub struct KeyID {
 ///
 /// Only the PQ recipient is stored. The KEK is wrapped exclusively
 /// with the post-quantum hybrid key (ML-KEM-768 + X25519). The
-/// X25519 public key is recorded in `~/.blu/identity.toml` (global
-/// identity metadata) but is not needed in per-vault config.
+/// PQ public key is recorded in `~/.blu/identity.toml` (global
+/// identity metadata) and copied into each vault config.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq, Default)]
 pub struct EncryptionConfig {
     /// Post-quantum hybrid recipient (mlkem768x25519).
@@ -169,18 +168,6 @@ impl Config {
     /// Check if encryption is configured.
     pub fn has_encryption(&self) -> bool {
         self.encryption.is_some()
-    }
-
-    /// Load the BlackBox (encryption context) from the identity at the given path.
-    ///
-    /// If the identity file is passphrase-protected, a passphrase must be provided.
-    pub fn load_blackbox(
-        &self,
-        identity_path: &Path,
-        passphrase: Option<&str>,
-    ) -> BluResult<BlackBox> {
-        let identity = keys::load_identity(identity_path, passphrase)?;
-        Ok(keys::blackbox_from_identity(identity))
     }
 
     /// Set the encryption configuration.

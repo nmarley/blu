@@ -7,10 +7,6 @@
 //! All functions degrade gracefully: on failure they log a warning and
 //! return `false`. The agent continues to function without mlock; the
 //! caller simply loses the swap-protection guarantee.
-//!
-//! Limitation: the `age::x25519::Identity` internal Curve25519 scalar
-//! cannot be mlocked because it is owned by the `age` crate and does
-//! not expose its backing memory.
 
 use std::ffi::c_void;
 

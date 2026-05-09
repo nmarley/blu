@@ -163,14 +163,15 @@ This is the minimum blast radius for the passphrase-protected file.
 ## Identity File Format
 
 The new `identity.age` file contains the 32-byte PQ hybrid seed
-encoded as a bech32 string with the HRP `BLU-PQ-SEED-1`. When
+encoded as a bech32 string with the HRP `AGE-SECRET-KEY-PQ-`, matching
+the C2SP age convention for mlkem768x25519 identities. When
 passphrase-protected, the bech32 string is encrypted using age's
 scrypt recipient (same mechanism as before, just different payload).
 
 Detection of old vs new format is straightforward:
 
   - Old format: decrypted content starts with `AGE-SECRET-KEY-`
-  - New format: decrypted content starts with `BLU-PQ-SEED-1`
+  - New format: decrypted content starts with `AGE-SECRET-KEY-PQ-`
 
 Since this is a greenfield deployment with no legacy identity files to
 migrate, the old format can simply produce an error with guidance to

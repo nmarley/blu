@@ -22,7 +22,6 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use chrono::Utc;
 use rand::RngCore;
@@ -69,25 +68,7 @@ impl Kek {
         &self.bytes
     }
 
-    /// Wrap this KEK for the given age recipients (public key strings).
-    ///
-    /// Parses each string as an X25519 recipient. For PQ recipients,
-    /// use `wrap_for` instead.
-    pub fn wrap_for_recipients(&self, recipients: &[&str]) -> Result<Vec<u8>> {
-        let parsed: Vec<age::x25519::Recipient> = recipients
-            .iter()
-            .map(|r| {
-                age::x25519::Recipient::from_str(r)
-                    .map_err(|_| BluError::InvalidKeyFormat(format!("invalid recipient: {}", r)))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        let refs: Vec<&dyn age::Recipient> =
-            parsed.iter().map(|r| r as &dyn age::Recipient).collect();
-        self.wrap_for(&refs)
-    }
-
-    /// Wrap this KEK for the given age recipients (trait objects).
+    /// Wrap this KEK for the given age recipients.
     ///
     /// Accepts any `age::Recipient` implementation, including PQ
     /// recipients. The KEK is encrypted as an age file that any of
@@ -110,21 +91,12 @@ impl Kek {
         Ok(encrypted)
     }
 
-    /// Unwrap a KEK from age-encrypted ciphertext using an X25519
-    /// identity string. For PQ identities, use `unwrap_with` instead.
-    pub fn unwrap_with_identity(ciphertext: &[u8], identity_str: &str) -> Result<Self> {
-        let identity = age::x25519::Identity::from_str(identity_str)
-            .map_err(|e| BluError::InvalidKeyFormat(format!("invalid identity: {}", e)))?;
-
-        Self::unwrap_with(ciphertext, &[&identity as &dyn age::Identity])
-    }
-
     /// Unwrap a KEK from age-encrypted ciphertext using identity trait
     /// objects.
     ///
     /// Accepts any `age::Identity` implementation, including PQ
-    /// identities. Multiple identities can be provided for backward
-    /// compatibility (e.g., both PQ and X25519).
+    /// identities. Multiple identities can be provided when needed,
+    /// such as during future key transitions.
     pub fn unwrap_with(ciphertext: &[u8], identities: &[&dyn age::Identity]) -> Result<Self> {
         let decryptor = age::Decryptor::new(ciphertext)
             .map_err(|e| BluError::DecryptionFailed(e.to_string()))?;
@@ -231,39 +203,6 @@ impl KekStore {
         self.metadata_path().exists()
     }
 
-    /// Initialize the KEK store with X25519 recipient strings.
-    ///
-    /// For PQ recipients, use `init_with` instead.
-    pub fn init(&self, recipients: &[&str]) -> Result<Kek> {
-        if self.exists() {
-            return Err(BluError::Internal(
-                "KEK store already exists for this vault".into(),
-            ));
-        }
-
-        let kek = Kek::generate();
-        let wrapped = kek.wrap_for_recipients(recipients)?;
-
-        let version: u16 = 0;
-        let now = Utc::now().to_rfc3339();
-
-        let metadata = KekMetadata {
-            current_version: version,
-            created: now.clone(),
-            versions: vec![KekVersionInfo {
-                version,
-                created: now,
-                status: KekStatus::Active,
-                users: recipients.iter().map(|s| s.to_string()).collect(),
-            }],
-        };
-
-        self.write_metadata(&metadata)?;
-        self.write_wrapped_kek(version, &wrapped)?;
-
-        Ok(kek)
-    }
-
     /// Initialize the KEK store with recipient trait objects.
     ///
     /// Accepts any `age::Recipient` implementations, including PQ
@@ -330,28 +269,14 @@ impl KekStore {
         })
     }
 
-    /// Unwrap the KEK for a given version using an X25519 identity string.
-    pub fn unwrap_kek(&self, version: u16, identity_str: &str) -> Result<Kek> {
-        let wrapped = self.read_wrapped_kek(version)?;
-        Kek::unwrap_with_identity(&wrapped, identity_str)
-    }
-
     /// Unwrap the KEK for a given version using identity trait objects.
     ///
     /// Accepts any `age::Identity` implementations, including PQ
-    /// identities. Provide multiple identities for backward compat
-    /// (e.g., both PQ and X25519 to decrypt old or new wrapped KEKs).
+    /// identities. Provide multiple identities when needed, such as
+    /// during future key transitions.
     pub fn unwrap_kek_with(&self, version: u16, identities: &[&dyn age::Identity]) -> Result<Kek> {
         let wrapped = self.read_wrapped_kek(version)?;
         Kek::unwrap_with(&wrapped, identities)
-    }
-
-    /// Unwrap the current (active) KEK using an X25519 identity string.
-    pub fn unwrap_current_kek(&self, identity_str: &str) -> Result<(Kek, u16)> {
-        let metadata = self.load_metadata()?;
-        let version = metadata.current_version;
-        let kek = self.unwrap_kek(version, identity_str)?;
-        Ok((kek, version))
     }
 
     /// Unwrap the current (active) KEK using identity trait objects.
@@ -365,7 +290,11 @@ impl KekStore {
     /// Add a new KEK version (for rotation). Generates a new KEK,
     /// wraps it for the given recipients, marks the old version as
     /// deprecated, and returns the new plaintext KEK.
-    pub fn rotate(&self, recipients: &[&str]) -> Result<(Kek, u16)> {
+    pub fn rotate_with(
+        &self,
+        recipients: &[&dyn age::Recipient],
+        user_strings: &[String],
+    ) -> Result<(Kek, u16)> {
         let mut metadata = self.load_metadata()?;
 
         let new_version = metadata.current_version + 1;
@@ -379,13 +308,13 @@ impl KekStore {
         }
 
         let kek = Kek::generate();
-        let wrapped = kek.wrap_for_recipients(recipients)?;
+        let wrapped = kek.wrap_for(recipients)?;
 
         metadata.versions.push(KekVersionInfo {
             version: new_version,
             created: now,
             status: KekStatus::Active,
-            users: recipients.iter().map(|s| s.to_string()).collect(),
+            users: user_strings.to_vec(),
         });
         metadata.current_version = new_version;
 
@@ -424,14 +353,16 @@ impl KekStore {
 #[cfg(test)]
 mod test {
     use super::*;
-    use age::secrecy::ExposeSecret;
+    use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
+    use crate::keys::pq::{PqIdentity, PqRecipient};
     use tempfile::tempdir;
 
-    fn test_identity() -> (age::x25519::Identity, String) {
-        let identity_str = include_str!("../../test/blu_secrets/blu.key").trim();
-        let identity = age::x25519::Identity::from_str(identity_str).unwrap();
-        let recipient = identity.to_public().to_string();
-        (identity, recipient)
+    fn test_identity() -> (PqIdentity, PqRecipient, String) {
+        let seed = HybridSeed::new([23u8; 32]);
+        let recipient = PqRecipient::new(public_key_from_seed(&seed));
+        let recipient_str = recipient.to_string();
+        let identity = PqIdentity::new(seed);
+        (identity, recipient, recipient_str)
     }
 
     #[test]
@@ -456,23 +387,14 @@ mod test {
 
     #[test]
     fn wrap_unwrap_round_trip() {
-        let (identity, recipient) = test_identity();
+        let (identity, recipient, _recipient_str) = test_identity();
 
         let kek = Kek::generate();
-        let wrapped = kek.wrap_for_recipients(&[&recipient]).unwrap();
+        let wrapped = kek.wrap_for(&[&recipient as &dyn age::Recipient]).unwrap();
         assert_ne!(&wrapped, kek.as_bytes().as_slice());
 
-        let identity_secret = identity.to_string();
-        let identity_str = identity_secret.expose_secret();
-        let unwrapped = Kek::unwrap_with_identity(&wrapped, identity_str).unwrap();
+        let unwrapped = Kek::unwrap_with(&wrapped, &[&identity as &dyn age::Identity]).unwrap();
         assert_eq!(unwrapped.as_bytes(), kek.as_bytes());
-    }
-
-    #[test]
-    fn wrap_for_invalid_recipient_fails() {
-        let kek = Kek::generate();
-        let result = kek.wrap_for_recipients(&["not-a-valid-key"]);
-        assert!(result.is_err());
     }
 
     #[test]
@@ -481,12 +403,17 @@ mod test {
         let blu_dir = tmp.path().join(".blu");
         fs::create_dir_all(&blu_dir).unwrap();
 
-        let (identity, recipient) = test_identity();
+        let (identity, recipient, recipient_str) = test_identity();
         let store = KekStore::new(&blu_dir);
 
         assert!(!store.exists());
 
-        let kek = store.init(&[&recipient]).unwrap();
+        let kek = store
+            .init_with(
+                &[&recipient as &dyn age::Recipient],
+                &[recipient_str.clone()],
+            )
+            .unwrap();
 
         assert!(store.exists());
 
@@ -495,12 +422,12 @@ mod test {
         assert_eq!(metadata.current_version, 0);
         assert_eq!(metadata.versions.len(), 1);
         assert_eq!(metadata.versions[0].status, KekStatus::Active);
-        assert_eq!(metadata.versions[0].users, vec![recipient.clone()]);
+        assert_eq!(metadata.versions[0].users, vec![recipient_str]);
 
         // Unwrap the KEK
-        let identity_secret = identity.to_string();
-        let identity_str = identity_secret.expose_secret();
-        let (unwrapped, version) = store.unwrap_current_kek(identity_str).unwrap();
+        let (unwrapped, version) = store
+            .unwrap_current_kek_with(&[&identity as &dyn age::Identity])
+            .unwrap();
         assert_eq!(version, 0);
         assert_eq!(unwrapped.as_bytes(), kek.as_bytes());
     }
@@ -511,11 +438,16 @@ mod test {
         let blu_dir = tmp.path().join(".blu");
         fs::create_dir_all(&blu_dir).unwrap();
 
-        let (_identity, recipient) = test_identity();
+        let (_identity, recipient, recipient_str) = test_identity();
         let store = KekStore::new(&blu_dir);
-        store.init(&[&recipient]).unwrap();
+        store
+            .init_with(
+                &[&recipient as &dyn age::Recipient],
+                &[recipient_str.clone()],
+            )
+            .unwrap();
 
-        let result = store.init(&[&recipient]);
+        let result = store.init_with(&[&recipient as &dyn age::Recipient], &[recipient_str]);
         assert!(result.is_err());
     }
 
@@ -525,12 +457,19 @@ mod test {
         let blu_dir = tmp.path().join(".blu");
         fs::create_dir_all(&blu_dir).unwrap();
 
-        let (identity, recipient) = test_identity();
+        let (identity, recipient, recipient_str) = test_identity();
         let store = KekStore::new(&blu_dir);
 
-        let kek_v0 = store.init(&[&recipient]).unwrap();
+        let kek_v0 = store
+            .init_with(
+                &[&recipient as &dyn age::Recipient],
+                &[recipient_str.clone()],
+            )
+            .unwrap();
 
-        let (kek_v1, new_version) = store.rotate(&[&recipient]).unwrap();
+        let (kek_v1, new_version) = store
+            .rotate_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap();
         assert_eq!(new_version, 1);
         assert_ne!(kek_v0.as_bytes(), kek_v1.as_bytes());
 
@@ -542,17 +481,20 @@ mod test {
         assert_eq!(metadata.versions[1].status, KekStatus::Active);
 
         // Both versions should be unwrappable
-        let identity_secret = identity.to_string();
-        let identity_str = identity_secret.expose_secret();
-
-        let unwrapped_v0 = store.unwrap_kek(0, identity_str).unwrap();
+        let unwrapped_v0 = store
+            .unwrap_kek_with(0, &[&identity as &dyn age::Identity])
+            .unwrap();
         assert_eq!(unwrapped_v0.as_bytes(), kek_v0.as_bytes());
 
-        let unwrapped_v1 = store.unwrap_kek(1, identity_str).unwrap();
+        let unwrapped_v1 = store
+            .unwrap_kek_with(1, &[&identity as &dyn age::Identity])
+            .unwrap();
         assert_eq!(unwrapped_v1.as_bytes(), kek_v1.as_bytes());
 
         // Current should be v1
-        let (current, ver) = store.unwrap_current_kek(identity_str).unwrap();
+        let (current, ver) = store
+            .unwrap_current_kek_with(&[&identity as &dyn age::Identity])
+            .unwrap();
         assert_eq!(ver, 1);
         assert_eq!(current.as_bytes(), kek_v1.as_bytes());
     }
@@ -594,13 +536,13 @@ mod test {
         let blu_dir = tmp.path().join(".blu");
         fs::create_dir_all(&blu_dir).unwrap();
 
-        let (identity, recipient) = test_identity();
+        let (_identity, recipient, recipient_str) = test_identity();
         let store = KekStore::new(&blu_dir);
-        store.init(&[&recipient]).unwrap();
+        store
+            .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap();
 
-        let identity_secret = identity.to_string();
-        let identity_str = identity_secret.expose_secret();
-        let result = store.unwrap_kek(99, identity_str);
+        let result = store.read_wrapped_kek(99);
         assert!(result.is_err());
     }
 

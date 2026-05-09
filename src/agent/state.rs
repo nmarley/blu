@@ -225,16 +225,6 @@ impl AgentState {
         Ok(public_key)
     }
 
-    /// Set the PQ seed for this agent session.
-    ///
-    /// Called after unlock when the seed is provided separately
-    /// (e.g., via the biometric path which sends the PQ seed
-    /// alongside the X25519 key for backward compat).
-    pub fn set_pq_seed(&mut self, seed: HybridSeed) {
-        self.pq_seed = Some(seed);
-        self.mlock_pq_seed();
-    }
-
     /// Whether the agent has a PQ identity loaded.
     pub fn has_pq(&self) -> bool {
         self.pq_seed.is_some()
@@ -380,11 +370,13 @@ mod test {
     use super::*;
     use rand::RngCore;
 
-    const TEST_SECRET_KEY: &str = include_str!("../../test/blu_secrets/blu.key");
+    fn test_seed() -> HybridSeed {
+        HybridSeed::new([42u8; 32])
+    }
 
-    /// Helper: unlock the agent with the test secret key.
+    /// Helper: unlock the agent with a test PQ seed.
     fn unlock_test_state(state: &mut AgentState) -> String {
-        state.unlock_with_secret(TEST_SECRET_KEY.trim()).unwrap()
+        state.unlock_with_pq_seed(test_seed()).unwrap()
     }
 
     #[test]
@@ -399,12 +391,12 @@ mod test {
     #[test]
     fn unlock_plaintext_key() {
         let mut state = AgentState::new();
-        let result = state.unlock_with_secret(TEST_SECRET_KEY.trim());
+        let result = state.unlock_with_pq_seed(test_seed());
         assert!(result.is_ok());
         assert!(state.is_unlocked());
         assert!(state.public_key().is_some());
         let pubkey = state.public_key().unwrap();
-        assert!(pubkey.starts_with("age1"));
+        assert!(pubkey.starts_with("age1pq"));
         assert!(state.time_remaining().is_some());
     }
 
@@ -547,32 +539,18 @@ mod test {
     }
 
     #[test]
-    fn unlock_with_secret_key_string() {
+    fn unlock_with_pq_seed_sets_public_key() {
         let mut state = AgentState::new();
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
 
-        let pubkey = state.unlock_with_secret(secret).unwrap();
+        let pubkey = state.unlock_with_pq_seed(test_seed()).unwrap();
         assert!(state.is_unlocked());
-        assert!(pubkey.starts_with("age1"));
+        assert!(pubkey.starts_with("age1pq"));
     }
 
     #[test]
-    fn unlock_with_secret_invalid_key() {
+    fn pq_seed_unlock_and_lock_clears() {
         let mut state = AgentState::new();
-        let result = state.unlock_with_secret("not-a-valid-key");
-        assert!(result.is_err());
-        assert!(!state.is_unlocked());
-    }
-
-    #[test]
-    fn set_pq_seed_and_lock_clears() {
-        let mut state = AgentState::new();
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        state.unlock_with_secret(secret).unwrap();
-
-        let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
-        state.set_pq_seed(HybridSeed::new(seed_bytes));
+        state.unlock_with_pq_seed(test_seed()).unwrap();
         assert!(state.has_pq());
 
         state.lock();
@@ -586,15 +564,13 @@ mod test {
         use crate::keys::pq::PqRecipient;
 
         let mut state = AgentState::new();
-        let secret = include_str!("../../test/blu_secrets/blu.key").trim();
-        state.unlock_with_secret(secret).unwrap();
 
-        // Create a PQ seed and set it
+        // Create a PQ seed and unlock with it
         let mut seed_bytes = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
         let seed = HybridSeed::new(seed_bytes);
         let recipient = PqRecipient::new(public_key_from_seed(&seed));
-        state.set_pq_seed(seed);
+        state.unlock_with_pq_seed(seed).unwrap();
 
         // Create a temp KEK store with a PQ-wrapped KEK
         let tmp = tempfile::tempdir().unwrap();

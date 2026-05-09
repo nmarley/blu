@@ -386,7 +386,7 @@ mod test {
     #[test]
     fn parse_pq_identity_invalid() {
         assert!(parse_pq_identity("not-valid").is_err());
-        assert!(parse_pq_identity("AGE-SECRET-KEY-1ABCDEF").is_err()); // wrong HRP
+        assert!(parse_pq_identity("AGE-SECRET-KEY-OTHER1ABCDEF").is_err()); // wrong HRP
     }
 
     #[test]

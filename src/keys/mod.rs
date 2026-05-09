@@ -74,8 +74,7 @@ pub fn save_pq_seed<P: AsRef<Path>>(
 ///
 /// Expects the file to contain a bech32-encoded PQ identity string
 /// (`AGE-SECRET-KEY-PQ-...`), optionally wrapped in age scrypt
-/// encryption. Returns an error if the file contains a legacy
-/// `AGE-SECRET-KEY-` (X25519) identity.
+/// encryption.
 pub fn load_pq_seed<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Result<HybridSeed> {
     let data = fs::read(&path).map_err(|e| {
         if e.kind() == io::ErrorKind::NotFound {
@@ -98,13 +97,6 @@ pub fn load_pq_seed<P: AsRef<Path>>(path: P, passphrase: Option<&str>) -> Result
     };
 
     let content = content.trim();
-
-    if content.starts_with("AGE-SECRET-KEY-1") {
-        return Err(BluError::InvalidKeyFormat(
-            "legacy X25519 identity detected; run 'blu identity init' to create a PQ identity"
-                .into(),
-        ));
-    }
 
     let identity = parse_pq_identity(content)?;
     Ok(identity.seed().clone())
@@ -171,19 +163,5 @@ mod test {
         // Should succeed with correct passphrase
         let loaded = load_pq_seed(&path, Some(passphrase)).unwrap();
         assert_eq!(seed.as_bytes(), loaded.as_bytes());
-    }
-
-    #[test]
-    fn load_legacy_x25519_identity_errors() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test.key");
-
-        // Write a legacy AGE-SECRET-KEY format
-        fs::write(&path, "AGE-SECRET-KEY-1FAKE").unwrap();
-
-        let result = load_pq_seed(&path, None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("legacy X25519"));
     }
 }

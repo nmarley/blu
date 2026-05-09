@@ -147,36 +147,6 @@ mod test {
     }
 
     #[test]
-    fn backward_compat_x25519_kek_with_pq_agent() {
-        // An agent with both PQ and X25519 identities should be able
-        // to unwrap a KEK that was wrapped with X25519 only (old format).
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
-        let seed = mnemonic::mnemonic_to_seed(&m, "");
-
-        let x25519_identity = mnemonic::derive_x25519_identity(&seed).unwrap();
-        let x25519_pubkey = mnemonic::public_key_from_identity(&x25519_identity);
-        let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
-
-        // Create a KEK store with X25519 recipient (old format)
-        let tmp = tempfile::tempdir().unwrap();
-        let blu_dir = tmp.path().join(".blu");
-        std::fs::create_dir_all(&blu_dir).unwrap();
-
-        let store = KekStore::new(&blu_dir);
-        let kek = store.init(&[&x25519_pubkey]).unwrap();
-
-        // Unwrap with both PQ and X25519 identities (PQ first)
-        let (unwrapped, version) = store
-            .unwrap_current_kek_with(&[
-                &pq_identity as &dyn Identity,
-                &x25519_identity as &dyn Identity,
-            ])
-            .unwrap();
-        assert_eq!(version, 0);
-        assert_eq!(unwrapped.as_bytes(), kek.as_bytes());
-    }
-
-    #[test]
     fn go_age_decrypt_our_pq_output() {
         // Encrypt data with our PQ implementation, then decrypt with
         // Go age v1.3.1. This tests interoperability.
