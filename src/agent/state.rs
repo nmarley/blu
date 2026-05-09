@@ -258,16 +258,6 @@ impl AgentState {
         self.last_activity = None;
     }
 
-    /// Load and cache a vault's KEK.
-    ///
-    /// The `kek_dir` is the path to the vault's `.blu/` directory
-    /// (the KekStore lives under `.blu/keys/`). The agent uses its
-    /// PQ identity to unwrap the KEK.
-    pub fn load_kek(&mut self, kek_dir: &str) -> Result<u16> {
-        let canonical_kek_dir = Self::canonicalize_kek_dir(kek_dir)?;
-        self.load_kek_at(canonical_kek_dir)
-    }
-
     /// Ensure the cached KEK belongs to the requested vault. If no KEK
     /// is cached, or if the request targets a different vault, load the
     /// correct KEK from disk.
@@ -625,8 +615,8 @@ mod test {
             .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
             .unwrap();
 
-        // load_kek should succeed using the PQ identity
-        let version = state.load_kek(blu_dir.to_str().unwrap()).unwrap();
+        // ensure_kek should succeed using the PQ identity
+        let version = state.ensure_kek(blu_dir.to_str().unwrap()).unwrap();
         assert_eq!(version, 0);
         assert!(state.has_kek());
         let canonical_blu_dir = blu_dir.canonicalize().unwrap();
