@@ -334,23 +334,8 @@ fn handle_wrap_dek(
         return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
     }
 
-    // If a kek_dir is provided and no KEK is loaded yet, load it
-    if !state.has_kek() {
-        if let Some(kek_dir) = params.get("kek_dir").and_then(|v| v.as_str()) {
-            if let Err(e) = state.load_kek(kek_dir) {
-                return protocol::error_response(
-                    id,
-                    protocol::error_code::CRYPTO_ERROR,
-                    &format!("failed to load KEK: {}", e),
-                );
-            }
-        } else {
-            return protocol::error_response(
-                id,
-                protocol::error_code::KEK_NOT_LOADED,
-                "no KEK loaded (provide kek_dir to load)",
-            );
-        }
+    if let Err(response) = ensure_request_kek(state, id, params) {
+        return response;
     }
 
     match state.wrap_dek() {
@@ -379,23 +364,8 @@ fn handle_unwrap_dek(
         return protocol::error_response(id, protocol::error_code::AGENT_LOCKED, "agent is locked");
     }
 
-    // If a kek_dir is provided and no KEK is loaded yet, load it
-    if !state.has_kek() {
-        if let Some(kek_dir) = params.get("kek_dir").and_then(|v| v.as_str()) {
-            if let Err(e) = state.load_kek(kek_dir) {
-                return protocol::error_response(
-                    id,
-                    protocol::error_code::CRYPTO_ERROR,
-                    &format!("failed to load KEK: {}", e),
-                );
-            }
-        } else {
-            return protocol::error_response(
-                id,
-                protocol::error_code::KEK_NOT_LOADED,
-                "no KEK loaded (provide kek_dir to load)",
-            );
-        }
+    if let Err(response) = ensure_request_kek(state, id, params) {
+        return response;
     }
 
     let wrapped_b64 = match params.get("wrapped_dek").and_then(|v| v.as_str()) {
@@ -437,6 +407,32 @@ fn handle_unwrap_dek(
             protocol::error_code::CRYPTO_ERROR,
             &format!("unwrap_dek failed: {}", e),
         ),
+    }
+}
+
+fn ensure_request_kek(
+    state: &mut AgentState,
+    id: &serde_json::Value,
+    params: &serde_json::Value,
+) -> std::result::Result<(), serde_json::Value> {
+    if let Some(kek_dir) = params.get("kek_dir").and_then(|v| v.as_str()) {
+        return state.ensure_kek(kek_dir).map(|_| ()).map_err(|e| {
+            protocol::error_response(
+                id,
+                protocol::error_code::CRYPTO_ERROR,
+                &format!("failed to load KEK: {}", e),
+            )
+        });
+    }
+
+    if state.has_kek() {
+        Ok(())
+    } else {
+        Err(protocol::error_response(
+            id,
+            protocol::error_code::KEK_NOT_LOADED,
+            "no KEK loaded (provide kek_dir to load)",
+        ))
     }
 }
 
@@ -509,9 +505,12 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
 mod test {
     use super::*;
     use crate::agent::paths::AgentPaths;
+    use crate::keys::dek::Dek;
     use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
+    use crate::keys::kek::Kek;
     use crate::keys::pq::PqRecipient;
     use std::os::unix::net::UnixStream;
+    use std::path::Path;
     use tempfile::tempdir;
 
     fn test_seed() -> HybridSeed {
@@ -520,6 +519,16 @@ mod test {
 
     fn pq_seed_param(seed: &HybridSeed) -> String {
         BASE64.encode(seed.as_bytes())
+    }
+
+    fn init_test_kek_store(blu_dir: &Path, seed: &HybridSeed) -> Kek {
+        std::fs::create_dir_all(blu_dir).unwrap();
+        let recipient = PqRecipient::new(public_key_from_seed(seed));
+        let recipient_str = recipient.to_string();
+        let store = crate::keys::kek::KekStore::new(blu_dir);
+        store
+            .init_with(&[&recipient as &dyn age::Recipient], &[recipient_str])
+            .unwrap()
     }
 
     /// Helper: send a JSON-RPC request to the agent and read the response.
@@ -773,6 +782,91 @@ mod test {
         assert_eq!(resp["result"]["kek_version"], 0);
 
         // Shutdown
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "shutdown",
+                "params": {},
+                "id": 99
+            }),
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn daemon_reloads_kek_when_kek_dir_changes() {
+        let tmp = tempdir().unwrap();
+        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let handle = start_test_daemon(&paths);
+
+        let seed = test_seed();
+        send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unlock_with_secret",
+                "params": {
+                    "pq_seed": pq_seed_param(&seed)
+                },
+                "id": 1
+            }),
+        );
+
+        let blu_dir_a = tmp.path().join("vault_a/.blu");
+        let blu_dir_b = tmp.path().join("vault_b/.blu");
+        let kek_a = init_test_kek_store(&blu_dir_a, &seed);
+        let kek_b = init_test_kek_store(&blu_dir_b, &seed);
+
+        let resp_a = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "wrap_dek",
+                "params": {
+                    "kek_dir": blu_dir_a.to_str().unwrap()
+                },
+                "id": 2
+            }),
+        );
+        let dek_a = resp_a["result"]["dek"].as_str().unwrap();
+        let wrapped_a = resp_a["result"]["wrapped_dek"].as_str().unwrap();
+
+        let resp_b = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "wrap_dek",
+                "params": {
+                    "kek_dir": blu_dir_b.to_str().unwrap()
+                },
+                "id": 3
+            }),
+        );
+        let dek_b = resp_b["result"]["dek"].as_str().unwrap();
+        let wrapped_b = BASE64
+            .decode(resp_b["result"]["wrapped_dek"].as_str().unwrap())
+            .unwrap();
+
+        let unwrapped_b = Dek::unwrap(&kek_b, &wrapped_b).unwrap();
+        assert_eq!(BASE64.encode(unwrapped_b.as_bytes()), dek_b);
+        assert!(Dek::unwrap(&kek_a, &wrapped_b).is_err());
+
+        let resp_a_again = send_request(
+            &paths.socket,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "unwrap_dek",
+                "params": {
+                    "wrapped_dek": wrapped_a,
+                    "kek_version": 0,
+                    "kek_dir": blu_dir_a.to_str().unwrap()
+                },
+                "id": 4
+            }),
+        );
+        assert_eq!(resp_a_again["result"]["dek"].as_str().unwrap(), dek_a);
+
         send_request(
             &paths.socket,
             &serde_json::json!({

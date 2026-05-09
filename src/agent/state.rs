@@ -15,6 +15,7 @@
 //! the OS from paging them to swap. On lock, they are munlocked
 //! before being zeroized.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::agent::config::AgentConfig;
@@ -42,6 +43,8 @@ pub struct AgentState {
     kek: Option<Kek>,
     /// Version of the cached KEK.
     kek_version: u16,
+    /// Canonical path to the vault `.blu/` directory for the cached KEK.
+    kek_dir: Option<PathBuf>,
 
     /// When the agent was last unlocked (None if locked).
     unlocked_at: Option<Instant>,
@@ -66,6 +69,7 @@ impl AgentState {
             public_key: None,
             kek: None,
             kek_version: 0,
+            kek_dir: None,
             unlocked_at: None,
             last_activity: None,
             config: AgentConfig::default(),
@@ -81,6 +85,7 @@ impl AgentState {
             public_key: None,
             kek: None,
             kek_version: 0,
+            kek_dir: None,
             unlocked_at: None,
             last_activity: None,
             config,
@@ -102,6 +107,13 @@ impl AgentState {
     /// The cached KEK version, if loaded.
     pub fn kek_version(&self) -> Option<u16> {
         self.kek.as_ref().map(|_| self.kek_version)
+    }
+
+    /// The canonical vault `.blu/` path for the cached KEK, if loaded
+    /// from disk.
+    #[cfg(test)]
+    fn kek_dir(&self) -> Option<&std::path::Path> {
+        self.kek_dir.as_deref()
     }
 
     /// The public key, if unlocked.
@@ -241,6 +253,7 @@ impl AgentState {
         // Kek::drop will zeroize the KEK (ZeroizeOnDrop)
         self.kek.take();
         self.kek_version = 0;
+        self.kek_dir = None;
         self.unlocked_at = None;
         self.last_activity = None;
     }
@@ -251,20 +264,47 @@ impl AgentState {
     /// (the KekStore lives under `.blu/keys/`). The agent uses its
     /// PQ identity to unwrap the KEK.
     pub fn load_kek(&mut self, kek_dir: &str) -> Result<u16> {
+        let canonical_kek_dir = Self::canonicalize_kek_dir(kek_dir)?;
+        self.load_kek_at(canonical_kek_dir)
+    }
+
+    /// Ensure the cached KEK belongs to the requested vault. If no KEK
+    /// is cached, or if the request targets a different vault, load the
+    /// correct KEK from disk.
+    pub fn ensure_kek(&mut self, kek_dir: &str) -> Result<u16> {
+        let canonical_kek_dir = Self::canonicalize_kek_dir(kek_dir)?;
+
+        if self.has_kek() && self.kek_dir.as_deref() == Some(canonical_kek_dir.as_path()) {
+            return Ok(self.kek_version);
+        }
+
+        self.load_kek_at(canonical_kek_dir)
+    }
+
+    fn canonicalize_kek_dir(kek_dir: &str) -> Result<PathBuf> {
+        std::fs::canonicalize(kek_dir).map_err(|e| {
+            BluError::Internal(format!("could not resolve KEK dir {}: {}", kek_dir, e))
+        })
+    }
+
+    fn load_kek_at(&mut self, canonical_kek_dir: PathBuf) -> Result<u16> {
         let seed = self
             .pq_seed
             .as_ref()
-            .ok_or(BluError::Internal("agent is locked".into()))?;
+            .ok_or(BluError::Internal("agent is locked".into()))?
+            .clone();
 
-        let store = keys::kek::KekStore::new(std::path::Path::new(kek_dir));
+        let store = keys::kek::KekStore::new(&canonical_kek_dir);
 
-        let pq_identity = PqIdentity::new(seed.clone());
+        let pq_identity = PqIdentity::new(seed);
         let identities: Vec<&dyn age::Identity> = vec![&pq_identity as &dyn age::Identity];
 
         let (kek, version) = store.unwrap_current_kek_with(&identities)?;
 
+        self.munlock_kek();
         self.kek = Some(kek);
         self.kek_version = version;
+        self.kek_dir = Some(canonical_kek_dir);
         self.mlock_kek();
 
         Ok(version)
@@ -274,8 +314,10 @@ impl AgentState {
     /// rather than loaded from disk).
     #[allow(dead_code)]
     pub fn set_kek(&mut self, kek: Kek, version: u16) {
+        self.munlock_kek();
         self.kek = Some(kek);
         self.kek_version = version;
+        self.kek_dir = None;
         self.mlock_kek();
     }
 
@@ -587,6 +629,8 @@ mod test {
         let version = state.load_kek(blu_dir.to_str().unwrap()).unwrap();
         assert_eq!(version, 0);
         assert!(state.has_kek());
+        let canonical_blu_dir = blu_dir.canonicalize().unwrap();
+        assert_eq!(state.kek_dir(), Some(canonical_blu_dir.as_path()));
 
         // Verify it's the right KEK by doing a DEK round-trip
         let (dek_bytes, wrapped, _) = state.wrap_dek().unwrap();
