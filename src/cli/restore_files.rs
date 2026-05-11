@@ -204,7 +204,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
             let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
             println!("Read {} bytes from blob file", block_data.len());
 
-            fh.write_all_at(&block_data, offset)?;
+            fh.write_all_at(block_data, offset)?;
             println!(
                 "Wrote {} bytes to file {:?}",
                 block_data.len(),
