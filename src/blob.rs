@@ -206,7 +206,7 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
         let hash = storage::hash_from_path(&location_ref.path)?;
 
         if !self.cache.contains(&hash) {
-            info!(
+            debug!(
                 "Reading blob file from backend: {}",
                 location_ref.path.display()
             );
@@ -215,10 +215,7 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
             let decompressed = decompress(&decrypted)?;
             self.cache.put(hash.clone(), decompressed);
         } else {
-            info!(
-                "Getting blob file {} from cache",
-                location_ref.path.display()
-            );
+            trace!("Blob cache hit: {}", location_ref.path.display());
         }
 
         let full_data = self.cache.get(&hash).unwrap();

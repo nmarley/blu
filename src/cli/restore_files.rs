@@ -203,12 +203,12 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
                 }
             };
             debug!(
-                "chunk {}/{}: blob={}, offset={}, size={}",
+                "chunk {}/{}: hash={}, offset={}, size={}",
                 i + 1,
                 total_chunks,
+                chunkmeta.hash.dbg_short(9),
                 blob_block_location_ref.position.offset,
                 blob_block_location_ref.position.size,
-                chunkmeta.hash.dbg_short(9),
             );
 
             let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
