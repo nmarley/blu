@@ -411,7 +411,7 @@ mod test {
         let kek = store
             .init_with(
                 &[&recipient as &dyn age::Recipient],
-                &[recipient_str.clone()],
+                std::slice::from_ref(&recipient_str),
             )
             .unwrap();
 
@@ -443,7 +443,7 @@ mod test {
         store
             .init_with(
                 &[&recipient as &dyn age::Recipient],
-                &[recipient_str.clone()],
+                std::slice::from_ref(&recipient_str),
             )
             .unwrap();
 
@@ -463,7 +463,7 @@ mod test {
         let kek_v0 = store
             .init_with(
                 &[&recipient as &dyn age::Recipient],
-                &[recipient_str.clone()],
+                std::slice::from_ref(&recipient_str),
             )
             .unwrap();
 
