@@ -13,8 +13,8 @@ use crate::storage::{self, StorageBackend};
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
-// Default chunk size (4096 * 16) * 128 will fit into a blob file by default
-// ... around 8MiB
+// Default chunk size (4096 * 128) * 128 will fit into a blob file by default
+// ... around 64 MiB
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 
 // backend::Local
@@ -167,8 +167,8 @@ pub struct BlobBlockLocation {
 // BlobBlockLocation {
 //     path: "./.blu/data/9/93c/93c98/93c982e79bcd6d4b32c24af6c4b88c9f9483ab88363a7bd2ae5a1b6da83af1c9163696d946de18ee10510563d3d42e20c52d5b78044a08929ecd2d756d8816d0",
 //     position: Position {
-//         offset: 65536,
-//         size: 65536,
+//         offset: 524288,
+//         size: 524288,
 //     },
 // }
 

@@ -14,8 +14,8 @@ pub use index::INDEX_FILENAME;
 /// Block size in bytes, most filesystems use 4k blocks
 pub const BLOCK_SIZE: usize = 4096;
 /// Default chunk size for encrypting+indexing, should be a multiple of block
-/// size
-pub const DEFAULT_CHUNK_SIZE: usize = BLOCK_SIZE << 4;
+/// size. 512 KiB aligns with EBS snapshot changed-block granularity.
+pub const DEFAULT_CHUNK_SIZE: usize = BLOCK_SIZE << 7;
 
 #[cfg(test)]
 mod test {
