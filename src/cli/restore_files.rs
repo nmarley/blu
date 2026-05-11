@@ -9,19 +9,8 @@ use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::error::BluError;
+use crate::format::human_bytes;
 use crate::hash::Hash;
-
-fn human_bytes(bytes: u64) -> String {
-    const KIB: u64 = 1024;
-    const MIB: u64 = KIB * 1024;
-    const GIB: u64 = MIB * 1024;
-    match bytes {
-        b if b >= GIB => format!("{:.2} GiB", b as f64 / GIB as f64),
-        b if b >= MIB => format!("{:.2} MiB", b as f64 / MIB as f64),
-        b if b >= KIB => format!("{:.2} KiB", b as f64 / KIB as f64),
-        b => format!("{} B", b),
-    }
-}
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
 pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
