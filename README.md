@@ -100,7 +100,7 @@ The configuration is stored in `.blu/config.toml`:
 blu_version = "0.5.0"
 
 [encryption]
-recipient = "age1..."  # Your public key
+pq_recipient = "age1pq..."  # Your post-quantum hybrid public key
 
 [backend]
 type = "local"
