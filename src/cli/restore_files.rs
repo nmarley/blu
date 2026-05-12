@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use glob::Pattern;
 
@@ -8,6 +9,7 @@ use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 use crate::error::BluError;
+use crate::format::human_bytes;
 use crate::hash::Hash;
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
@@ -93,8 +95,6 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     let dest_dir = args.to.as_ref().map(PathBuf::from);
 
     'outer: for file_hash in unique_hashes.into_iter() {
-        println!("========================================================================");
-        println!("Restoring file: {:?}", file_hash);
         let fileref = match plain_index.get_fileref_ref(&file_hash) {
             Some(fileref) => fileref,
             None => {
@@ -107,8 +107,12 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         };
 
         let file_size = fileref.total_size();
-        println!("Size: {}", file_size);
-        println!("Filename(s):");
+        println!(
+            "Restoring {} ({}, {} chunks)",
+            file_hash.dbg_short(9),
+            human_bytes(file_size),
+            fileref.chunkmetas.len(),
+        );
 
         // Determine restore path(s) based on --to option
         let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = if let Some(ref dest) = dest_dir
@@ -130,7 +134,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
 
         // Print all original paths
         for path in fileref.paths.iter() {
-            println!("\t{:?}", path);
+            println!("  {}", path.display());
         }
 
         // Check if destination file exists
@@ -153,7 +157,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
             }
         }
 
-        println!("Restoring to: '{}'", restore_path.display());
+        println!("  -> {}", restore_path.display());
 
         // Create parent directories if needed
         if let Some(parent) = restore_path.parent() {
@@ -163,7 +167,6 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         }
 
         // Create a sparse file of the correct size
-        println!("Creating sparse file of size: {}", file_size);
         let fh = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -173,45 +176,64 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
             .set_len(file_size)
             .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
 
+        let started = Instant::now();
         let mut offset = 0u64;
-        // slowness here ...
-        for chunkmeta in fileref.chunkmetas.iter() {
+        let total_chunks = fileref.chunkmetas.len();
+
+        for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
-                // abort restore of this file, remove TEMP file and move on to next ...
-                //
                 // TODO: maybe don't abort (esp. for large files which would
                 // piss ppl off), and instead just write the other chunks and
                 // log the ones not found in the blob index. The files would be
                 // corrupted / not intact so we should report it, but could
                 // ostensibly be fixed w/some repair tool if the blobs can be
                 // found later.
-                eprintln!("Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}", chunkmeta.hash, file_hash);
+                eprintln!(
+                    "Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}",
+                    chunkmeta.hash, file_hash
+                );
                 continue; // next file
             }
 
-            // This gets the location of the block of data within the blob file
             let blob_block_location_ref = match blob_index.get_block_location_ref(&chunkmeta.hash) {
                 Ok(location) => location,
                 Err(e) => {
-                    // abort restore of this file, remove TEMP file and move on to next ...
                     eprintln!("Unable to restore file: {:?}", e);
                     continue; // next file
                 }
             };
-            dbg!(&blob_block_location_ref);
+            debug!(
+                "chunk {}/{}: hash={}, offset={}, size={}",
+                i + 1,
+                total_chunks,
+                chunkmeta.hash.dbg_short(9),
+                blob_block_location_ref.position.offset,
+                blob_block_location_ref.position.size,
+            );
 
-            // Decrypt the blob file and read the necessary data
             let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
-            println!("Read {} bytes from blob file", block_data.len());
-
-            fh.write_all_at(&block_data, offset)?;
-            println!(
-                "Wrote {} bytes to file {:?}",
+            fh.write_all_at(block_data, offset)?;
+            trace!(
+                "wrote {} bytes at offset {} to {:?}",
                 block_data.len(),
-                restore_path
+                offset,
+                restore_path,
             );
             offset += chunkmeta.size as u64;
         }
+
+        let elapsed = started.elapsed();
+        let rate = if elapsed.as_secs_f64() > 0.0 {
+            file_size as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+        println!(
+            "  restored {} in {:.2}s ({}/s)",
+            human_bytes(file_size),
+            elapsed.as_secs_f64(),
+            human_bytes(rate as u64),
+        );
 
         // hard links for the same data with multiple filenames
         for other in &other_paths {

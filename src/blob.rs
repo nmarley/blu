@@ -1,7 +1,9 @@
 use core::fmt::Debug;
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::age::BlackBox;
@@ -13,8 +15,8 @@ use crate::storage::{self, StorageBackend};
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
-// Default chunk size (4096 * 16) * 128 will fit into a blob file by default
-// ... around 8MiB
+// Default chunk size (4096 * 128) * 128 will fit into a blob file by default
+// ... around 64 MiB
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 
 // backend::Local
@@ -167,68 +169,19 @@ pub struct BlobBlockLocation {
 // BlobBlockLocation {
 //     path: "./.blu/data/9/93c/93c98/93c982e79bcd6d4b32c24af6c4b88c9f9483ab88363a7bd2ae5a1b6da83af1c9163696d946de18ee10510563d3d42e20c52d5b78044a08929ecd2d756d8816d0",
 //     position: Position {
-//         offset: 65536,
-//         size: 65536,
+//         offset: 524288,
+//         size: 524288,
 //     },
 // }
 
-/// DataCache caches the data from a decrypted blob file.
-///
-/// This is used to avoid decrypting the same blob file multiple times.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq)]
-pub struct DataCache {
-    // file hash -> bytes
-    map: HashMap<Hash, Vec<u8>>,
-    limit: usize,
-    lru: Vec<Hash>,
-}
-
-impl DataCache {
-    /// Create a new DataCache with a limit on the number of cached blobs.
-    pub fn new(limit: usize) -> Self {
-        Self {
-            map: HashMap::new(),
-            limit,
-            lru: vec![],
-        }
-    }
-
-    /// Get the data from the cache, if it exists.
-    pub fn get(&mut self, hash: &Hash) -> Option<&Vec<u8>> {
-        // Update LRU position if present
-        if self.map.contains_key(hash) {
-            let pos = self.lru.iter().position(|x| x == hash).unwrap();
-            let hash = self.lru.remove(pos);
-            self.lru.push(hash);
-        }
-        self.map.get(hash)
-    }
-
-    /// Add the data to the cache.
-    pub fn add(&mut self, hash: &Hash, data: Vec<u8>) {
-        let is_in_lru = self.map.contains_key(hash);
-        // add or update data
-        self.map.insert(hash.clone(), data);
-
-        if is_in_lru {
-            // update the positions for lru
-            let pos = self.lru.iter().position(|x| x == hash).unwrap();
-            let hash = self.lru.remove(pos);
-            self.lru.push(hash);
-        } else {
-            self.lru.push(hash.clone());
-        }
-
-        if self.lru.len() > self.limit {
-            let to_remove = self.lru.remove(0);
-            self.map.remove(&to_remove);
-        }
-    }
-}
+/// The number of decrypted blobs to keep in the LRU cache. With 512 KiB
+/// chunks and 128 chunks per blob, each cached entry is ~64 MiB decompressed,
+/// so 10 entries caps memory at ~640 MiB worst case.
+const BLOB_CACHE_CAPACITY: usize = 10;
 
 /// EncBlobReader reads encrypted blobs from storage.
 pub struct EncBlobReader<'a, 'b> {
-    data_cache: DataCache,
+    cache: LruCache<Hash, Vec<u8>>,
     bbox: &'a BlackBox,
     backend: &'b (dyn StorageBackend + 'b),
 }
@@ -236,44 +189,38 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
     /// Create a new EncBlobReader.
     pub fn new(bbox: &'a BlackBox, backend: &'b (dyn StorageBackend + 'b)) -> Self {
         Self {
-            data_cache: DataCache::new(10),
+            cache: LruCache::new(NonZeroUsize::new(BLOB_CACHE_CAPACITY).unwrap()),
             bbox,
             backend,
         }
     }
 
     /// Get the bytes from the blob file at the specified position.
+    ///
+    /// Returns a borrowed slice into the cached decompressed blob, avoiding a
+    /// per-chunk heap allocation.
     pub fn get_bytes(
         &mut self,
         location_ref: &BlobBlockLocation,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        // TODO: hash table of paths to blob file hashes, so we don't have to
-        // call this shit every time
+    ) -> Result<&[u8], Box<dyn std::error::Error>> {
         let hash = storage::hash_from_path(&location_ref.path)?;
 
-        let full_data_ref = match self.data_cache.get(&hash) {
-            Some(data) => {
-                info!(
-                    "Getting blob file {} from cache",
-                    location_ref.path.display()
-                );
-                data
-            }
-            None => {
-                info!(
-                    "Reading blob file from backend: {}",
-                    location_ref.path.display()
-                );
-                let data = &self.backend.read_data(&location_ref.path)?;
-                let data = self.bbox.decrypt(data)?;
-                let data = decompress(&data)?;
-                self.data_cache.add(&hash, data);
-                self.data_cache.get(&hash).unwrap()
-            }
-        };
+        if !self.cache.contains(&hash) {
+            debug!(
+                "Reading blob file from backend: {}",
+                location_ref.path.display()
+            );
+            let raw = self.backend.read_data(&location_ref.path)?;
+            let decrypted = self.bbox.decrypt(&raw)?;
+            let decompressed = decompress(&decrypted)?;
+            self.cache.put(hash.clone(), decompressed);
+        } else {
+            trace!("Blob cache hit: {}", location_ref.path.display());
+        }
 
+        let full_data = self.cache.get(&hash).unwrap();
         let pos = &location_ref.position;
-        Ok(full_data_ref[pos.offset..pos.offset + pos.size].to_vec())
+        Ok(&full_data[pos.offset..pos.offset + pos.size])
     }
 }
 
@@ -472,33 +419,5 @@ mod test {
             .map(|(k, v)| (k, v.position))
             .collect();
         assert_eq!(positions, expected_positions);
-    }
-
-    #[test]
-    fn data_cache() {
-        let a_hash = Hash::from("1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        let b_hash = Hash::from("1340bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        let c_hash = Hash::from("1340cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
-
-        let mut dc = super::DataCache::new(2);
-        dc.add(&a_hash, vec![0x0b, 0x0a, 0x00]);
-        dc.add(&b_hash, vec![0x00, 0x0a, 0x0b]);
-
-        assert_eq!(dc.get(&a_hash), Some(&vec![0x0b, 0x0a, 0x00]));
-        assert_eq!(dc.get(&b_hash), Some(&vec![0x00, 0x0a, 0x0b]));
-
-        dc.add(&a_hash, vec![0x00, 0x0a, 0x0b]);
-        dc.add(&c_hash, vec![0x0c, 0x0c, 0x0c]);
-
-        assert_eq!(dc.get(&b_hash), None);
-        assert_eq!(dc.get(&c_hash), Some(&vec![0x0c, 0x0c, 0x0c]));
-        assert_eq!(dc.get(&a_hash), Some(&vec![0x00, 0x0a, 0x0b]));
-        dc.add(&b_hash, vec![0x00, 0x0a, 0x0b]);
-
-        // added a, then c, then b... but most recently used a, before adding b,
-        // so C should now be removed
-        assert_eq!(dc.get(&c_hash), None);
-
-        dbg!(&dc);
     }
 }

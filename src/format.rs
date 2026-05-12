@@ -1,3 +1,16 @@
+/// Format a byte count as a human-readable string (e.g. "1.50 GiB").
+pub(crate) fn human_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    match bytes {
+        b if b >= GIB => format!("{:.2} GiB", b as f64 / GIB as f64),
+        b if b >= MIB => format!("{:.2} MiB", b as f64 / MIB as f64),
+        b if b >= KIB => format!("{:.2} KiB", b as f64 / KIB as f64),
+        b => format!("{} B", b),
+    }
+}
+
 // https://serde.rs/custom-date-format.html
 pub(crate) mod datetime_format {
     use chrono::NaiveDateTime;

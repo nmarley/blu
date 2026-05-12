@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::format::human_bytes;
 use crate::hash::Hash;
 
 /// FileDisplay is a struct for displaying data in a file in a human-readable
@@ -21,7 +22,9 @@ impl std::fmt::Display for FileDisplay {
         write!(
             f,
             "hash: {}, size: {}, paths: {:?}",
-            display_hash, self.size, self.paths,
+            display_hash,
+            human_bytes(self.size),
+            self.paths,
         )
     }
 }
