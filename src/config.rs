@@ -7,7 +7,7 @@ use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::error::{BluError, Result as BluResult};
 use crate::io::BlackBoxSerializable;
-use crate::storage::{AmazonS3, Local, StorageBackend};
+use crate::storage::{AmazonS3, Backend, Local};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
 /// Backend config structures, one for each supported backend.
@@ -196,9 +196,7 @@ impl Config {
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
     /// Initializes the storage backend based on `backend` field in config.
-    pub fn init_storage_backend(
-        &self,
-    ) -> Result<Box<dyn StorageBackend>, Box<dyn std::error::Error>> {
+    pub fn init_storage_backend(&self) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
         match self.backend {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(Box::new(Local::new(&local_backend.path)))
@@ -232,10 +230,7 @@ impl Config {
     ///
     /// This uploads the encrypted index files to the backend, making them
     /// accessible from other machines with the same key.
-    pub fn push_indexes(
-        &self,
-        backend: &dyn StorageBackend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn push_indexes(&self, backend: &dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
         // Read local index files
         let plain_index_path = self.idxdir().join(&self.plain_index_filename);
         let blob_index_path = self.idxdir().join(&self.blob_index_filename);
@@ -243,11 +238,8 @@ impl Config {
         // Upload plain index
         if plain_index_path.exists() {
             let data = fs::read(&plain_index_path)?;
-            let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
             let remote_path = self.remote_plain_index_path();
             info!("Pushing plain index to {:?}", remote_path);
-            backend.write_data(&hash, &data)?;
-            // Also write to the known index path (not hash-based)
             self.write_index_to_backend(backend, &data, &remote_path)?;
         }
 
@@ -274,105 +266,39 @@ impl Config {
     /// Helper to write index data to a specific path in the backend.
     fn write_index_to_backend(
         &self,
-        backend: &dyn StorageBackend,
+        backend: &dyn Backend,
         data: &[u8],
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // For index files, we write directly to a known path, not hash-based
-        // We need to use the hash to satisfy the trait, but we'll use the path
-        let hash = crate::hash::Hash::from(crate::hash::multihash(data).to_bytes());
-
-        // Write to the backend - for local backend this works fine
-        // For S3, we need a different approach since write_data uses hash-based paths
-        match &self.backend {
-            backend::BackendConfig::Local(ref local_backend) => {
-                let full_path = local_backend.path.join(path);
-                if let Some(parent) = full_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(full_path, data)?;
-            }
-            backend::BackendConfig::AmazonS3(_) => {
-                // For S3, we write to indexes/ prefix
-                // The S3 backend's write_data uses hash-based paths, so we need
-                // to write index files specially. For now, we'll write them
-                // to a hash-based path and also maintain a manifest.
-                // TODO: Add a write_to_path method to StorageBackend trait
-                backend.write_data(&hash, data)?;
-            }
-            #[allow(unreachable_patterns)]
-            _ => return Err("Unsupported backend".into()),
-        }
-        Ok(())
+        backend.write_to_path(path, data)
     }
 
     /// Pull indexes from the remote backend.
     ///
     /// This downloads the encrypted index files from the backend,
     /// overwriting local indexes.
-    pub fn pull_indexes(
-        &self,
-        backend: &dyn StorageBackend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // For local backend, read from the known paths
-        // For S3, we need to know where the indexes are stored
-        match &self.backend {
-            backend::BackendConfig::Local(ref local_backend) => {
-                // Plain index
-                let remote_plain = local_backend.path.join(self.remote_plain_index_path());
-                if remote_plain.exists() {
-                    let data = fs::read(&remote_plain)?;
-                    let local_path = self.idxdir().join(&self.plain_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled plain index");
-                }
+    pub fn pull_indexes(&self, backend: &dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
+        let indexes: &[(&Path, &Path)] = &[
+            (
+                &self.remote_plain_index_path(),
+                &self.idxdir().join(&self.plain_index_filename),
+            ),
+            (
+                &self.remote_blob_index_path(),
+                &self.idxdir().join(&self.blob_index_filename),
+            ),
+            (
+                &self.remote_tag_index_path(),
+                &self.idxdir().join(&self.tag_index_filename),
+            ),
+        ];
 
-                // Blob index
-                let remote_blob = local_backend.path.join(self.remote_blob_index_path());
-                if remote_blob.exists() {
-                    let data = fs::read(&remote_blob)?;
-                    let local_path = self.idxdir().join(&self.blob_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled blob index");
-                }
-
-                // Tag index
-                let remote_tag = local_backend.path.join(self.remote_tag_index_path());
-                if remote_tag.exists() {
-                    let data = fs::read(&remote_tag)?;
-                    let local_path = self.idxdir().join(&self.tag_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled tag index");
-                }
+        for (remote_path, local_path) in indexes {
+            if backend.exists(remote_path)? {
+                let data = backend.read_from_path(remote_path)?;
+                fs::write(local_path, data)?;
+                info!("Pulled index {:?}", remote_path);
             }
-            backend::BackendConfig::AmazonS3(_) => {
-                // For S3, read from the indexes/ prefix
-                let remote_plain = self.remote_plain_index_path();
-                if backend.exists(&remote_plain)? {
-                    let data = backend.read_data(&remote_plain)?;
-                    let local_path = self.idxdir().join(&self.plain_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled plain index from S3");
-                }
-
-                let remote_blob = self.remote_blob_index_path();
-                if backend.exists(&remote_blob)? {
-                    let data = backend.read_data(&remote_blob)?;
-                    let local_path = self.idxdir().join(&self.blob_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled blob index from S3");
-                }
-
-                let remote_tag = self.remote_tag_index_path();
-                if backend.exists(&remote_tag)? {
-                    let data = backend.read_data(&remote_tag)?;
-                    let local_path = self.idxdir().join(&self.tag_index_filename);
-                    fs::write(local_path, data)?;
-                    info!("Pulled tag index from S3");
-                }
-            }
-            #[allow(unreachable_patterns)]
-            _ => return Err("Unsupported backend".into()),
         }
 
         Ok(())

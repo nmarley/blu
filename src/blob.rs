@@ -11,7 +11,7 @@ use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::hash::{self, Hash};
 use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
-use crate::storage::{self, StorageBackend};
+use crate::storage::{self, Backend};
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
@@ -29,7 +29,7 @@ const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 /// (or unused blocks), etc.
 // #[derive(Debug)]
 pub struct BlobBuffer<'a> {
-    storage_backend: &'a (dyn StorageBackend + 'a),
+    storage_backend: &'a (dyn Backend + 'a),
 
     // encryption
     bbox: BlackBox,
@@ -41,18 +41,14 @@ pub struct BlobBuffer<'a> {
     positions: HashMap<Hash, BlobBlockLocation>,
 }
 
-// StorageBackend
+// Backend
 impl<'a> BlobBuffer<'a> {
     /// Create a new BlobBuffer with the default capacity
-    pub fn new(backend: &'a (dyn StorageBackend + 'a), bbox: BlackBox) -> Self {
+    pub fn new(backend: &'a (dyn Backend + 'a), bbox: BlackBox) -> Self {
         Self::with_capacity(backend, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
     }
     /// Create a new BlobBuffer with a specified capacity
-    pub fn with_capacity(
-        backend: &'a (dyn StorageBackend + 'a),
-        bbox: BlackBox,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity(backend: &'a (dyn Backend + 'a), bbox: BlackBox, capacity: usize) -> Self {
         Self {
             storage_backend: backend,
             bbox,
@@ -183,11 +179,11 @@ const BLOB_CACHE_CAPACITY: usize = 10;
 pub struct EncBlobReader<'a, 'b> {
     cache: LruCache<Hash, Vec<u8>>,
     bbox: &'a BlackBox,
-    backend: &'b (dyn StorageBackend + 'b),
+    backend: &'b (dyn Backend + 'b),
 }
 impl<'a, 'b> EncBlobReader<'a, 'b> {
     /// Create a new EncBlobReader.
-    pub fn new(bbox: &'a BlackBox, backend: &'b (dyn StorageBackend + 'b)) -> Self {
+    pub fn new(bbox: &'a BlackBox, backend: &'b (dyn Backend + 'b)) -> Self {
         Self {
             cache: LruCache::new(NonZeroUsize::new(BLOB_CACHE_CAPACITY).unwrap()),
             bbox,

@@ -1,4 +1,4 @@
-// use crate::storage::{Local, StorageBackend};
+// use crate::storage::{Local, Backend};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

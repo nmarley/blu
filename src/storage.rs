@@ -6,14 +6,10 @@ mod s3;
 
 use crate::hash::Hash;
 
-// TODO: probably rename StorageBackend to Backend to prevent stuttering ...
-// crate::storage::StorageBackend
-// crate::storage::Backend
-
 // Storage adapter
 // types: local, s3, do, azure_blob, gcs
 
-/// The `StorageBackend` trait provides an abstraction over different storage
+/// The `Backend` trait provides an abstraction over different storage
 /// backends.
 ///
 /// It defines a common interface that can be used to interact with various
@@ -21,7 +17,7 @@ use crate::hash::Hash;
 /// Storage, etc. This allows code to be written in a storage-agnostic way,
 /// where the exact storage backend used is a runtime detail.
 ///
-/// Implementations of `StorageBackend` are responsible for handling the
+/// Implementations of `Backend` are responsible for handling the
 /// specific details of interacting with the storage backend, such as network
 /// communication, error handling, serialization and deserialization of data,
 /// etc.
@@ -42,7 +38,7 @@ use crate::hash::Hash;
 ///
 /// - `delete`: Deletes a blob at the given path. Returns an error if the
 ///   deletion fails.
-pub trait StorageBackend {
+pub trait Backend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
@@ -56,6 +52,18 @@ pub trait StorageBackend {
     fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>>;
     /// Delete a blob at the given path.
     fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Write data to a known path in the backend (not hash-derived).
+    ///
+    /// Used for index files and other data that must live at a
+    /// predictable location rather than a content-addressed path.
+    fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// Read data from a known path in the backend (not hash-derived).
+    ///
+    /// Counterpart to [`write_to_path`]. Used for retrieving index
+    /// files and other data stored at predictable locations.
+    fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
 }
 
 /// Get a path for the encrypted data.
@@ -148,8 +156,8 @@ mod test {
 
     use tempfile::tempdir;
 
+    use super::Backend;
     use super::Local;
-    use super::StorageBackend;
     use crate::hash::multihash;
 
     #[test]

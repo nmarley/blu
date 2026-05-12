@@ -33,8 +33,8 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     let backend = cfg.init_storage_backend()?;
 
     // NOTE:
-    //     `*` derefs the `Box<dyn StorageBackend>`
-    //     BlobBuffer::new expects a `&dyn StorageBackend`
+    //     `*` derefs the `Box<dyn Backend>`
+    //     BlobBuffer::new expects a `&dyn Backend`
     let mut reader = EncBlobReader::new(&bbox, &(*backend));
 
     // Build path pattern matcher if specified

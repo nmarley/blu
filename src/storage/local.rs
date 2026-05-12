@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::hash::Hash;
 
-use super::StorageBackend;
+use super::Backend;
 
 /// Local storage backend for managing data on a local filesystem.
 #[derive(Default, Debug)]
@@ -20,7 +20,7 @@ impl Local {
     }
 }
 
-impl StorageBackend for Local {
+impl Backend for Local {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let data = std::fs::read(path)?;
         Ok(data)
@@ -42,5 +42,20 @@ impl StorageBackend for Local {
     fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         fs::remove_file(path)?;
         Ok(())
+    }
+
+    fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let full_path = self.datadir.join(path);
+        if let Some(parent) = full_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&full_path, data)?;
+        Ok(())
+    }
+
+    fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let full_path = self.datadir.join(path);
+        let data = fs::read(&full_path)?;
+        Ok(data)
     }
 }

@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 
 use crate::hash::Hash;
 
-use super::StorageBackend;
+use super::Backend;
 
 /// Amazon S3 storage backend.
 ///
@@ -72,7 +72,7 @@ impl AmazonS3 {
     }
 }
 
-impl StorageBackend for AmazonS3 {
+impl Backend for AmazonS3 {
     fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         let key = self.path_to_key(path);
 
@@ -164,5 +164,51 @@ impl StorageBackend for AmazonS3 {
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         Ok(())
+    }
+
+    fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let key = self.path_to_key(path);
+
+        info!("S3 write_to_path: key={}", key);
+
+        let body = ByteStream::from(data.to_vec());
+        self.runtime
+            .block_on(async {
+                self.client
+                    .put_object()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok::<(), String>(())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+        Ok(())
+    }
+
+    fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let key = self.path_to_key(path);
+
+        let buf = self
+            .runtime
+            .block_on(async {
+                let object = self
+                    .client
+                    .get_object()
+                    .bucket(&self.bucket)
+                    .key(&key)
+                    .send()
+                    .await
+                    .map_err(|e| e.to_string())?;
+
+                let body = object.body.collect().await.map_err(|e| e.to_string())?;
+                Ok::<Vec<u8>, String>(body.into_bytes().to_vec())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
+        Ok(buf)
     }
 }
