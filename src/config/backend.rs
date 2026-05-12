@@ -1,11 +1,15 @@
-// use crate::storage::{Local, Backend};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 const DEFAULT_DATADIR: &str = ".blu/data";
 
+/// The canonical name assigned to the sole backend when migrating
+/// from the legacy singular `[backend]` config format.
+pub const LEGACY_BACKEND_NAME: &str = "default";
+
 /// Storage backend config for blu.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq, Clone)]
 #[serde(tag = "type")]
 pub enum BackendConfig {
     /// Local filesystem
@@ -24,8 +28,21 @@ impl Default for BackendConfig {
     }
 }
 
+/// Returns the default named-backends map: a single local backend
+/// named "default" pointing at `.blu/data`.
+pub fn default_backends() -> HashMap<String, BackendConfig> {
+    let mut map = HashMap::new();
+    map.insert(LEGACY_BACKEND_NAME.to_string(), BackendConfig::default());
+    map
+}
+
+/// Returns the default backend name.
+pub fn default_backend_name() -> String {
+    LEGACY_BACKEND_NAME.to_string()
+}
+
 /// Configuration for the local filesystem backend.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Eq)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Eq, Clone)]
 pub struct LocalConfig {
     /// Path to the local filesystem directory where blu will store
     /// encrypted data blobs.

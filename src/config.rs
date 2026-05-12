@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -66,9 +67,19 @@ pub struct Config {
     #[serde(skip)]
     basedir: PathBuf,
 
-    // TODO: multiple backends
-    /// Storage backend for encrypted data blobs
-    pub backend: backend::BackendConfig,
+    /// Named storage backends.
+    #[serde(default = "backend::default_backends")]
+    pub backends: HashMap<String, backend::BackendConfig>,
+
+    /// Name of the default backend for reads and writes.
+    #[serde(default = "backend::default_backend_name")]
+    pub default_backend: String,
+
+    /// Legacy singular backend (deprecated).
+    /// Present only when deserializing old-format configs that use
+    /// `[backend]` instead of `[backends.<name>]`.
+    #[serde(default, skip_serializing)]
+    backend: Option<backend::BackendConfig>,
 
     // should blu delete Encrypted from filesystem, if the plain version was deleted?
     prune_deleted: bool,
@@ -83,7 +94,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            backend: backend::BackendConfig::default(),
+            backends: backend::default_backends(),
+            default_backend: backend::default_backend_name(),
+            backend: None,
             blu_version: env!("CARGO_PKG_VERSION").to_string(),
             encryption: None,
             basedir: PathBuf::from("."),
@@ -112,6 +125,7 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
             e
         )
     })?;
+    cfg.resolve_backends()?;
     Ok(cfg)
 }
 
@@ -187,6 +201,43 @@ impl Config {
         &self.basedir
     }
 
+    /// Promote a legacy `[backend]` section into the named backends
+    /// map. Called from `read_config` after deserialization.
+    ///
+    /// If the legacy `backend` field is present and `backends` is at
+    /// its default (single "default" local entry), the legacy value
+    /// replaces it. A deprecation notice is emitted to stderr.
+    ///
+    /// Returns an error if `default_backend` names a key that does
+    /// not exist in `backends`.
+    fn resolve_backends(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(legacy) = self.backend.take() {
+            // Old-format config: promote into the named map.
+            self.backends.clear();
+            self.backends
+                .insert(backend::LEGACY_BACKEND_NAME.to_string(), legacy);
+            self.default_backend = backend::LEGACY_BACKEND_NAME.to_string();
+            eprintln!(
+                "warning: deprecated config format: `[backend]` should be \
+                 migrated to `[backends.default]`"
+            );
+        }
+
+        if self.backends.is_empty() {
+            return Err("no backends configured".into());
+        }
+
+        if !self.backends.contains_key(&self.default_backend) {
+            return Err(format!(
+                "default_backend \"{}\" not found in [backends]",
+                self.default_backend
+            )
+            .into());
+        }
+
+        Ok(())
+    }
+
     load_index!(load_blob_index, BlobIndex, blob_index_filename);
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
@@ -195,9 +246,11 @@ impl Config {
     write_index!(write_tag_index, TagIndex, tag_index_filename);
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
-    /// Initializes the storage backend based on `backend` field in config.
-    pub fn init_storage_backend(&self) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
-        match self.backend {
+    /// Construct a `Box<dyn Backend>` from a `BackendConfig`.
+    fn build_backend(
+        cfg: &backend::BackendConfig,
+    ) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+        match cfg {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(Box::new(Local::new(&local_backend.path)))
             }
@@ -206,9 +259,24 @@ impl Config {
                 s3_backend.prefix.as_deref(),
                 s3_backend.region.as_deref(),
             ))),
-            #[allow(unreachable_patterns)]
-            _ => Err("Unsupported backend".into()),
         }
+    }
+
+    /// Initializes the default storage backend.
+    pub fn init_storage_backend(&self) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+        self.init_named_backend(&self.default_backend)
+    }
+
+    /// Initializes a storage backend by name.
+    pub fn init_named_backend(
+        &self,
+        name: &str,
+    ) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+        let cfg = self
+            .backends
+            .get(name)
+            .ok_or_else(|| format!("backend \"{}\" not found in config", name))?;
+        Self::build_backend(cfg)
     }
 
     /// Remote path for the plain index file in the backend.
@@ -307,6 +375,7 @@ impl Config {
 
 #[cfg(test)]
 pub(crate) mod test {
+    use super::backend::BackendConfig;
     use super::Config;
     use std::fs;
 
@@ -352,5 +421,115 @@ pub(crate) mod test {
         let loaded = super::read_config(relative_repo).unwrap();
 
         assert_eq!(loaded.bludir(), repo.canonicalize().unwrap().join(".blu"));
+    }
+
+    #[test]
+    fn legacy_backend_promoted_to_named_map() {
+        let toml_str = r#"
+            blu_version = "0.5.0"
+            [backend]
+            type = "local"
+            path = ".blu/data"
+        "#;
+        let mut cfg: Config = toml::from_str(toml_str).unwrap();
+        cfg.resolve_backends().unwrap();
+
+        assert_eq!(cfg.default_backend, "default");
+        assert_eq!(cfg.backends.len(), 1);
+        assert!(cfg.backends.contains_key("default"));
+        assert!(cfg.backend.is_none());
+    }
+
+    #[test]
+    fn new_format_with_two_backends_parses() {
+        let toml_str = r#"
+            blu_version = "0.5.0"
+            default_backend = "s3-prod"
+
+            [backends.local]
+            type = "local"
+            path = ".blu/data"
+
+            [backends.s3-prod]
+            type = "s3"
+            bucket = "my-bucket"
+            region = "us-east-1"
+        "#;
+        let mut cfg: Config = toml::from_str(toml_str).unwrap();
+        cfg.resolve_backends().unwrap();
+
+        assert_eq!(cfg.default_backend, "s3-prod");
+        assert_eq!(cfg.backends.len(), 2);
+        assert!(cfg.backends.contains_key("local"));
+        assert!(cfg.backends.contains_key("s3-prod"));
+
+        match &cfg.backends["s3-prod"] {
+            BackendConfig::AmazonS3(s3) => {
+                assert_eq!(s3.bucket, "my-bucket");
+                assert_eq!(s3.region.as_deref(), Some("us-east-1"));
+            }
+            _ => panic!("expected S3 backend config"),
+        }
+    }
+
+    #[test]
+    fn missing_default_backend_is_error() {
+        let toml_str = r#"
+            blu_version = "0.5.0"
+            default_backend = "nonexistent"
+
+            [backends.local]
+            type = "local"
+            path = ".blu/data"
+        "#;
+        let mut cfg: Config = toml::from_str(toml_str).unwrap();
+        let err = cfg.resolve_backends().unwrap_err();
+        assert!(
+            err.to_string().contains("not found"),
+            "expected 'not found' error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn default_config_serializes_new_format() {
+        let cfg = Config::default();
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+
+        // New format uses [backends.default], not [backend]
+        assert!(
+            toml_str.contains("[backends.default]"),
+            "expected [backends.default] in serialized config, got:\n{}",
+            toml_str
+        );
+        assert!(
+            !toml_str.contains("\n[backend]\n"),
+            "legacy [backend] should not appear in serialized config"
+        );
+    }
+
+    #[test]
+    fn new_format_round_trips() {
+        let cfg = Config::default();
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        let mut parsed: Config = toml::from_str(&toml_str).unwrap();
+        parsed.resolve_backends().unwrap();
+
+        assert_eq!(parsed.default_backend, "default");
+        assert_eq!(parsed.backends.len(), 1);
+        assert!(parsed.backends.contains_key("default"));
+    }
+
+    #[test]
+    fn init_named_backend_unknown_name_errors() {
+        let cfg = Config::default();
+        let result = cfg.init_named_backend("bogus");
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.to_string().contains("not found"),
+            "expected 'not found' error, got: {}",
+            err
+        );
     }
 }
