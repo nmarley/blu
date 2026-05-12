@@ -14,6 +14,10 @@ cargo fmt -- --check         # format check (max_width = 100)
 
 No CI workflows, pre-commit hooks, or codegen steps exist yet.
 
+## Greenfield rules
+
+This is a solo-developer project with no external users. Breaking changes are welcome and preferred when they produce a cleaner design. Do not preserve backward compatibility, migration paths, fallback code paths, or deprecation shims unless explicitly asked. When in doubt, delete the old thing.
+
 ## Architecture
 
 ### BlackBox abstraction (`src/age.rs`)
@@ -25,7 +29,7 @@ No CI workflows, pre-commit hooks, or codegen steps exist yet.
 
 All CLI commands call `BlackBox::encrypt()`/`decrypt()` without knowing which mode is active. The seam is in `src/cli/helpers.rs`.
 
-### Key hierarchy (v2 envelope encryption)
+### Key hierarchy (envelope encryption)
 
 ```
 User Key (PQ hybrid: ML-KEM-768 + X25519, from BIP39 mnemonic)
@@ -36,9 +40,9 @@ User Key (PQ hybrid: ML-KEM-768 + X25519, from BIP39 mnemonic)
 
 Only the top layer (UK wraps KEK) uses asymmetric crypto. Everything below is symmetric and already quantum-resistant.
 
-### v2 file format (`src/v2format.rs`)
+### File format (`src/v2format.rs`)
 
-Files with magic `BLUB` (blob) or `BLUI` (index) are v2. Files without a magic header are v1 (legacy age-only). The code auto-detects and falls back.
+Files use magic `BLUB` (blob) or `BLUI` (index) followed by a wrapped DEK header and ChaCha20-Poly1305 encrypted payload.
 
 ### Agent daemon (`src/agent/`)
 
@@ -59,7 +63,7 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 - `src/block/` -- chunking, block index, file references (deduplication layer)
 - `src/blob.rs` -- blob packing (multiple chunks into one encrypted blob)
 - `src/v2format.rs` -- envelope-encrypted file format (header parsing, read/write)
-- `src/config.rs` -- vault config from `.blu/config.toml`; legacy `[backend]` auto-promoted to `[backends.<name>]`
+- `src/config.rs` -- vault config from `.blu/config.toml`
 - `src/storage/` -- `Backend` trait, `Local`, `AmazonS3`
 - `src/io.rs` -- `BlackBoxSerializable` trait (serialize + compress + encrypt for indexes)
 
