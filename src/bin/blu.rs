@@ -79,6 +79,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.action {
         clapargs::Action::Add(a) => cli::add(a),
+        clapargs::Action::Backend(a) => cli::backend(a),
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a),

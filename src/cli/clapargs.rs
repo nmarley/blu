@@ -63,6 +63,9 @@ pub enum Action {
     /// Manage the blu agent daemon
     Agent(AgentArgs),
 
+    /// Manage storage backends
+    Backend(BackendArgs),
+
     /// Manage your global identity (mnemonic-based)
     Identity(IdentityArgs),
 
@@ -105,6 +108,10 @@ pub struct SyncArgs {
     /// Show verbose output
     #[arg(long, short)]
     pub verbose: bool,
+
+    /// Use a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
 }
 
 #[allow(missing_docs)]
@@ -113,6 +120,10 @@ pub struct PullArgs {
     /// Force overwrite local indexes even if they exist
     #[arg(long)]
     pub force: bool,
+
+    /// Pull from a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
 }
 
 #[allow(missing_docs)]
@@ -146,6 +157,10 @@ pub struct RestoreFilesArgs {
     /// Destination directory for restored files (default: original paths)
     #[arg(long)]
     pub to: Option<String>,
+
+    /// Restore from a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
 }
 
 #[allow(missing_docs)]
@@ -271,6 +286,85 @@ pub enum IdentityCommand {
     Show,
     /// Recover an identity from a BIP39 mnemonic
     Recover(IdentityRecoverArgs),
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendArgs {
+    #[command(subcommand)]
+    pub command: BackendCommand,
+}
+
+/// Backend management subcommands
+#[derive(Debug, clap::Subcommand, Clone)]
+pub enum BackendCommand {
+    /// Add a named storage backend
+    Add(BackendAddArgs),
+    /// List configured backends
+    List,
+    /// Remove a named backend
+    Remove(BackendRemoveArgs),
+    /// Set the default backend
+    SetDefault(BackendSetDefaultArgs),
+    /// Copy blobs from one backend to another
+    Mirror(BackendMirrorArgs),
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendAddArgs {
+    /// Name for the new backend
+    pub name: String,
+
+    /// Backend type (local, s3)
+    #[arg(long = "type")]
+    pub backend_type: String,
+
+    /// Path for local backends
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// S3 bucket name
+    #[arg(long)]
+    pub bucket: Option<String>,
+
+    /// S3 key prefix
+    #[arg(long)]
+    pub prefix: Option<String>,
+
+    /// AWS region
+    #[arg(long)]
+    pub region: Option<String>,
+
+    /// Set as the default backend
+    #[arg(long)]
+    pub default: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendRemoveArgs {
+    /// Name of the backend to remove
+    pub name: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendSetDefaultArgs {
+    /// Name of the backend to set as default
+    pub name: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendMirrorArgs {
+    /// Source backend name
+    #[arg(long)]
+    pub from: String,
+
+    /// Destination backend name
+    #[arg(long)]
+    pub to: String,
 }
 
 #[allow(missing_docs)]

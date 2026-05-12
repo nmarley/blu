@@ -22,7 +22,10 @@ pub fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("Local indexes exist. Use --force to overwrite.".into());
     }
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = match &args.backend {
+        Some(name) => cfg.init_named_backend(name)?,
+        None => cfg.init_storage_backend()?,
+    };
 
     println!("Pulling indexes from remote backend...");
     cfg.pull_indexes(&*backend)?;

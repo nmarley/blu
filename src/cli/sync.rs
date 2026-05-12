@@ -57,7 +57,10 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e.into()),
     };
-    let backend = cfg.init_storage_backend()?;
+    let backend = match &args.backend {
+        Some(name) => cfg.init_named_backend(name)?,
+        None => cfg.init_storage_backend()?,
+    };
     let mut blob_buf = BlobBuffer::new(&(*backend), bbox.clone());
 
     let mut chunks_encrypted = 0;

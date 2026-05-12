@@ -30,7 +30,10 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     };
     let files_map = plain_index.files_map_ref();
 
-    let backend = cfg.init_storage_backend()?;
+    let backend = match &args.backend {
+        Some(name) => cfg.init_named_backend(name)?,
+        None => cfg.init_storage_backend()?,
+    };
 
     // NOTE:
     //     `*` derefs the `Box<dyn Backend>`

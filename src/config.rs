@@ -201,6 +201,14 @@ impl Config {
         &self.basedir
     }
 
+    /// Write the config back to `.blu/config.toml`.
+    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let config_path = self.bludir().join("config.toml");
+        let toml_str = toml::to_string_pretty(self)?;
+        fs::write(config_path, toml_str)?;
+        Ok(())
+    }
+
     /// Promote a legacy `[backend]` section into the named backends
     /// map. Called from `read_config` after deserialization.
     ///
