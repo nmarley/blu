@@ -317,21 +317,11 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
             }
         };
 
-        // Extract hash from path and write to destination
-        let hash = match crate::storage::hash_from_path(path) {
-            Ok(h) => h,
-            Err(e) => {
-                eprintln!(
-                    "  [{}/{}] error parsing hash from {}: {}",
-                    i + 1,
-                    total,
-                    path.display(),
-                    e
-                );
-                failed += 1;
-                continue;
-            }
-        };
+        // Derive the content hash from the blob data itself rather than
+        // the path. The on-disk filename is a raw digest (multihash prefix
+        // stripped by path_for), so round-tripping it back through
+        // path_for would fail. Re-hashing also verifies data integrity.
+        let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
 
         match to_backend.write_data(&hash, &data).await {
             Ok(_) => {
