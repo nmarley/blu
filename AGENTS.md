@@ -20,14 +20,14 @@ This is a solo-developer project with no external users. Breaking changes are we
 
 ## Architecture
 
-### BlackBox abstraction (`src/age.rs`)
+### DekProvider abstraction (`src/dek_provider.rs`)
 
-`BlackBox` is the central encrypt/decrypt interface. Two modes:
+`DekProvider` is the key management seam for envelope encryption. It is a concrete enum with two variants:
 
-- **In-process**: holds an unwrapped KEK, does ChaCha20-Poly1305 locally.
-- **Agent-backed**: delegates to a long-lived daemon over a Unix socket (like ssh-agent). Key material never leaves the daemon.
+- **Local**: holds an unwrapped KEK in-process. Used only during `blu init` (vault creation).
+- **Agent**: delegates DEK wrapping/unwrapping to the agent daemon over a Unix socket. Key material never leaves the daemon.
 
-All CLI commands call `BlackBox::encrypt()`/`decrypt()` without knowing which mode is active. The seam is in `src/cli/helpers.rs`.
+All bulk data encryption is local (ChaCha20-Poly1305 with the DEK). `DekProvider` controls only who wraps/unwraps the DEK. Free functions `encrypt_envelope()` and `decrypt_envelope()` handle the full envelope format. The seam is in `src/cli/helpers.rs` (`load_config_and_keys()`).
 
 ### Key hierarchy (envelope encryption)
 
@@ -56,8 +56,9 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 
 - `src/bin/blu.rs` -- CLI entrypoint, clap dispatch, vault discovery (walks parents for `.blu/`)
 - `src/cli/` -- one file per subcommand; `clapargs.rs` defines all clap structs
-- `src/cli/helpers.rs` -- constructs `BlackBox` (agent or in-process); key seam
-- `src/age.rs` -- `BlackBox` struct, encrypt/decrypt with KEK/DEK
+- `src/cli/helpers.rs` -- constructs `DekProvider` (agent or local); key seam
+- `src/dek_provider.rs` -- `DekProvider` enum, `encrypt_envelope`/`decrypt_envelope`
+- `src/age.rs` -- passphrase-based encryption for identity files
 - `src/keys/` -- KEK, DEK, BIP39 mnemonic, PQ hybrid KEM (mlkem768x25519), HPKE
 - `src/agent/` -- daemon lifecycle, Unix socket protocol, biometric (macOS Touch ID), memlock
 - `src/block/` -- chunking, block index, file references (deduplication layer)
@@ -65,7 +66,7 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 - `src/v2format.rs` -- envelope-encrypted file format (header parsing, read/write)
 - `src/config.rs` -- vault config from `.blu/config.toml`
 - `src/storage/` -- `Backend` trait, `Local`, `AmazonS3`
-- `src/io.rs` -- `BlackBoxSerializable` trait (serialize + compress + encrypt for indexes)
+- `src/io.rs` -- `EncryptedSerializable` trait (serialize + compress + encrypt for indexes)
 
 ## Style and lint
 

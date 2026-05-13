@@ -55,7 +55,7 @@ blu CLI (short-lived)          blu agent (long-lived daemon)
 +------------------+           +---------------------------+
 | blu sync         |           |  In memory (mlock'd):     |
 |                  |  Unix     |   - Decrypted age         |
-|  "need BlackBox" |  socket   |     Identity (X25519)     |
+|  "need keys"     |  socket   |     Identity (X25519)     |
 |  ------------->  |  -------> |   - Cached KEKs (stage 2) |
 |  <-------------  |  <------- |                           |
 |  "here's the     |  JSON-RPC |  Lifecycle:               |
@@ -229,32 +229,22 @@ instant. The user can override this.
 
 ### Changes to Existing Code
 
-The key change is in `src/cli/helpers.rs`. Currently,
-`load_blackbox_from_config` constructs a `BlackBox` in-process. After
-stage 1, it connects to the agent and returns an `AgentBlackBox` that
-delegates encrypt/decrypt to the agent over the socket.
+The key change is in `src/cli/helpers.rs`. `load_config_and_keys`
+connects to the agent and returns a `DekProvider::Agent` that
+delegates DEK wrapping/unwrapping to the daemon over the socket.
+For vault creation (`blu init`), `DekProvider::Local` holds the
+KEK in-process before the agent is involved.
 
 ```
-// Before (current):
-helpers::load_blackbox_from_config(cfg, opts)
-  -> prompts for passphrase
-  -> loads identity file from disk
-  -> constructs BlackBox holding private key in CLI process memory
-
-// After (stage 1):
-helpers::load_blackbox_from_config(cfg, opts)
+helpers::load_config_and_keys(opts)
   -> connects to agent (auto-starts if needed)
   -> if locked, prompts for passphrase, sends unlock RPC
-  -> returns AgentBlackBox (encrypt/decrypt delegate to agent)
+  -> returns DekProvider::Agent (wrap/unwrap delegate to agent)
 ```
 
-The `BlackBox` interface (encrypt/decrypt methods) stays the same from
-the perspective of all other code. sync, restore, ls, etc. call
-`bbox.encrypt()` / `bbox.decrypt()` without knowing whether it is
-in-process or agent-backed.
-
-This is a clean seam. Every existing command continues to work. The
-only modification is in `helpers.rs` and the new agent module.
+The `DekProvider` enum is the clean seam. Every CLI command calls
+`encrypt_envelope()` / `decrypt_envelope()` without knowing
+whether key material is local or agent-backed.
 
 ## Stage 2: Envelope Encryption (KEK/DEK)
 
@@ -610,7 +600,7 @@ device, derive the same seed, get the same UK, access all vaults.
 |------|------|------------|-------|
 | 1a | Agent daemon (start, stop, socket, lifecycle) | nothing | new: `src/agent/mod.rs`, `src/agent/daemon.rs` |
 | 1b | Agent protocol (JSON-RPC 2.0, encrypt/decrypt) | 1a | new: `src/agent/protocol.rs`, `src/agent/rpc.rs` |
-| 1c | CLI integration (AgentBlackBox, auto-start) | 1b | modify: `src/cli/helpers.rs`, `src/age.rs` |
+| 1c | CLI integration (DekProvider, auto-start) | 1b | modify: `src/cli/helpers.rs`, `src/dek_provider.rs` |
 | 1d | unlock/lock/agent CLI commands | 1c | new: `src/cli/unlock.rs`, `src/cli/lock.rs`, `src/cli/agent.rs` |
 | 1e | Timeout profiles, ~/.blu/config.toml | 1d | new: `src/agent/config.rs` |
 | 2a | KEK generation, storage, wrapping (age) | 1e | new: `src/keys/kek.rs` |
