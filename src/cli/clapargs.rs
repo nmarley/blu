@@ -383,6 +383,10 @@ pub struct BackendMirrorArgs {
     /// Only mirror blobs referenced by files with this tag
     #[arg(long)]
     pub tag: Option<String>,
+
+    /// Number of concurrent transfers
+    #[arg(short, long, default_value = "16")]
+    pub jobs: usize,
 }
 
 #[allow(missing_docs)]
@@ -395,6 +399,10 @@ pub struct BackendDiffArgs {
     /// Second backend name
     #[arg(long)]
     pub to: String,
+
+    /// Number of concurrent checks
+    #[arg(short, long, default_value = "16")]
+    pub jobs: usize,
 }
 
 #[allow(missing_docs)]
