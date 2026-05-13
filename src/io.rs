@@ -1,66 +1,66 @@
-use crate::age::BlackBox;
+use crate::dek_provider::DekProvider;
 use serde::{Deserialize, Serialize};
 use std::io;
 
-/// BlackBoxSerializable is a trait for serializing and deserializing structs to
-/// and from a stream. In theory the methods should implement compression and
-/// encryption as well.
-pub trait BlackBoxSerializable {
-    /// write the struct to the given stream
+/// Trait for types that can be serialized, compressed, encrypted, and
+/// written to a stream (and the reverse for reading).
+pub trait EncryptedSerializable {
+    /// Serialize, compress, encrypt, and write to the given stream.
     fn write<W: io::Write>(
         &self,
         stream: W,
-        bbox: &BlackBox,
+        keys: &DekProvider,
     ) -> Result<(), Box<dyn std::error::Error>>;
-    /// read the struct from the given stream
-    fn read<R: io::Read>(stream: R, bbox: &BlackBox) -> Result<Self, Box<dyn std::error::Error>>
+    /// Read, decrypt, decompress, and deserialize from the given stream.
+    fn read<R: io::Read>(stream: R, keys: &DekProvider) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
-    /// deserialize the struct from a byte vector
+    /// Deserialize from raw (unencrypted, uncompressed) bytes.
     fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
-    /// serialize the struct to a byte vector
+    /// Serialize to raw (unencrypted, uncompressed) bytes.
     fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
 }
 
-/// macro to generate standard implementation of BlackBoxSerializable
-macro_rules! gen_std_bbserde {
+/// Macro to generate the standard `EncryptedSerializable` implementation
+/// for a type that derives `Serialize` and `Deserialize`.
+macro_rules! gen_std_enc_serde {
     ($struct_name:ident) => {
-        impl BlackBoxSerializable for $struct_name {
+        impl crate::io::EncryptedSerializable for $struct_name {
             fn write<W: io::Write>(
                 &self,
                 mut stream: W,
-                bbox: &BlackBox,
+                keys: &crate::dek_provider::DekProvider,
             ) -> Result<(), Box<dyn std::error::Error>> {
                 let serialized = self.serialize_bytes()?;
                 let compressed = compress(&serialized)?;
-                let encrypted = bbox.encrypt_index(&compressed)?;
+                let encrypted = crate::dek_provider::encrypt_envelope(
+                    &compressed,
+                    crate::v2format::FileType::Index,
+                    keys,
+                )?;
                 let _ = stream.write_all(&encrypted);
                 Ok(())
             }
 
             fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-                // let decoded: Index = serde_cbor::from_slice(data)?;
                 let decoded: Self = bincode::deserialize(data)?;
                 Ok(decoded)
             }
 
             fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
                 let encoded: Vec<u8> = bincode::serialize(&self)?;
-                // let encoded: Vec<u8> = serde_cbor::to_vec(&self)?;
                 Ok(encoded)
             }
 
-            // read / write serialization methods integrate BlackBox for automagic
-            // also compress and decompress
             fn read<R: io::Read>(
                 mut stream: R,
-                bbox: &BlackBox,
+                keys: &crate::dek_provider::DekProvider,
             ) -> Result<Self, Box<dyn std::error::Error>> {
                 let mut encrypted = Vec::new();
                 let _ = stream.read_to_end(&mut encrypted)?;
-                let compressed = bbox.decrypt(&encrypted)?;
+                let compressed = crate::dek_provider::decrypt_envelope(&encrypted, keys)?;
                 let serialized = decompress(&compressed)?;
                 Self::deserialize_bytes(&serialized)
             }
@@ -68,7 +68,7 @@ macro_rules! gen_std_bbserde {
     };
 }
 
-pub(crate) use gen_std_bbserde;
+pub(crate) use gen_std_enc_serde;
 
 /// Position is the offset and size of a chunk of data within a bigger data
 /// block.

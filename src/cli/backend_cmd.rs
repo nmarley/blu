@@ -68,15 +68,15 @@ fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 /// List all configured backends.
 fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+    use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
     let cfg = config::read_config(".")?;
 
     // If --stats, load the blob index to count blobs per backend
     let blob_paths: Option<HashSet<PathBuf>> = if args.stats {
-        let (cfg2, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-        match cfg2.load_blob_index(&bbox) {
+        let (cfg2, keys) = load_config_and_keys(&LoadOptions::default())?;
+        match cfg2.load_blob_index(&keys) {
             Ok(idx) => Some(idx.path_index.keys().cloned().collect()),
             Err(BluError::IndexNotFound(_)) => Some(HashSet::new()),
             Err(e) => return Err(e.into()),
@@ -175,11 +175,11 @@ fn set_default(args: BackendSetDefaultArgs) -> Result<(), Box<dyn std::error::Er
 fn blob_paths_for_tag(
     tag: &str,
     cfg: &config::Config,
-    bbox: &crate::age::BlackBox,
+    keys: &crate::dek_provider::DekProvider,
 ) -> Result<HashSet<PathBuf>, Box<dyn std::error::Error>> {
     use crate::error::BluError;
 
-    let tag_index = match cfg.load_tag_index(bbox) {
+    let tag_index = match cfg.load_tag_index(keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
             return Err("tag index not found (no tags exist)".into());
@@ -192,8 +192,8 @@ fn blob_paths_for_tag(
         return Err(format!("no files found with tag \"{}\"", tag).into());
     }
 
-    let plain_index = cfg.load_plain_index(bbox)?;
-    let blob_index = match cfg.load_blob_index(bbox) {
+    let plain_index = cfg.load_plain_index(keys)?;
+    let blob_index = match cfg.load_blob_index(keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
             return Err("no blob index found".into());
@@ -217,10 +217,10 @@ fn blob_paths_for_tag(
 
 /// Mirror blobs from one backend to another.
 fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+    use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     if !cfg.backends.contains_key(&args.from) {
         return Err(format!("source backend \"{}\" not found", args.from).into());
@@ -237,9 +237,9 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Determine which blob paths to mirror
     let blob_paths_set: HashSet<PathBuf> = if let Some(ref tag) = args.tag {
-        blob_paths_for_tag(tag, &cfg, &bbox)?
+        blob_paths_for_tag(tag, &cfg, &keys)?
     } else {
-        let blob_index = match cfg.load_blob_index(&bbox) {
+        let blob_index = match cfg.load_blob_index(&keys) {
             Ok(idx) => idx,
             Err(BluError::IndexNotFound(_)) => {
                 println!("No blob index found, nothing to mirror");
@@ -375,10 +375,10 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Compare blob sets between two backends.
 fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
-    use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+    use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     if !cfg.backends.contains_key(&args.from) {
         return Err(format!("backend \"{}\" not found", args.from).into());
@@ -390,7 +390,7 @@ fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let from_backend = cfg.init_named_backend(&args.from)?;
     let to_backend = cfg.init_named_backend(&args.to)?;
 
-    let blob_index = match cfg.load_blob_index(&bbox) {
+    let blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
             println!("No blob index found, nothing to diff");

@@ -1,7 +1,7 @@
 //! Pull command - download indexes from remote backend.
 
 use crate::cli::clapargs::PullArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 
 /// Pull indexes from the remote backend.
 ///
@@ -10,7 +10,7 @@ use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
 pub fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started pull");
 
-    let (cfg, _bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, _keys) = load_config_and_keys(&LoadOptions::default())?;
 
     // Check if local indexes exist and warn if not using --force
     let plain_index_path = cfg.idxdir().join("index.dat");

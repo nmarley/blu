@@ -3,7 +3,7 @@
 use crate::blob::BlobBuffer;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::SyncArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::hash::{self, Hash};
 use itertools::Itertools;
@@ -19,10 +19,10 @@ use itertools::Itertools;
 pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started sync");
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     // Load the plain index (or create a new one if none exists)
-    let mut plain_index = match cfg.load_plain_index(&bbox) {
+    let mut plain_index = match cfg.load_plain_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
             info!("No existing index, creating new one");
@@ -49,10 +49,10 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Write the updated plain index
-    cfg.write_plain_index(&plain_index, &bbox)?;
+    cfg.write_plain_index(&plain_index, &keys)?;
 
     // Step 2: Encrypt chunks that are not yet encrypted
-    let mut blob_index = match cfg.load_blob_index(&bbox) {
+    let mut blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e.into()),
@@ -61,7 +61,7 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         Some(name) => cfg.init_named_backend(name)?,
         None => cfg.init_storage_backend()?,
     };
-    let mut blob_buf = BlobBuffer::new(&(*backend), bbox.clone());
+    let mut blob_buf = BlobBuffer::new(&(*backend), keys.clone());
 
     let mut chunks_encrypted = 0;
     let files_map = plain_index.files_map_ref();
@@ -93,7 +93,7 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Finalize and write blob index if we added chunks
     if chunks_encrypted > 0 || args.force {
         blob_buf.finalize(&mut blob_index)?;
-        cfg.write_blob_index(&blob_index, &bbox)?;
+        cfg.write_blob_index(&blob_index, &keys)?;
     }
 
     // Push indexes to remote if requested

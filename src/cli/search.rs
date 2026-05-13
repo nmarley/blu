@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::cli::clapargs::SearchArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::cli::output::FileDisplay;
 use crate::error::BluError;
 use crate::hash::Hash;
@@ -9,11 +9,11 @@ use crate::search::FilenameSearchIndex;
 
 /// Search for filenames or tags
 pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     // TODO: load search index here ... (once implemented)
     //   for now, just create a new one every time and then search
-    let index = cfg.load_plain_index(&bbox)?;
+    let index = cfg.load_plain_index(&keys)?;
     let mut filename_search_index = FilenameSearchIndex::new();
     let files_map = index.files_map_ref();
     for (file_hash, file_ref) in files_map {
@@ -28,7 +28,7 @@ pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // load tag index
-    match cfg.load_tag_index(&bbox) {
+    match cfg.load_tag_index(&keys) {
         Ok(tag_index) => {
             for file_hash in tag_index.search(&args.needle) {
                 search_results.insert(file_hash.clone());

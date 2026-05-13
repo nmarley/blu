@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::age::BlackBox;
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
+use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result as BluResult};
-use crate::io::BlackBoxSerializable;
+use crate::io::EncryptedSerializable;
 use crate::storage::{AmazonS3, Backend, Local};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
@@ -129,12 +129,11 @@ pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::e
     Ok(cfg)
 }
 
-/// macro to write load_index, load_tag_index, load_blob_index, etc. ...
+/// Macro to generate load methods for each index type.
 macro_rules! load_index {
-    // TODO: implement as independent fn in Config, then wrap with impl version pass in path
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
-        /// $name loads the index from the idxdir.
-        pub fn $name(&self, bbox: &BlackBox) -> BluResult<$idx_struct_name> {
+        /// Load the index from the idxdir.
+        pub fn $name(&self, keys: &DekProvider) -> BluResult<$idx_struct_name> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             let index_data: Vec<u8> = fs::read(&index_path).map_err(|e| match e.kind() {
                 std::io::ErrorKind::NotFound => {
@@ -146,7 +145,7 @@ macro_rules! load_index {
                     e
                 )),
             })?;
-            $idx_struct_name::read(&index_data[..], bbox).map_err(|e| BluError::IndexLoadFailed {
+            $idx_struct_name::read(&index_data[..], keys).map_err(|e| BluError::IndexLoadFailed {
                 path: index_path.clone(),
                 reason: e.to_string(),
             })
@@ -154,19 +153,19 @@ macro_rules! load_index {
     };
 }
 
-/// macro to write write_index, write_tag_index, write_blob_index, etc. ...
+/// Macro to generate write methods for each index type.
 macro_rules! write_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
-        /// $name writes the index to the idxdir.
+        /// Write the index to the idxdir.
         pub fn $name(
             &self,
             idx: &$idx_struct_name,
-            bbox: &BlackBox,
+            keys: &DekProvider,
         ) -> Result<(), Box<dyn std::error::Error>> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             // encrypt + compress + serialize index to buf
             let mut buf = vec![];
-            idx.write(&mut buf, bbox)?;
+            idx.write(&mut buf, keys)?;
             // write to file
             std::fs::write(index_path, buf)?;
             Ok(())

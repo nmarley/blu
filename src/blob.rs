@@ -6,12 +6,13 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
+use crate::dek_provider::{decrypt_envelope, encrypt_envelope, DekProvider};
 use crate::hash::{self, Hash};
-use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
+use crate::io::{gen_std_enc_serde, Position};
 use crate::storage::{self, Backend};
+use crate::v2format::FileType;
 
 /// the default on-disk filename for the blob index
 pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
@@ -32,7 +33,7 @@ pub struct BlobBuffer<'a> {
     storage_backend: &'a (dyn Backend + 'a),
 
     // encryption
-    bbox: BlackBox,
+    keys: DekProvider,
 
     // transient
     data: Vec<u8>,
@@ -44,14 +45,18 @@ pub struct BlobBuffer<'a> {
 // Backend
 impl<'a> BlobBuffer<'a> {
     /// Create a new BlobBuffer with the default capacity
-    pub fn new(backend: &'a (dyn Backend + 'a), bbox: BlackBox) -> Self {
-        Self::with_capacity(backend, bbox, DEFAULT_BLOB_CAPACITY_BYTES)
+    pub fn new(backend: &'a (dyn Backend + 'a), keys: DekProvider) -> Self {
+        Self::with_capacity(backend, keys, DEFAULT_BLOB_CAPACITY_BYTES)
     }
     /// Create a new BlobBuffer with a specified capacity
-    pub fn with_capacity(backend: &'a (dyn Backend + 'a), bbox: BlackBox, capacity: usize) -> Self {
+    pub fn with_capacity(
+        backend: &'a (dyn Backend + 'a),
+        keys: DekProvider,
+        capacity: usize,
+    ) -> Self {
         Self {
             storage_backend: backend,
-            bbox,
+            keys,
             data: vec![],
             blob_capacity: capacity,
             offset: 0,
@@ -119,7 +124,7 @@ impl<'a> BlobBuffer<'a> {
         // 2. compress
         // 3. encrypt
         let compressed = compress(&self.data)?;
-        let encrypted = self.bbox.encrypt_blob(&compressed)?;
+        let encrypted = encrypt_envelope(&compressed, FileType::Blob, &self.keys)?;
 
         let path = self.write_blob(&encrypted)?;
         for (chunk_hash, location) in self.positions.iter_mut() {
@@ -185,15 +190,15 @@ const BLOB_CACHE_CAPACITY: usize = 10;
 /// EncBlobReader reads encrypted blobs from storage.
 pub struct EncBlobReader<'a, 'b> {
     cache: LruCache<Hash, Vec<u8>>,
-    bbox: &'a BlackBox,
+    keys: &'a DekProvider,
     backend: &'b (dyn Backend + 'b),
 }
 impl<'a, 'b> EncBlobReader<'a, 'b> {
     /// Create a new EncBlobReader.
-    pub fn new(bbox: &'a BlackBox, backend: &'b (dyn Backend + 'b)) -> Self {
+    pub fn new(keys: &'a DekProvider, backend: &'b (dyn Backend + 'b)) -> Self {
         Self {
             cache: LruCache::new(NonZeroUsize::new(BLOB_CACHE_CAPACITY).unwrap()),
-            bbox,
+            keys,
             backend,
         }
     }
@@ -214,7 +219,7 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
                 location_ref.path.display()
             );
             let raw = self.backend.read_data(&location_ref.path)?;
-            let decrypted = self.bbox.decrypt(&raw)?;
+            let decrypted = decrypt_envelope(&raw, self.keys)?;
             let decompressed = decompress(&decrypted)?;
             self.cache.put(hash.clone(), decompressed);
         } else {
@@ -321,7 +326,7 @@ impl BlobIndex {
     }
 }
 
-gen_std_bbserde!(BlobIndex);
+gen_std_enc_serde!(BlobIndex);
 
 #[cfg(test)]
 mod test {
@@ -330,9 +335,12 @@ mod test {
     use super::*;
     use crate::storage::Local;
 
-    fn test_bbox() -> BlackBox {
+    fn test_keys() -> DekProvider {
         let kek = crate::keys::kek::Kek::generate();
-        BlackBox::new().with_kek(kek, 0)
+        DekProvider::Local {
+            kek,
+            kek_version: 0,
+        }
     }
 
     // helper func used in tests below
@@ -342,14 +350,14 @@ mod test {
     }
 
     fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
-        let bbox = test_bbox();
+        let keys = test_keys();
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
             vec![0xde, 0xad, 0xbe, 0xef],
             vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
         ];
         let mut blob_index = BlobIndex::new();
-        let mut blob_buf = BlobBuffer::new(backend, bbox);
+        let mut blob_buf = BlobBuffer::new(backend, keys);
         // load w/some data
         for v in vec.iter_mut() {
             blob_buf.add_chunk(v, &mut blob_index).unwrap();
@@ -379,9 +387,9 @@ mod test {
         ];
         let datadir = tempdir().unwrap();
         let backend = Local::new(&datadir);
-        let bbox = test_bbox();
+        let keys = test_keys();
         let mut blob_index = BlobIndex::new();
-        let mut blob_buf = BlobBuffer::with_capacity(&backend, bbox, 3);
+        let mut blob_buf = BlobBuffer::with_capacity(&backend, keys, 3);
         // load w/some data
         for v in vec.iter_mut() {
             blob_buf.add_chunk(v, &mut blob_index).unwrap();

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::cli::clapargs::TaggerArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::hash::Hash;
 use crate::tag::sanitize_tag;
@@ -27,15 +27,15 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("no file hashes provided".into());
     }
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     // note that this is a "content tagger" -- I'd much rather keep the hashing
     // in the index only and tag based on what is shown in the index rather
     // than what is on the filesystem, introducing multiple points of
     // interaction w/the filesystem (bad).
 
-    let index = cfg.load_plain_index(&bbox)?;
-    let mut tag_index = match cfg.load_tag_index(&bbox) {
+    let index = cfg.load_plain_index(&keys)?;
+    let mut tag_index = match cfg.load_tag_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e.into()),
@@ -96,7 +96,7 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     if args.dry_run {
         println!("DRY-RUN: Refusing to write tag index");
     } else {
-        match cfg.write_tag_index(&tag_index, &bbox) {
+        match cfg.write_tag_index(&tag_index, &keys) {
             Ok(_) => println!("Wrote tag index!"),
             Err(e) => println!("Error writing tag index: {}", e),
         }

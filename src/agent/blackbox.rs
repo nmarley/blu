@@ -1,22 +1,23 @@
-//! Integration test for BlackBox::Agent variant.
+//! Integration test for agent-backed DekProvider.
 //!
-//! This module verifies that an agent-backed BlackBox can perform
+//! This module verifies that an agent-backed DekProvider can perform
 //! v2 envelope encryption (wrap_dek/unwrap_dek) end-to-end.
 
 #[cfg(test)]
 mod test {
-    use crate::age::BlackBox;
     use crate::agent::client::AgentClient;
     use crate::agent::daemon::run_daemon;
     use crate::agent::paths::AgentPaths;
+    use crate::dek_provider::{decrypt_envelope, encrypt_envelope, DekProvider};
     use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
     use crate::keys::kek::KekStore;
     use crate::keys::pq::PqRecipient;
+    use crate::v2format::FileType;
     use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
-    fn agent_blackbox_v2_round_trip() {
+    fn agent_dek_provider_v2_round_trip() {
         let tmp = tempdir().unwrap();
         let tmp_path = tmp.keep();
         let paths = AgentPaths::from_base(&tmp_path).unwrap();
@@ -50,11 +51,14 @@ mod test {
         let kek_dir = blu_dir.to_str().unwrap();
         client.wrap_dek(Some(kek_dir)).unwrap();
 
-        let bbox = BlackBox::from_agent(client, Some(kek_dir.to_string()));
+        let keys = DekProvider::Agent {
+            client,
+            kek_dir: Some(kek_dir.to_string()),
+        };
 
-        let plaintext = b"agent BlackBox v2 round-trip test";
-        let ciphertext = bbox.encrypt_blob(plaintext).unwrap();
-        let decrypted = bbox.decrypt(&ciphertext).unwrap();
+        let plaintext = b"agent DekProvider v2 round-trip test";
+        let ciphertext = encrypt_envelope(plaintext, FileType::Blob, &keys).unwrap();
+        let decrypted = decrypt_envelope(&ciphertext, &keys).unwrap();
         assert_eq!(&decrypted, plaintext);
 
         // Use a fresh client for shutdown since the original was moved

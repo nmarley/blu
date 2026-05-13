@@ -7,12 +7,11 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::age::BlackBox;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::format::datetime_format;
 use crate::hash::{Hash, SHA2_512};
-use crate::io::{gen_std_bbserde, BlackBoxSerializable, Position};
+use crate::io::{gen_std_enc_serde, Position};
 
 use super::blockref::BlockRef;
 use super::ChunkMeta;
@@ -333,7 +332,7 @@ impl PlainIndex {
     }
 }
 
-gen_std_bbserde!(PlainIndex);
+gen_std_enc_serde!(PlainIndex);
 
 /// Helper method to return the current timestamp
 fn now() -> chrono::NaiveDateTime {

@@ -3,9 +3,9 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::age::BlackBox;
 use crate::agent::AgentClient;
 use crate::config::{self, Config};
+use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result};
 use crate::keys;
 
@@ -41,13 +41,13 @@ impl Default for LoadOptions<'_> {
     }
 }
 
-/// Load the config and BlackBox for CLI operations.
+/// Load the config and DekProvider for CLI operations.
 ///
 /// This is the main entry point for CLI commands that need encryption.
 /// It will try to use the agent daemon for session-cached keys. If the
 /// agent is not available (or --no-passphrase is set), it falls back
 /// to loading the key directly in-process.
-pub fn load_config_and_blackbox(opts: &LoadOptions<'_>) -> Result<(Config, BlackBox)> {
+pub fn load_config_and_keys(opts: &LoadOptions<'_>) -> Result<(Config, DekProvider)> {
     let dir = Path::new(".");
 
     let cfg = config::read_config(dir).map_err(|e| {
@@ -56,12 +56,12 @@ pub fn load_config_and_blackbox(opts: &LoadOptions<'_>) -> Result<(Config, Black
         BluError::InvalidConfig(e.to_string())
     })?;
 
-    let bbox = load_blackbox_from_config(&cfg, opts)?;
+    let keys = load_keys_from_config(&cfg, opts)?;
 
-    Ok((cfg, bbox))
+    Ok((cfg, keys))
 }
 
-/// Load the BlackBox from a config, handling agent and passphrase prompting.
+/// Load the DekProvider from a config, handling agent and passphrase prompting.
 ///
 /// Strategy:
 /// 1. Always use the agent. PQ-only vaults require the agent-held PQ
@@ -70,29 +70,29 @@ pub fn load_config_and_blackbox(opts: &LoadOptions<'_>) -> Result<(Config, Black
 ///    passphrase only and never prompt.
 /// 3. Otherwise, connect to the agent (auto-starting if needed),
 ///    check if already unlocked, prompt and unlock if locked.
-pub fn load_blackbox_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result<BlackBox> {
+pub fn load_keys_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result<DekProvider> {
     if !cfg.has_encryption() {
         return Err(BluError::NoKeyConfigured);
     }
 
     // --no-passphrase: do not prompt, but still use the agent.
     if opts.no_passphrase {
-        return load_blackbox_via_agent(cfg, "");
+        return load_keys_via_agent(cfg, "");
     }
 
     // If an explicit passphrase was provided, use the agent with it
     if let Some(pass) = opts.passphrase {
-        return load_blackbox_via_agent(cfg, pass);
+        return load_keys_via_agent(cfg, pass);
     }
 
-    try_agent_blackbox(cfg)
+    try_agent_keys(cfg)
 }
 
-/// Try to get a BlackBox through the agent daemon.
+/// Try to get a DekProvider through the agent daemon.
 ///
 /// Connects to the agent (auto-starting if needed), checks status,
-/// prompts for passphrase if locked, and returns an agent-backed BlackBox.
-fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
+/// prompts for passphrase if locked, and returns an agent-backed DekProvider.
+fn try_agent_keys(cfg: &Config) -> Result<DekProvider> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
     let kek_dir = Some(cfg.bludir().to_string_lossy().into_owned());
@@ -101,12 +101,12 @@ fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
     let unlocked = resp["result"]["unlocked"].as_bool().unwrap_or(false);
 
     if unlocked {
-        return Ok(BlackBox::from_agent(client, kek_dir));
+        return Ok(DekProvider::Agent { client, kek_dir });
     }
 
     // Agent is running but locked; try without passphrase first
     match client.unlock("") {
-        Ok(_) => return Ok(BlackBox::from_agent(client, kek_dir)),
+        Ok(_) => return Ok(DekProvider::Agent { client, kek_dir }),
         Err(BluError::WrongPassphrase) | Err(BluError::Internal(_)) => {
             // Key is passphrase-protected, need to prompt
         }
@@ -115,17 +115,17 @@ fn try_agent_blackbox(cfg: &Config) -> Result<BlackBox> {
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
     client.unlock(&pass)?;
-    Ok(BlackBox::from_agent(client, kek_dir))
+    Ok(DekProvider::Agent { client, kek_dir })
 }
 
-/// Load a BlackBox via the agent using an explicit passphrase.
-fn load_blackbox_via_agent(cfg: &Config, passphrase: &str) -> Result<BlackBox> {
+/// Load a DekProvider via the agent using an explicit passphrase.
+fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
 
     client.unlock(passphrase)?;
     let kek_dir = Some(cfg.bludir().to_string_lossy().into_owned());
-    Ok(BlackBox::from_agent(client, kek_dir))
+    Ok(DekProvider::Agent { client, kek_dir })
 }
 
 /// Load just the config (for commands that don't need encryption).

@@ -2,10 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io;
 
-use crate::age::BlackBox;
 use crate::compression::{compress, decompress};
 use crate::hash::Hash;
-use crate::io::{gen_std_bbserde, BlackBoxSerializable};
+use crate::io::gen_std_enc_serde;
 
 /// default filename for the tag index file
 pub const TAG_INDEX_FILENAME: &str = "tags.dat";
@@ -117,7 +116,7 @@ pub fn sanitize_tag(tag: &str) -> String {
         .replace(' ', "-")
 }
 
-gen_std_bbserde!(TagIndex);
+gen_std_enc_serde!(TagIndex);
 
 #[cfg(test)]
 mod test {

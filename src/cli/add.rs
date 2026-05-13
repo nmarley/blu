@@ -1,5 +1,5 @@
 use crate::cli::clapargs::AddArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 
 /// Add local files to the index
 pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -10,9 +10,9 @@ pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("no paths given".into());
     }
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
-    let mut plain_index = cfg.load_plain_index(&bbox)?;
+    let mut plain_index = cfg.load_plain_index(&keys)?;
 
     // iterate each path
     for p in args.add_paths {
@@ -20,7 +20,7 @@ pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
         plain_index.add(p, None)?;
     }
 
-    cfg.write_plain_index(&plain_index, &bbox)?;
+    cfg.write_plain_index(&plain_index, &keys)?;
 
     Ok(())
 }

@@ -7,7 +7,7 @@ use glob::Pattern;
 
 use crate::blob::EncBlobReader;
 use crate::cli::clapargs::RestoreFilesArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
@@ -21,9 +21,9 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         return Err("Must specify --file-hashes, --path, or --all".into());
     }
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
-    let plain_index = cfg.load_plain_index(&bbox)?;
-    let blob_index = match cfg.load_blob_index(&bbox) {
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
+    let plain_index = cfg.load_plain_index(&keys)?;
+    let blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e.into()),
@@ -38,7 +38,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     // NOTE:
     //     `*` derefs the `Box<dyn Backend>`
     //     BlobBuffer::new expects a `&dyn Backend`
-    let mut reader = EncBlobReader::new(&bbox, &(*backend));
+    let mut reader = EncBlobReader::new(&keys, &(*backend));
 
     // Build path pattern matcher if specified
     let path_pattern = args.path.as_ref().map(|p| {

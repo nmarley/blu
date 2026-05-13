@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::blob::BlobBuffer;
 use crate::cli::clapargs::EncryptFilesArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::hash::{self, Hash};
 
@@ -11,14 +11,14 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
     info!("Started encrypt_files util");
     info!("force_write_index option: {}", args.force_write_index);
 
-    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
-    let plain_index = cfg.load_plain_index(&bbox)?;
+    let plain_index = cfg.load_plain_index(&keys)?;
 
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?
 
-    let mut blob_index = match cfg.load_blob_index(&bbox) {
+    let mut blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e.into()),
@@ -33,7 +33,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
     // NOTE:
     //     `*` derefs the `Box<dyn Backend>`
     //     BlobBuffer::new expects a `&dyn Backend`
-    let mut blob_buf = BlobBuffer::new(&(*backend), bbox.clone());
+    let mut blob_buf = BlobBuffer::new(&(*backend), keys.clone());
 
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later
@@ -87,7 +87,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
             Ok(_) => println!("Finalized blob buffer!"),
             Err(e) => println!("Error finalizing blob buffer: {}", e),
         }
-        match cfg.write_blob_index(&blob_index, &bbox) {
+        match cfg.write_blob_index(&blob_index, &keys) {
             Ok(_) => println!("Wrote blob index!"),
             Err(e) => println!("Error writing blob index: {}", e),
         }

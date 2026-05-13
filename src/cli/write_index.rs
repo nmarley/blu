@@ -2,11 +2,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::age::BlackBox;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::WriteIndexArgs;
-use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
-use crate::io::BlackBoxSerializable;
+use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::dek_provider::DekProvider;
+use crate::io::EncryptedSerializable;
 
 /// Write the index to a local file
 pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -29,12 +29,12 @@ pub fn write_index(args: WriteIndexArgs) -> Result<(), Box<dyn std::error::Error
     // test ability to write index file before further processing
     check_outfile_writable(&outfile)?;
 
-    let (_cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+    let (_cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     info!("Indexing {:?}", dir);
     let index = PlainIndex::new(dir)?;
 
     // back out here since we pass a filename as a direct path
-    match write_index_file(&index, &bbox, &outfile) {
+    match write_index_file(&index, &keys, &outfile) {
         Ok(num_bytes) => info!(
             "Index written to {} ({} bytes)",
             outfile.display(),
@@ -68,11 +68,11 @@ pub(crate) fn check_outfile_writable<P: AsRef<Path>>(
 
 pub(crate) fn write_index_file<P: AsRef<Path>>(
     index: &PlainIndex,
-    bbox: &BlackBox,
+    keys: &DekProvider,
     outfile: P,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let mut enc_idx_bytes = Vec::new();
-    index.write(&mut enc_idx_bytes, bbox)?;
+    index.write(&mut enc_idx_bytes, keys)?;
     let size = enc_idx_bytes.len();
     let mut file = fs::File::create(outfile)?;
     file.write_all(&enc_idx_bytes)?;

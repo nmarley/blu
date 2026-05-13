@@ -2,13 +2,13 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use crate::age::BlackBox;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::InitArgs;
 use crate::cli::{
     check_outfile_writable, global_identity_age_path, load_global_identity, write_index_file,
 };
 use crate::config::{self, EncryptionConfig};
+use crate::dek_provider::DekProvider;
 use crate::keys;
 
 /// Resolved inputs for vault initialization.
@@ -67,9 +67,12 @@ pub fn init_vault(
     let index_path = indexes_dir.join("index.dat");
     check_outfile_writable(&index_path)?;
 
-    let bbox = BlackBox::new().with_kek(kek, 0);
+    let keys = DekProvider::Local {
+        kek,
+        kek_version: 0,
+    };
     let index = PlainIndex::new_empty();
-    write_index_file(&index, &bbox, &index_path)?;
+    write_index_file(&index, &keys, &index_path)?;
 
     Ok(InitVaultResult { config_path })
 }
