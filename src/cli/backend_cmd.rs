@@ -1,10 +1,11 @@
 //! Backend management subcommands.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cli::clapargs::{
-    BackendAddArgs, BackendArgs, BackendCommand, BackendMirrorArgs, BackendRemoveArgs,
-    BackendSetDefaultArgs,
+    BackendAddArgs, BackendArgs, BackendCommand, BackendDiffArgs, BackendListArgs,
+    BackendMirrorArgs, BackendRemoveArgs, BackendSetDefaultArgs,
 };
 use crate::config;
 use crate::config::backend::BackendConfig;
@@ -13,10 +14,11 @@ use crate::config::backend::BackendConfig;
 pub fn backend(args: BackendArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         BackendCommand::Add(a) => add(a),
-        BackendCommand::List => list(),
+        BackendCommand::List(a) => list(a),
         BackendCommand::Remove(a) => remove(a),
         BackendCommand::SetDefault(a) => set_default(a),
         BackendCommand::Mirror(a) => mirror(a),
+        BackendCommand::Diff(a) => diff(a),
     }
 }
 
@@ -65,17 +67,32 @@ fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// List all configured backends.
-fn list() -> Result<(), Box<dyn std::error::Error>> {
+fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+    use crate::error::BluError;
+
     let cfg = config::read_config(".")?;
 
-    for (name, backend) in &cfg.backends {
+    // If --stats, load the blob index to count blobs per backend
+    let blob_paths: Option<HashSet<PathBuf>> = if args.stats {
+        let (cfg2, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+        match cfg2.load_blob_index(&bbox) {
+            Ok(idx) => Some(idx.path_index.keys().cloned().collect()),
+            Err(BluError::IndexNotFound(_)) => Some(HashSet::new()),
+            Err(e) => return Err(e.into()),
+        }
+    } else {
+        None
+    };
+
+    for (name, backend_cfg) in &cfg.backends {
         let is_default = if name == &cfg.default_backend {
             "  (default)"
         } else {
             ""
         };
 
-        let detail = match backend {
+        let detail = match backend_cfg {
             BackendConfig::Local(local) => {
                 format!("local  path={}", local.path.display())
             }
@@ -91,7 +108,22 @@ fn list() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        println!("{:<16}{}{}", name, detail, is_default);
+        let stats_str = if let Some(ref paths) = blob_paths {
+            let be = cfg.init_named_backend(name)?;
+            let mut present = 0u64;
+            for path in paths {
+                match be.exists(path) {
+                    Ok(true) => present += 1,
+                    Ok(false) => {}
+                    Err(_) => {}
+                }
+            }
+            format!("  [{}/{} blobs]", present, paths.len())
+        } else {
+            String::new()
+        };
+
+        println!("{:<16}{}{}{}", name, detail, is_default, stats_str);
     }
 
     Ok(())
@@ -136,6 +168,53 @@ fn set_default(args: BackendSetDefaultArgs) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// Collect the set of blob paths relevant to a given tag.
+///
+/// Joins tag index -> plain index (file hashes -> chunk hashes) ->
+/// blob index (chunk hashes -> blob paths).
+fn blob_paths_for_tag(
+    tag: &str,
+    cfg: &config::Config,
+    bbox: &crate::age::BlackBox,
+) -> Result<HashSet<PathBuf>, Box<dyn std::error::Error>> {
+    use crate::error::BluError;
+
+    let tag_index = match cfg.load_tag_index(bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => {
+            return Err("tag index not found (no tags exist)".into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let file_hashes: Vec<_> = tag_index.search(tag).cloned().collect();
+    if file_hashes.is_empty() {
+        return Err(format!("no files found with tag \"{}\"", tag).into());
+    }
+
+    let plain_index = cfg.load_plain_index(bbox)?;
+    let blob_index = match cfg.load_blob_index(bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => {
+            return Err("no blob index found".into());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let mut paths = HashSet::new();
+    for file_hash in &file_hashes {
+        if let Some(file_ref) = plain_index.get_fileref_ref(file_hash) {
+            for cm in &file_ref.chunkmetas {
+                if let Ok(loc) = blob_index.get_block_location_ref(&cm.hash) {
+                    paths.insert(loc.blob_path().clone());
+                }
+            }
+        }
+    }
+
+    Ok(paths)
+}
+
 /// Mirror blobs from one backend to another.
 fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
@@ -156,17 +235,22 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
     let from_backend = cfg.init_named_backend(&args.from)?;
     let to_backend = cfg.init_named_backend(&args.to)?;
 
-    // Load blob index to get all blob paths
-    let blob_index = match cfg.load_blob_index(&bbox) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => {
-            println!("No blob index found, nothing to mirror");
-            return Ok(());
-        }
-        Err(e) => return Err(e.into()),
+    // Determine which blob paths to mirror
+    let blob_paths_set: HashSet<PathBuf> = if let Some(ref tag) = args.tag {
+        blob_paths_for_tag(tag, &cfg, &bbox)?
+    } else {
+        let blob_index = match cfg.load_blob_index(&bbox) {
+            Ok(idx) => idx,
+            Err(BluError::IndexNotFound(_)) => {
+                println!("No blob index found, nothing to mirror");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        blob_index.path_index.keys().cloned().collect()
     };
 
-    let blob_paths: Vec<&PathBuf> = blob_index.path_index.keys().collect();
+    let blob_paths: Vec<&PathBuf> = blob_paths_set.iter().collect();
     let total = blob_paths.len();
 
     if total == 0 {
@@ -174,15 +258,22 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    let mode = if args.dry_run { " (dry run)" } else { "" };
+    let tag_info = if let Some(ref tag) = args.tag {
+        format!(" [tag: {}]", tag)
+    } else {
+        String::new()
+    };
+
     println!(
-        "Mirroring {} blob(s) from \"{}\" to \"{}\"",
-        total, args.from, args.to
+        "Mirroring {} blob(s) from \"{}\" to \"{}\"{}{}",
+        total, args.from, args.to, tag_info, mode
     );
 
-    let mut copied = 0u64;
+    let mut would_copy = 0u64;
     let mut skipped = 0u64;
     let mut failed = 0u64;
-    let mut bytes_copied = 0u64;
+    let mut bytes_transferred = 0u64;
 
     for (i, path) in blob_paths.iter().enumerate() {
         // Check if destination already has this blob
@@ -203,6 +294,11 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
                 failed += 1;
                 continue;
             }
+        }
+
+        if args.dry_run {
+            would_copy += 1;
+            continue;
         }
 
         // Read from source
@@ -239,8 +335,8 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
 
         match to_backend.write_data(&hash, &data) {
             Ok(_) => {
-                bytes_copied += data.len() as u64;
-                copied += 1;
+                bytes_transferred += data.len() as u64;
+                would_copy += 1;
             }
             Err(e) => {
                 eprintln!(
@@ -255,17 +351,117 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!(
-        "Mirror complete: {} copied ({} bytes), {} skipped, {} failed",
-        copied,
-        crate::format::human_bytes(bytes_copied),
-        skipped,
-        failed
-    );
+    if args.dry_run {
+        println!(
+            "Dry run complete: {} would be copied, {} already present",
+            would_copy, skipped
+        );
+    } else {
+        println!(
+            "Mirror complete: {} copied ({}), {} skipped, {} failed",
+            would_copy,
+            crate::format::human_bytes(bytes_transferred),
+            skipped,
+            failed
+        );
+    }
 
     if failed > 0 {
         Err(format!("{} blob(s) failed to mirror", failed).into())
     } else {
         Ok(())
     }
+}
+
+/// Compare blob sets between two backends.
+fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use crate::cli::helpers::{load_config_and_blackbox, LoadOptions};
+    use crate::error::BluError;
+
+    let (cfg, bbox) = load_config_and_blackbox(&LoadOptions::default())?;
+
+    if !cfg.backends.contains_key(&args.from) {
+        return Err(format!("backend \"{}\" not found", args.from).into());
+    }
+    if !cfg.backends.contains_key(&args.to) {
+        return Err(format!("backend \"{}\" not found", args.to).into());
+    }
+
+    let from_backend = cfg.init_named_backend(&args.from)?;
+    let to_backend = cfg.init_named_backend(&args.to)?;
+
+    let blob_index = match cfg.load_blob_index(&bbox) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => {
+            println!("No blob index found, nothing to diff");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let blob_paths: Vec<&PathBuf> = blob_index.path_index.keys().collect();
+    let total = blob_paths.len();
+
+    if total == 0 {
+        println!("No blobs in index");
+        return Ok(());
+    }
+
+    println!(
+        "Comparing {} blob(s) between \"{}\" and \"{}\"",
+        total, args.from, args.to
+    );
+
+    let mut both = 0u64;
+    let mut from_only = 0u64;
+    let mut to_only = 0u64;
+    let mut errors = 0u64;
+
+    for path in &blob_paths {
+        let in_from = match from_backend.exists(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "  error checking {} in \"{}\": {}",
+                    path.display(),
+                    args.from,
+                    e
+                );
+                errors += 1;
+                continue;
+            }
+        };
+        let in_to = match to_backend.exists(path) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "  error checking {} in \"{}\": {}",
+                    path.display(),
+                    args.to,
+                    e
+                );
+                errors += 1;
+                continue;
+            }
+        };
+
+        match (in_from, in_to) {
+            (true, true) => both += 1,
+            (true, false) => from_only += 1,
+            (false, true) => to_only += 1,
+            (false, false) => {
+                eprintln!("  warning: {} not found in either backend", path.display());
+            }
+        }
+    }
+
+    println!();
+    println!("  both:           {}", both);
+    println!("  \"{}\" only:  {}", args.from, from_only);
+    println!("  \"{}\" only:  {}", args.to, to_only);
+    if errors > 0 {
+        println!("  errors:         {}", errors);
+    }
+
+    Ok(())
 }

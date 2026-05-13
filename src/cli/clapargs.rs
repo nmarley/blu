@@ -301,13 +301,15 @@ pub enum BackendCommand {
     /// Add a named storage backend
     Add(BackendAddArgs),
     /// List configured backends
-    List,
+    List(BackendListArgs),
     /// Remove a named backend
     Remove(BackendRemoveArgs),
     /// Set the default backend
     SetDefault(BackendSetDefaultArgs),
     /// Copy blobs from one backend to another
     Mirror(BackendMirrorArgs),
+    /// Compare blob sets between two backends
+    Diff(BackendDiffArgs),
 }
 
 #[allow(missing_docs)]
@@ -357,12 +359,40 @@ pub struct BackendSetDefaultArgs {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
+pub struct BackendListArgs {
+    /// Show blob counts per backend
+    #[arg(long)]
+    pub stats: bool,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
 pub struct BackendMirrorArgs {
     /// Source backend name
     #[arg(long)]
     pub from: String,
 
     /// Destination backend name
+    #[arg(long)]
+    pub to: String,
+
+    /// Show what would be copied without transferring data
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Only mirror blobs referenced by files with this tag
+    #[arg(long)]
+    pub tag: Option<String>,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendDiffArgs {
+    /// First backend name
+    #[arg(long)]
+    pub from: String,
+
+    /// Second backend name
     #[arg(long)]
     pub to: String,
 }

@@ -161,6 +161,13 @@ pub struct BlobBlockLocation {
     pub position: Position,
 }
 
+impl BlobBlockLocation {
+    /// Returns the path to the blob file containing this block.
+    pub fn blob_path(&self) -> &PathBuf {
+        &self.path
+    }
+}
+
 // NOTE: path should not have .blu or .blu/data in it
 // BlobBlockLocation {
 //     path: "./.blu/data/9/93c/93c98/93c982e79bcd6d4b32c24af6c4b88c9f9483ab88363a7bd2ae5a1b6da83af1c9163696d946de18ee10510563d3d42e20c52d5b78044a08929ecd2d756d8816d0",
