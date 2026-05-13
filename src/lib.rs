@@ -38,6 +38,8 @@ pub mod cli;
 pub mod compression;
 /// configuration file and related methods
 pub mod config;
+/// envelope key provider for DEK wrap/unwrap
+pub mod dek_provider;
 /// error types for blu
 pub mod error;
 /// format contains a format fn for datetime (chrono/serde)
