@@ -68,3 +68,35 @@ will interleave those lines, which is fine and expected. Error output uses
 
 **Default 16 concurrent tasks:** AWS S3 handles this easily (AWS CLI itself
 defaults to 10 for `s3 sync`). Configurable via `--jobs` for the user to tune.
+
+## Addendum: Progress bars
+
+Add `indicatif` (the standard Rust progress bar crate) as a new dependency.
+This is a small lift that slots in naturally alongside the JoinSet pattern,
+since each completed task just increments the bar.
+
+**Dependency:** `indicatif = "0.17"` in `Cargo.toml`.
+
+**Integration with logging:** `indicatif` provides `ProgressBar::suspend()`
+which lets `log` / `simplelog` output coexist without corrupting the bar.
+Alternatively, use `indicatif-log-bridge` to wire them together, but that
+adds another dep; `suspend()` is simple enough.
+
+**Where bars appear:**
+
+- `mirror`: `ProgressBar` with total = blob count. Each task increments on
+  completion. Message shows copied/skipped/failed tallies. Bytes transferred
+  shown via `ProgressStyle` with `binary_bytes` for throughput.
+- `diff`: `ProgressBar` with total = blob count, increment per blob checked.
+- `list --stats`: `ProgressBar` with total = blob count per backend.
+
+**Dry-run mode (`mirror --dry-run`):** Still show the bar (the exists-check
+phase is the slow part anyway). Style it differently or use a spinner to make
+it visually distinct.
+
+**When to implement:** Fold into Stages 3, 4, and 5 respectively. The bar is
+created before the JoinSet loop, and `inc(1)` is called in the
+result-aggregation loop as each `JoinHandle` resolves. No channels needed;
+the progress bar's internal state is `Arc<Mutex<...>>` and safe to share, but
+we do not even need to share it since all `inc()` calls happen on the main
+task that drains the JoinSet.
