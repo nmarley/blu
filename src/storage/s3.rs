@@ -10,6 +10,9 @@ use crate::hash::Hash;
 ///
 /// This backend stores encrypted blob files in an S3 bucket. All I/O
 /// is async and driven by the caller's Tokio runtime.
+///
+/// `Clone` is cheap: `aws_sdk_s3::Client` is `Arc`-backed internally.
+#[derive(Clone)]
 pub struct AmazonS3 {
     bucket: String,
     prefix: PathBuf,

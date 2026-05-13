@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::hash::Hash;
 
 /// Local storage backend for managing data on a local filesystem.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Local {
     datadir: PathBuf,
 }

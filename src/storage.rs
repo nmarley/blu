@@ -14,6 +14,10 @@ use crate::hash::Hash;
 /// All I/O methods are async and driven by the caller's Tokio runtime.
 /// Using a concrete enum (rather than `dyn Trait`) because native async
 /// fn in traits is not object-safe.
+///
+/// `Clone` is cheap for all variants and required for spawning
+/// concurrent Tokio tasks during mirror/diff operations.
+#[derive(Clone)]
 pub enum BackendKind {
     /// Local filesystem storage.
     Local(Local),
