@@ -74,8 +74,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // TODO: Should key(s) be read and stored here in some kind of state or context?
-    // use crate::age::BlackBox;
-    // const TEST_AGE_SECRET_KEY: &str = include_str!("../test/blu_secrets/blu.key");
 
     match args.action {
         clapargs::Action::Add(a) => cli::add(a),

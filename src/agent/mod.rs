@@ -16,10 +16,10 @@
 
 /// Biometric (Touch ID) unlock support.
 pub mod biometric;
-mod blackbox;
 mod client;
 mod config;
 mod daemon;
+mod dek_provider_test;
 mod memlock;
 mod paths;
 mod protocol;

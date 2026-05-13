@@ -24,7 +24,7 @@
 #[macro_use]
 extern crate log;
 
-/// age handles all encryption and decryption
+/// passphrase-based encryption for identity files
 pub mod age;
 /// agent daemon for session management (unlock/lock)
 pub mod agent;
