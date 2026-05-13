@@ -11,14 +11,14 @@ use crate::config;
 use crate::config::backend::BackendConfig;
 
 /// Dispatch backend subcommands.
-pub fn backend(args: BackendArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn backend(args: BackendArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         BackendCommand::Add(a) => add(a),
-        BackendCommand::List(a) => list(a),
+        BackendCommand::List(a) => list(a).await,
         BackendCommand::Remove(a) => remove(a),
         BackendCommand::SetDefault(a) => set_default(a),
-        BackendCommand::Mirror(a) => mirror(a),
-        BackendCommand::Diff(a) => diff(a),
+        BackendCommand::Mirror(a) => mirror(a).await,
+        BackendCommand::Diff(a) => diff(a).await,
     }
 }
 
@@ -67,7 +67,7 @@ fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// List all configured backends.
-fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
@@ -109,10 +109,10 @@ fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
         };
 
         let stats_str = if let Some(ref paths) = blob_paths {
-            let be = cfg.init_named_backend(name)?;
+            let be = cfg.init_named_backend(name).await?;
             let mut present = 0u64;
             for path in paths {
-                match be.exists(path) {
+                match be.exists(path).await {
                     Ok(true) => present += 1,
                     Ok(false) => {}
                     Err(_) => {}
@@ -216,7 +216,7 @@ fn blob_paths_for_tag(
 }
 
 /// Mirror blobs from one backend to another.
-fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
@@ -232,8 +232,8 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err("source and destination must be different".into());
     }
 
-    let from_backend = cfg.init_named_backend(&args.from)?;
-    let to_backend = cfg.init_named_backend(&args.to)?;
+    let from_backend = cfg.init_named_backend(&args.from).await?;
+    let to_backend = cfg.init_named_backend(&args.to).await?;
 
     // Determine which blob paths to mirror
     let blob_paths_set: HashSet<PathBuf> = if let Some(ref tag) = args.tag {
@@ -277,7 +277,7 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, path) in blob_paths.iter().enumerate() {
         // Check if destination already has this blob
-        match to_backend.exists(path) {
+        match to_backend.exists(path).await {
             Ok(true) => {
                 skipped += 1;
                 continue;
@@ -302,7 +302,7 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Read from source
-        let data = match from_backend.read_data(path) {
+        let data = match from_backend.read_data(path).await {
             Ok(data) => data,
             Err(e) => {
                 eprintln!(
@@ -333,7 +333,7 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        match to_backend.write_data(&hash, &data) {
+        match to_backend.write_data(&hash, &data).await {
             Ok(_) => {
                 bytes_transferred += data.len() as u64;
                 would_copy += 1;
@@ -374,7 +374,7 @@ fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Compare blob sets between two backends.
-fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
@@ -387,8 +387,8 @@ fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("backend \"{}\" not found", args.to).into());
     }
 
-    let from_backend = cfg.init_named_backend(&args.from)?;
-    let to_backend = cfg.init_named_backend(&args.to)?;
+    let from_backend = cfg.init_named_backend(&args.from).await?;
+    let to_backend = cfg.init_named_backend(&args.to).await?;
 
     let blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
@@ -418,7 +418,7 @@ fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut errors = 0u64;
 
     for path in &blob_paths {
-        let in_from = match from_backend.exists(path) {
+        let in_from = match from_backend.exists(path).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!(
@@ -431,7 +431,7 @@ fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        let in_to = match to_backend.exists(path) {
+        let in_to = match to_backend.exists(path).await {
             Ok(v) => v,
             Err(e) => {
                 eprintln!(

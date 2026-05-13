@@ -9,69 +9,11 @@ use crate::hash::Hash;
 // Storage adapter
 // types: local, s3, do, azure_blob, gcs
 
-/// The `Backend` trait provides an abstraction over different storage
-/// backends.
-///
-/// It defines a common interface that can be used to interact with various
-/// types of storage, such as local file systems, Amazon S3, Google Cloud
-/// Storage, etc. This allows code to be written in a storage-agnostic way,
-/// where the exact storage backend used is a runtime detail.
-///
-/// Implementations of `Backend` are responsible for handling the
-/// specific details of interacting with the storage backend, such as network
-/// communication, error handling, serialization and deserialization of data,
-/// etc.
-///
-/// # Methods
-///
-/// - `read_data`: Reads data identified by the given hash from the storage
-///   backend. It returns a `Result` which, on success, contains the data as a
-///   vector of bytes. On failure, it returns an error.
-///
-/// - `write_data`: Writes data to the storage backend. The path of the data is
-///   chosen based on the provided hash. It returns a `Result` which, on success,
-///   contains the `PathBuf` where the data is stored. On failure, it returns an
-///   error.
-///
-/// - `exists`: Checks if a blob exists at the given path. Returns true if the
-///   blob exists, false otherwise.
-///
-/// - `delete`: Deletes a blob at the given path. Returns an error if the
-///   deletion fails.
-trait Backend {
-    // TODO: Maybe we want to stream it instead? Make this return a reader?
-    //
-    // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
-    // around 8MiB by default ... maybe streaming doesn't make sense here.
-    /// Read the data blob identified by the hash from the storage backend.
-    fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
-    /// Write the data to the storage backend. The path is chosen based on the
-    /// hash.
-    fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>>;
-    /// Check if a blob exists at the given path.
-    fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>>;
-    /// Delete a blob at the given path.
-    fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// Write data to a known path in the backend (not hash-derived).
-    ///
-    /// Used for index files and other data that must live at a
-    /// predictable location rather than a content-addressed path.
-    fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// Read data from a known path in the backend (not hash-derived).
-    ///
-    /// Counterpart to [`write_to_path`]. Used for retrieving index
-    /// files and other data stored at predictable locations.
-    fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
-}
-
 /// Concrete enum dispatch over supported storage backends.
 ///
-/// Replaces `Box<dyn Backend>` / `&dyn Backend` with a closed set of
-/// variants. This enables a future migration to `async fn` methods
-/// (native async traits are not object-safe, so `dyn Backend` cannot
-/// be used once the methods become async).
+/// All I/O methods are async and driven by the caller's Tokio runtime.
+/// Using a concrete enum (rather than `dyn Trait`) because native async
+/// fn in traits is not object-safe.
 pub enum BackendKind {
     /// Local filesystem storage.
     Local(Local),
@@ -80,60 +22,70 @@ pub enum BackendKind {
 }
 
 impl BackendKind {
-    /// Read the data blob identified by the hash from the storage backend.
-    pub fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // TODO: Maybe we want to stream it instead? Make this return a reader?
+    //
+    // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
+    // around 8MiB by default ... maybe streaming doesn't make sense here.
+
+    /// Read the data blob at the given path from the storage backend.
+    pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.read_data(path),
-            Self::AmazonS3(b) => b.read_data(path),
+            Self::Local(b) => b.read_data(path).await,
+            Self::AmazonS3(b) => b.read_data(path).await,
         }
     }
 
-    /// Write the data to the storage backend. The path is chosen based on
-    /// the hash.
-    pub fn write_data(
+    /// Write data to a content-addressed path derived from the hash.
+    pub async fn write_data(
         &self,
         hash: &Hash,
         data: &[u8],
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.write_data(hash, data),
-            Self::AmazonS3(b) => b.write_data(hash, data),
+            Self::Local(b) => b.write_data(hash, data).await,
+            Self::AmazonS3(b) => b.write_data(hash, data).await,
         }
     }
 
     /// Check if a blob exists at the given path.
-    pub fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.exists(path),
-            Self::AmazonS3(b) => b.exists(path),
+            Self::Local(b) => b.exists(path).await,
+            Self::AmazonS3(b) => b.exists(path).await,
         }
     }
 
     /// Delete a blob at the given path.
-    pub fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.delete(path),
-            Self::AmazonS3(b) => b.delete(path),
+            Self::Local(b) => b.delete(path).await,
+            Self::AmazonS3(b) => b.delete(path).await,
         }
     }
 
     /// Write data to a known path in the backend (not hash-derived).
-    pub fn write_to_path(
+    ///
+    /// Used for index files and other data that must live at a
+    /// predictable location rather than a content-addressed path.
+    pub async fn write_to_path(
         &self,
         path: &Path,
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.write_to_path(path, data),
-            Self::AmazonS3(b) => b.write_to_path(path, data),
+            Self::Local(b) => b.write_to_path(path, data).await,
+            Self::AmazonS3(b) => b.write_to_path(path, data).await,
         }
     }
 
     /// Read data from a known path in the backend (not hash-derived).
-    pub fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    ///
+    /// Counterpart to [`write_to_path`]. Used for retrieving index
+    /// files and other data stored at predictable locations.
+    pub async fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         match self {
-            Self::Local(b) => b.read_from_path(path),
-            Self::AmazonS3(b) => b.read_from_path(path),
+            Self::Local(b) => b.read_from_path(path).await,
+            Self::AmazonS3(b) => b.read_from_path(path).await,
         }
     }
 }
@@ -232,8 +184,8 @@ mod test {
     use super::Local;
     use crate::hash::multihash;
 
-    #[test]
-    fn local_rw_data() {
+    #[tokio::test]
+    async fn local_rw_data() {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(datadir));
 
@@ -243,15 +195,15 @@ mod test {
         let hash = Hash::from(mh.to_bytes());
 
         // Write the data
-        let pathbuf = storage.write_data(&hash, data).unwrap();
+        let pathbuf = storage.write_data(&hash, data).await.unwrap();
 
         // Read the data back and verify it
-        let read_data = storage.read_data(&pathbuf).unwrap();
+        let read_data = storage.read_data(&pathbuf).await.unwrap();
         assert_eq!(data.to_vec(), read_data);
     }
 
-    #[test]
-    fn local_exists_and_delete() {
+    #[tokio::test]
+    async fn local_exists_and_delete() {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(&datadir));
 
@@ -262,20 +214,20 @@ mod test {
 
         // Initially the file should not exist
         let pathbuf = datadir.path().join(path_for(&hash).unwrap());
-        assert!(!storage.exists(&pathbuf).unwrap());
+        assert!(!storage.exists(&pathbuf).await.unwrap());
 
         // Write the data
-        let written_path = storage.write_data(&hash, data).unwrap();
+        let written_path = storage.write_data(&hash, data).await.unwrap();
         assert_eq!(pathbuf, written_path);
 
         // Now it should exist
-        assert!(storage.exists(&pathbuf).unwrap());
+        assert!(storage.exists(&pathbuf).await.unwrap());
 
         // Delete it
-        storage.delete(&pathbuf).unwrap();
+        storage.delete(&pathbuf).await.unwrap();
 
         // Now it should not exist
-        assert!(!storage.exists(&pathbuf).unwrap());
+        assert!(!storage.exists(&pathbuf).await.unwrap());
     }
 }
 

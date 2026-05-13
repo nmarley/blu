@@ -7,7 +7,7 @@ use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 ///
 /// This downloads the encrypted index files from the backend,
 /// allowing access to the vault from a different machine.
-pub fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started pull");
 
     let (cfg, _keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -23,12 +23,12 @@ pub fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let backend = match &args.backend {
-        Some(name) => cfg.init_named_backend(name)?,
-        None => cfg.init_storage_backend()?,
+        Some(name) => cfg.init_named_backend(name).await?,
+        None => cfg.init_storage_backend().await?,
     };
 
     println!("Pulling indexes from remote backend...");
-    cfg.pull_indexes(&backend)?;
+    cfg.pull_indexes(&backend).await?;
     println!("Indexes pulled successfully");
 
     Ok(())

@@ -16,7 +16,7 @@ use itertools::Itertools;
 /// 3. Writes the updated indexes
 ///
 /// It is idempotent and safe to run repeatedly.
-pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started sync");
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -58,8 +58,8 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(e.into()),
     };
     let backend = match &args.backend {
-        Some(name) => cfg.init_named_backend(name)?,
-        None => cfg.init_storage_backend()?,
+        Some(name) => cfg.init_named_backend(name).await?,
+        None => cfg.init_storage_backend().await?,
     };
     let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
 
@@ -85,21 +85,23 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
                 "block_hash mismatch (data corruption detected)"
             );
 
-            blob_buf.add_chunk(&mut data.clone(), &mut blob_index)?;
+            blob_buf
+                .add_chunk(&mut data.clone(), &mut blob_index)
+                .await?;
             chunks_encrypted += 1;
         }
     }
 
     // Finalize and write blob index if we added chunks
     if chunks_encrypted > 0 || args.force {
-        blob_buf.finalize(&mut blob_index)?;
+        blob_buf.finalize(&mut blob_index).await?;
         cfg.write_blob_index(&blob_index, &keys)?;
     }
 
     // Push indexes to remote if requested
     if args.push {
         println!("Pushing indexes to remote backend...");
-        cfg.push_indexes(&backend)?;
+        cfg.push_indexes(&backend).await?;
         println!("Indexes pushed successfully");
     }
 

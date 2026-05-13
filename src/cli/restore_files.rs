@@ -13,7 +13,7 @@ use crate::format::human_bytes;
 use crate::hash::Hash;
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Started restore_files util");
 
     // Validate arguments
@@ -31,8 +31,8 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
     let files_map = plain_index.files_map_ref();
 
     let backend = match &args.backend {
-        Some(name) => cfg.init_named_backend(name)?,
-        None => cfg.init_storage_backend()?,
+        Some(name) => cfg.init_named_backend(name).await?,
+        None => cfg.init_storage_backend().await?,
     };
     let mut reader = EncBlobReader::new(&keys, &backend);
 
@@ -210,7 +210,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
                 blob_block_location_ref.position.size,
             );
 
-            let block_data = reader.get_bytes(&blob_block_location_ref).unwrap();
+            let block_data = reader.get_bytes(&blob_block_location_ref).await.unwrap();
             fh.write_all_at(block_data, offset)?;
             trace!(
                 "wrote {} bytes at offset {} to {:?}",

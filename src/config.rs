@@ -254,30 +254,31 @@ impl Config {
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
     /// Construct a [`BackendKind`] from a [`BackendConfig`](backend::BackendConfig).
-    fn build_backend(
+    async fn build_backend(
         cfg: &backend::BackendConfig,
     ) -> Result<BackendKind, Box<dyn std::error::Error>> {
         match cfg {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(BackendKind::Local(Local::new(&local_backend.path)))
             }
-            backend::BackendConfig::AmazonS3(ref s3_backend) => {
-                Ok(BackendKind::AmazonS3(AmazonS3::new(
+            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(BackendKind::AmazonS3(
+                AmazonS3::new(
                     &s3_backend.bucket,
                     s3_backend.prefix.as_deref(),
                     s3_backend.region.as_deref(),
-                )))
-            }
+                )
+                .await,
+            )),
         }
     }
 
     /// Initializes the default storage backend.
-    pub fn init_storage_backend(&self) -> Result<BackendKind, Box<dyn std::error::Error>> {
-        self.init_named_backend(&self.default_backend)
+    pub async fn init_storage_backend(&self) -> Result<BackendKind, Box<dyn std::error::Error>> {
+        self.init_named_backend(&self.default_backend).await
     }
 
     /// Initializes a storage backend by name.
-    pub fn init_named_backend(
+    pub async fn init_named_backend(
         &self,
         name: &str,
     ) -> Result<BackendKind, Box<dyn std::error::Error>> {
@@ -285,7 +286,7 @@ impl Config {
             .backends
             .get(name)
             .ok_or_else(|| format!("backend \"{}\" not found in config", name))?;
-        Self::build_backend(cfg)
+        Self::build_backend(cfg).await
     }
 
     /// Remote path for the plain index file in the backend.
@@ -307,7 +308,10 @@ impl Config {
     ///
     /// This uploads the encrypted index files to the backend, making them
     /// accessible from other machines with the same key.
-    pub fn push_indexes(&self, backend: &BackendKind) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn push_indexes(
+        &self,
+        backend: &BackendKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Read local index files
         let plain_index_path = self.idxdir().join(&self.plain_index_filename);
         let blob_index_path = self.idxdir().join(&self.blob_index_filename);
@@ -317,7 +321,8 @@ impl Config {
             let data = fs::read(&plain_index_path)?;
             let remote_path = self.remote_plain_index_path();
             info!("Pushing plain index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)?;
+            self.write_index_to_backend(backend, &data, &remote_path)
+                .await?;
         }
 
         // Upload blob index
@@ -325,7 +330,8 @@ impl Config {
             let data = fs::read(&blob_index_path)?;
             let remote_path = self.remote_blob_index_path();
             info!("Pushing blob index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)?;
+            self.write_index_to_backend(backend, &data, &remote_path)
+                .await?;
         }
 
         // Upload tag index if it exists
@@ -334,45 +340,45 @@ impl Config {
             let data = fs::read(&tag_index_path)?;
             let remote_path = self.remote_tag_index_path();
             info!("Pushing tag index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)?;
+            self.write_index_to_backend(backend, &data, &remote_path)
+                .await?;
         }
 
         Ok(())
     }
 
     /// Helper to write index data to a specific path in the backend.
-    fn write_index_to_backend(
+    async fn write_index_to_backend(
         &self,
         backend: &BackendKind,
         data: &[u8],
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend.write_to_path(path, data)
+        backend.write_to_path(path, data).await
     }
 
     /// Pull indexes from the remote backend.
     ///
     /// This downloads the encrypted index files from the backend,
     /// overwriting local indexes.
-    pub fn pull_indexes(&self, backend: &BackendKind) -> Result<(), Box<dyn std::error::Error>> {
-        let indexes: &[(&Path, &Path)] = &[
-            (
-                &self.remote_plain_index_path(),
-                &self.idxdir().join(&self.plain_index_filename),
-            ),
-            (
-                &self.remote_blob_index_path(),
-                &self.idxdir().join(&self.blob_index_filename),
-            ),
-            (
-                &self.remote_tag_index_path(),
-                &self.idxdir().join(&self.tag_index_filename),
-            ),
+    pub async fn pull_indexes(
+        &self,
+        backend: &BackendKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let remote_paths = [
+            self.remote_plain_index_path(),
+            self.remote_blob_index_path(),
+            self.remote_tag_index_path(),
+        ];
+        let local_paths = [
+            self.idxdir().join(&self.plain_index_filename),
+            self.idxdir().join(&self.blob_index_filename),
+            self.idxdir().join(&self.tag_index_filename),
         ];
 
-        for (remote_path, local_path) in indexes {
-            if backend.exists(remote_path)? {
-                let data = backend.read_from_path(remote_path)?;
+        for (remote_path, local_path) in remote_paths.iter().zip(local_paths.iter()) {
+            if backend.exists(remote_path).await? {
+                let data = backend.read_from_path(remote_path).await?;
                 fs::write(local_path, data)?;
                 info!("Pulled index {:?}", remote_path);
             }
@@ -529,10 +535,10 @@ pub(crate) mod test {
         assert!(parsed.backends.contains_key("default"));
     }
 
-    #[test]
-    fn init_named_backend_unknown_name_errors() {
+    #[tokio::test]
+    async fn init_named_backend_unknown_name_errors() {
         let cfg = Config::default();
-        let result = cfg.init_named_backend("bogus");
+        let result = cfg.init_named_backend("bogus").await;
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert!(
