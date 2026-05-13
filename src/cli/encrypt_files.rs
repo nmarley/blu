@@ -29,11 +29,7 @@ pub fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::E
     );
 
     let backend = cfg.init_storage_backend()?;
-
-    // NOTE:
-    //     `*` derefs the `Box<dyn Backend>`
-    //     BlobBuffer::new expects a `&dyn Backend`
-    let mut blob_buf = BlobBuffer::new(&(*backend), keys.clone());
+    let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
 
     // need some kind of selection mechanism here -- which files to encrypt?
     // for now, we encrypt them all and sort the selection out later

@@ -38,7 +38,7 @@ use crate::hash::Hash;
 ///
 /// - `delete`: Deletes a blob at the given path. Returns an error if the
 ///   deletion fails.
-pub trait Backend {
+trait Backend {
     // TODO: Maybe we want to stream it instead? Make this return a reader?
     //
     // Note: this is only r/w'ing a blob (collection of chunks) at a time, so
@@ -64,6 +64,78 @@ pub trait Backend {
     /// Counterpart to [`write_to_path`]. Used for retrieving index
     /// files and other data stored at predictable locations.
     fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+}
+
+/// Concrete enum dispatch over supported storage backends.
+///
+/// Replaces `Box<dyn Backend>` / `&dyn Backend` with a closed set of
+/// variants. This enables a future migration to `async fn` methods
+/// (native async traits are not object-safe, so `dyn Backend` cannot
+/// be used once the methods become async).
+pub enum BackendKind {
+    /// Local filesystem storage.
+    Local(Local),
+    /// Amazon S3 storage.
+    AmazonS3(AmazonS3),
+}
+
+impl BackendKind {
+    /// Read the data blob identified by the hash from the storage backend.
+    pub fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.read_data(path),
+            Self::AmazonS3(b) => b.read_data(path),
+        }
+    }
+
+    /// Write the data to the storage backend. The path is chosen based on
+    /// the hash.
+    pub fn write_data(
+        &self,
+        hash: &Hash,
+        data: &[u8],
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.write_data(hash, data),
+            Self::AmazonS3(b) => b.write_data(hash, data),
+        }
+    }
+
+    /// Check if a blob exists at the given path.
+    pub fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.exists(path),
+            Self::AmazonS3(b) => b.exists(path),
+        }
+    }
+
+    /// Delete a blob at the given path.
+    pub fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.delete(path),
+            Self::AmazonS3(b) => b.delete(path),
+        }
+    }
+
+    /// Write data to a known path in the backend (not hash-derived).
+    pub fn write_to_path(
+        &self,
+        path: &Path,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.write_to_path(path, data),
+            Self::AmazonS3(b) => b.write_to_path(path, data),
+        }
+    }
+
+    /// Read data from a known path in the backend (not hash-derived).
+    pub fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        match self {
+            Self::Local(b) => b.read_from_path(path),
+            Self::AmazonS3(b) => b.read_from_path(path),
+        }
+    }
 }
 
 /// Get a path for the encrypted data.
@@ -156,14 +228,14 @@ mod test {
 
     use tempfile::tempdir;
 
-    use super::Backend;
+    use super::BackendKind;
     use super::Local;
     use crate::hash::multihash;
 
     #[test]
     fn local_rw_data() {
         let datadir = tempdir().unwrap();
-        let storage = Local::new(datadir);
+        let storage = BackendKind::Local(Local::new(datadir));
 
         // Test data
         let data = b"Hello, world!";
@@ -181,7 +253,7 @@ mod test {
     #[test]
     fn local_exists_and_delete() {
         let datadir = tempdir().unwrap();
-        let storage = Local::new(&datadir);
+        let storage = BackendKind::Local(Local::new(&datadir));
 
         // Test data
         let data = b"Test data for exists/delete";
@@ -207,6 +279,6 @@ mod test {
     }
 }
 
-// re-export backends
-pub use local::Local;
-pub use s3::AmazonS3;
+// re-export backends (crate-visible for BackendKind construction)
+pub(crate) use local::Local;
+pub(crate) use s3::AmazonS3;

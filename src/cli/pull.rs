@@ -28,7 +28,7 @@ pub fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!("Pulling indexes from remote backend...");
-    cfg.pull_indexes(&*backend)?;
+    cfg.pull_indexes(&backend)?;
     println!("Indexes pulled successfully");
 
     Ok(())

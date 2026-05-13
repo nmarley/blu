@@ -8,7 +8,7 @@ use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result as BluResult};
 use crate::io::EncryptedSerializable;
-use crate::storage::{AmazonS3, Backend, Local};
+use crate::storage::{AmazonS3, BackendKind, Local};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
 /// Backend config structures, one for each supported backend.
@@ -253,24 +253,26 @@ impl Config {
     write_index!(write_tag_index, TagIndex, tag_index_filename);
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
-    /// Construct a `Box<dyn Backend>` from a `BackendConfig`.
+    /// Construct a [`BackendKind`] from a [`BackendConfig`](backend::BackendConfig).
     fn build_backend(
         cfg: &backend::BackendConfig,
-    ) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+    ) -> Result<BackendKind, Box<dyn std::error::Error>> {
         match cfg {
             backend::BackendConfig::Local(ref local_backend) => {
-                Ok(Box::new(Local::new(&local_backend.path)))
+                Ok(BackendKind::Local(Local::new(&local_backend.path)))
             }
-            backend::BackendConfig::AmazonS3(ref s3_backend) => Ok(Box::new(AmazonS3::new(
-                &s3_backend.bucket,
-                s3_backend.prefix.as_deref(),
-                s3_backend.region.as_deref(),
-            ))),
+            backend::BackendConfig::AmazonS3(ref s3_backend) => {
+                Ok(BackendKind::AmazonS3(AmazonS3::new(
+                    &s3_backend.bucket,
+                    s3_backend.prefix.as_deref(),
+                    s3_backend.region.as_deref(),
+                )))
+            }
         }
     }
 
     /// Initializes the default storage backend.
-    pub fn init_storage_backend(&self) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+    pub fn init_storage_backend(&self) -> Result<BackendKind, Box<dyn std::error::Error>> {
         self.init_named_backend(&self.default_backend)
     }
 
@@ -278,7 +280,7 @@ impl Config {
     pub fn init_named_backend(
         &self,
         name: &str,
-    ) -> Result<Box<dyn Backend>, Box<dyn std::error::Error>> {
+    ) -> Result<BackendKind, Box<dyn std::error::Error>> {
         let cfg = self
             .backends
             .get(name)
@@ -305,7 +307,7 @@ impl Config {
     ///
     /// This uploads the encrypted index files to the backend, making them
     /// accessible from other machines with the same key.
-    pub fn push_indexes(&self, backend: &dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn push_indexes(&self, backend: &BackendKind) -> Result<(), Box<dyn std::error::Error>> {
         // Read local index files
         let plain_index_path = self.idxdir().join(&self.plain_index_filename);
         let blob_index_path = self.idxdir().join(&self.blob_index_filename);
@@ -341,7 +343,7 @@ impl Config {
     /// Helper to write index data to a specific path in the backend.
     fn write_index_to_backend(
         &self,
-        backend: &dyn Backend,
+        backend: &BackendKind,
         data: &[u8],
         path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -352,7 +354,7 @@ impl Config {
     ///
     /// This downloads the encrypted index files from the backend,
     /// overwriting local indexes.
-    pub fn pull_indexes(&self, backend: &dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn pull_indexes(&self, backend: &BackendKind) -> Result<(), Box<dyn std::error::Error>> {
         let indexes: &[(&Path, &Path)] = &[
             (
                 &self.remote_plain_index_path(),

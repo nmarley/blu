@@ -61,7 +61,7 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
         Some(name) => cfg.init_named_backend(name)?,
         None => cfg.init_storage_backend()?,
     };
-    let mut blob_buf = BlobBuffer::new(&(*backend), keys.clone());
+    let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
 
     let mut chunks_encrypted = 0;
     let files_map = plain_index.files_map_ref();
@@ -99,7 +99,7 @@ pub fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Push indexes to remote if requested
     if args.push {
         println!("Pushing indexes to remote backend...");
-        cfg.push_indexes(&*backend)?;
+        cfg.push_indexes(&backend)?;
         println!("Indexes pushed successfully");
     }
 

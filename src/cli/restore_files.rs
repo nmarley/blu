@@ -34,11 +34,7 @@ pub fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::E
         Some(name) => cfg.init_named_backend(name)?,
         None => cfg.init_storage_backend()?,
     };
-
-    // NOTE:
-    //     `*` derefs the `Box<dyn Backend>`
-    //     BlobBuffer::new expects a `&dyn Backend`
-    let mut reader = EncBlobReader::new(&keys, &(*backend));
+    let mut reader = EncBlobReader::new(&keys, &backend);
 
     // Build path pattern matcher if specified
     let path_pattern = args.path.as_ref().map(|p| {

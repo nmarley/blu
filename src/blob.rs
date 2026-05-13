@@ -11,7 +11,7 @@ use crate::compression::{compress, decompress};
 use crate::dek_provider::{decrypt_envelope, encrypt_envelope, DekProvider};
 use crate::hash::{self, Hash};
 use crate::io::{gen_std_enc_serde, Position};
-use crate::storage::{self, Backend};
+use crate::storage::{self, BackendKind};
 use crate::v2format::FileType;
 
 /// the default on-disk filename for the blob index
@@ -30,7 +30,7 @@ const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 /// (or unused blocks), etc.
 // #[derive(Debug)]
 pub struct BlobBuffer<'a> {
-    storage_backend: &'a (dyn Backend + 'a),
+    storage_backend: &'a BackendKind,
 
     // encryption
     keys: DekProvider,
@@ -42,18 +42,13 @@ pub struct BlobBuffer<'a> {
     positions: HashMap<Hash, BlobBlockLocation>,
 }
 
-// Backend
 impl<'a> BlobBuffer<'a> {
     /// Create a new BlobBuffer with the default capacity
-    pub fn new(backend: &'a (dyn Backend + 'a), keys: DekProvider) -> Self {
+    pub fn new(backend: &'a BackendKind, keys: DekProvider) -> Self {
         Self::with_capacity(backend, keys, DEFAULT_BLOB_CAPACITY_BYTES)
     }
     /// Create a new BlobBuffer with a specified capacity
-    pub fn with_capacity(
-        backend: &'a (dyn Backend + 'a),
-        keys: DekProvider,
-        capacity: usize,
-    ) -> Self {
+    pub fn with_capacity(backend: &'a BackendKind, keys: DekProvider, capacity: usize) -> Self {
         Self {
             storage_backend: backend,
             keys,
@@ -191,11 +186,11 @@ const BLOB_CACHE_CAPACITY: usize = 10;
 pub struct EncBlobReader<'a, 'b> {
     cache: LruCache<Hash, Vec<u8>>,
     keys: &'a DekProvider,
-    backend: &'b (dyn Backend + 'b),
+    backend: &'b BackendKind,
 }
 impl<'a, 'b> EncBlobReader<'a, 'b> {
     /// Create a new EncBlobReader.
-    pub fn new(keys: &'a DekProvider, backend: &'b (dyn Backend + 'b)) -> Self {
+    pub fn new(keys: &'a DekProvider, backend: &'b BackendKind) -> Self {
         Self {
             cache: LruCache::new(NonZeroUsize::new(BLOB_CACHE_CAPACITY).unwrap()),
             keys,
@@ -333,7 +328,7 @@ mod test {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::storage::Local;
+    use crate::storage::{BackendKind, Local};
 
     fn test_keys() -> DekProvider {
         let kek = crate::keys::kek::Kek::generate();
@@ -344,12 +339,12 @@ mod test {
     }
 
     // helper func used in tests below
-    fn temp_local_backend() -> Local {
+    fn temp_local_backend() -> BackendKind {
         let datadir = tempdir().unwrap();
-        Local::new(datadir)
+        BackendKind::Local(Local::new(datadir))
     }
 
-    fn test_blobbuf<'a>(backend: &'a Local) -> (BlobBuffer<'a>, BlobIndex) {
+    fn test_blobbuf(backend: &BackendKind) -> (BlobBuffer<'_>, BlobIndex) {
         let keys = test_keys();
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
@@ -386,7 +381,7 @@ mod test {
             vec![0xde, 0xad],
         ];
         let datadir = tempdir().unwrap();
-        let backend = Local::new(&datadir);
+        let backend = BackendKind::Local(Local::new(&datadir));
         let keys = test_keys();
         let mut blob_index = BlobIndex::new();
         let mut blob_buf = BlobBuffer::with_capacity(&backend, keys, 3);
