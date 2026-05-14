@@ -8,7 +8,6 @@ Consolidated backlog for blu.
 - [ ] Set up GitHub Actions CI (cargo build + cargo test on push)
 - [ ] Update README with current features, commands, config examples
 - [ ] Add CI/build badges and header image to README
-- [ ] Crypto review (send Filippo an email?)
 - [ ] Start maintaining a [changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## Crypto / Key Management
@@ -32,6 +31,9 @@ Consolidated backlog for blu.
 - [ ] Event collision handling (e.g. user deletes from one backend,
       syncs from another where data is still active; consider event
       sourcing pattern)
+- [ ] Need to ensure deletes from blob files w/other data, the other data
+      compacted / moved to fresh blobs if the user wants a full delete/scrub.
+      Unsure about the design, discuss w/Opus or Sonnet, etc.
 
 ## Architecture
 
