@@ -258,14 +258,16 @@ fn blob_paths_for_tag(
     Ok(paths)
 }
 
-/// Outcome of a single blob mirror task.
-enum MirrorResult {
-    /// Blob was copied; carries the number of bytes written.
-    Copied(u64),
+/// Progress event sent from worker tasks to the progress consumer.
+enum MirrorEvent {
     /// Destination already had the blob.
     Skipped,
     /// Dry run: blob would have been copied.
     WouldCopy,
+    /// Source read complete; carries the number of bytes read.
+    ReadComplete(u64),
+    /// Destination write complete; carries the number of bytes written.
+    WriteComplete(u64),
     /// An error occurred (message included for reporting).
     Failed(String),
 }
@@ -275,8 +277,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
     use std::sync::Arc;
 
     use indicatif::{ProgressBar, ProgressStyle};
-    use tokio::sync::Semaphore;
-    use tokio::task::JoinSet;
+    use tokio::sync::{mpsc, Semaphore};
 
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
@@ -333,60 +334,95 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
 
     let semaphore = Arc::new(Semaphore::new(args.jobs as usize));
     let dry_run = args.dry_run;
-    let mut tasks = JoinSet::new();
 
-    for path in blob_paths {
-        let sem = Arc::clone(&semaphore);
-        let src = from_backend.clone();
-        let dst = to_backend.clone();
+    // Channel for progress events from worker tasks
+    let (tx, mut rx) = mpsc::channel::<MirrorEvent>(args.jobs as usize * 4);
 
-        tasks.spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed");
+    // Spawn all worker tasks
+    let workers = tokio::spawn(async move {
+        let mut tasks = tokio::task::JoinSet::new();
 
-            // Check if destination already has this blob
-            match dst.exists(&path).await {
-                Ok(true) => return MirrorResult::Skipped,
-                Ok(false) => {}
-                Err(e) => {
-                    return MirrorResult::Failed(format!(
-                        "error checking {}: {}",
-                        path.display(),
-                        e
-                    ));
+        for path in blob_paths {
+            let sem = Arc::clone(&semaphore);
+            let src = from_backend.clone();
+            let dst = to_backend.clone();
+            let tx = tx.clone();
+
+            tasks.spawn(async move {
+                let _permit = sem.acquire().await.expect("semaphore closed");
+
+                // Check if destination already has this blob.
+                // Map errors to String immediately so no non-Send
+                // Box<dyn Error> lives across an await point.
+                let exists = dst
+                    .exists(&path)
+                    .await
+                    .map_err(|e| format!("error checking {}: {}", path.display(), e));
+
+                match exists {
+                    Ok(true) => {
+                        let _ = tx.send(MirrorEvent::Skipped).await;
+                        return;
+                    }
+                    Ok(false) => {}
+                    Err(msg) => {
+                        let _ = tx.send(MirrorEvent::Failed(msg)).await;
+                        return;
+                    }
                 }
-            }
 
-            if dry_run {
-                return MirrorResult::WouldCopy;
-            }
-
-            // Read from source
-            let data = match src.read_data(&path).await {
-                Ok(data) => data,
-                Err(e) => {
-                    return MirrorResult::Failed(format!(
-                        "error reading {}: {}",
-                        path.display(),
-                        e
-                    ));
+                if dry_run {
+                    let _ = tx.send(MirrorEvent::WouldCopy).await;
+                    return;
                 }
-            };
 
-            // Derive the content hash from the blob data itself rather
-            // than the path. The on-disk filename is a raw digest
-            // (multihash prefix stripped by path_for), so round-tripping
-            // it back through path_for would fail. Re-hashing also
-            // verifies data integrity.
-            let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
+                // Read from source
+                let data = src
+                    .read_data(&path)
+                    .await
+                    .map_err(|e| format!("error reading {}: {}", path.display(), e));
 
-            match dst.write_data(&hash, &data).await {
-                Ok(_) => MirrorResult::Copied(data.len() as u64),
-                Err(e) => MirrorResult::Failed(format!("error writing {}: {}", path.display(), e)),
-            }
-        });
-    }
+                let data = match data {
+                    Ok(data) => data,
+                    Err(msg) => {
+                        let _ = tx.send(MirrorEvent::Failed(msg)).await;
+                        return;
+                    }
+                };
 
-    // Progress bar, updated as tasks complete
+                let bytes = data.len() as u64;
+                let _ = tx.send(MirrorEvent::ReadComplete(bytes)).await;
+
+                // Derive the content hash from the blob data itself
+                // rather than the path. The on-disk filename is a raw
+                // digest (multihash prefix stripped by path_for), so
+                // round-tripping it back through path_for would fail.
+                // Re-hashing also verifies data integrity.
+                let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
+
+                let result = dst
+                    .write_data(&hash, &data)
+                    .await
+                    .map_err(|e| format!("error writing {}: {}", path.display(), e));
+
+                match result {
+                    Ok(_) => {
+                        let _ = tx.send(MirrorEvent::WriteComplete(bytes)).await;
+                    }
+                    Err(msg) => {
+                        let _ = tx.send(MirrorEvent::Failed(msg)).await;
+                    }
+                }
+            });
+        }
+
+        // Drop our copy of the sender; remaining copies are in tasks.
+        // When all tasks finish, all senders drop and rx.recv() returns None.
+        drop(tx);
+        while tasks.join_next().await.is_some() {}
+    });
+
+    // Progress bar consumer: drain channel events and update display
     let pb = ProgressBar::new(total as u64);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -398,29 +434,49 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
     let mut skipped = 0u64;
     let mut would_copy = 0u64;
     let mut failed = 0u64;
+    let mut active_reads = 0u64;
     let mut bytes_transferred = 0u64;
 
-    while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(MirrorResult::Copied(n)) => {
-                copied += 1;
-                bytes_transferred += n;
+    while let Some(event) = rx.recv().await {
+        match event {
+            MirrorEvent::Skipped => {
+                skipped += 1;
+                pb.inc(1);
             }
-            Ok(MirrorResult::Skipped) => skipped += 1,
-            Ok(MirrorResult::WouldCopy) => would_copy += 1,
-            Ok(MirrorResult::Failed(msg)) => {
+            MirrorEvent::WouldCopy => {
+                would_copy += 1;
+                pb.inc(1);
+            }
+            MirrorEvent::ReadComplete(_bytes) => {
+                active_reads += 1;
+            }
+            MirrorEvent::WriteComplete(bytes) => {
+                copied += 1;
+                active_reads = active_reads.saturating_sub(1);
+                bytes_transferred += bytes;
+                pb.inc(1);
+            }
+            MirrorEvent::Failed(msg) => {
                 pb.suspend(|| eprintln!("  {}", msg));
                 failed += 1;
-            }
-            Err(e) => {
-                pb.suspend(|| eprintln!("  task panicked: {}", e));
-                failed += 1;
+                pb.inc(1);
             }
         }
-        pb.inc(1);
+
+        pb.set_message(format!(
+            "{} copied, {} skipped, {} uploading, {}",
+            copied,
+            skipped,
+            active_reads,
+            crate::format::human_bytes(bytes_transferred),
+        ));
     }
 
     pb.finish_and_clear();
+
+    // Wait for the worker coordinator to finish (should already be done
+    // since the channel is drained, but this propagates any panics).
+    workers.await?;
 
     if dry_run {
         println!(
