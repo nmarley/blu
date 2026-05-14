@@ -385,8 +385,8 @@ pub struct BackendMirrorArgs {
     pub tag: Option<String>,
 
     /// Number of concurrent transfers
-    #[arg(short, long, default_value = "16")]
-    pub jobs: usize,
+    #[arg(short, long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
+    pub jobs: u16,
 }
 
 #[allow(missing_docs)]
@@ -401,8 +401,8 @@ pub struct BackendDiffArgs {
     pub to: String,
 
     /// Number of concurrent checks
-    #[arg(short, long, default_value = "16")]
-    pub jobs: usize,
+    #[arg(short, long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
+    pub jobs: u16,
 }
 
 #[allow(missing_docs)]

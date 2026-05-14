@@ -215,8 +215,26 @@ fn blob_paths_for_tag(
     Ok(paths)
 }
 
+/// Outcome of a single blob mirror task.
+enum MirrorResult {
+    /// Blob was copied; carries the number of bytes written.
+    Copied(u64),
+    /// Destination already had the blob.
+    Skipped,
+    /// Dry run: blob would have been copied.
+    WouldCopy,
+    /// An error occurred (message included for reporting).
+    Failed(String),
+}
+
 /// Mirror blobs from one backend to another.
 async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use indicatif::{ProgressBar, ProgressStyle};
+    use tokio::sync::Semaphore;
+    use tokio::task::JoinSet;
+
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
@@ -250,7 +268,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
         blob_index.path_index.keys().cloned().collect()
     };
 
-    let blob_paths: Vec<&PathBuf> = blob_paths_set.iter().collect();
+    let blob_paths: Vec<PathBuf> = blob_paths_set.into_iter().collect();
     let total = blob_paths.len();
 
     if total == 0 {
@@ -270,78 +288,98 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
         total, args.from, args.to, tag_info, mode
     );
 
-    let mut would_copy = 0u64;
+    let semaphore = Arc::new(Semaphore::new(args.jobs as usize));
+    let dry_run = args.dry_run;
+    let mut tasks = JoinSet::new();
+
+    for path in blob_paths {
+        let sem = Arc::clone(&semaphore);
+        let src = from_backend.clone();
+        let dst = to_backend.clone();
+
+        tasks.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+
+            // Check if destination already has this blob
+            match dst.exists(&path).await {
+                Ok(true) => return MirrorResult::Skipped,
+                Ok(false) => {}
+                Err(e) => {
+                    return MirrorResult::Failed(format!(
+                        "error checking {}: {}",
+                        path.display(),
+                        e
+                    ));
+                }
+            }
+
+            if dry_run {
+                return MirrorResult::WouldCopy;
+            }
+
+            // Read from source
+            let data = match src.read_data(&path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    return MirrorResult::Failed(format!(
+                        "error reading {}: {}",
+                        path.display(),
+                        e
+                    ));
+                }
+            };
+
+            // Derive the content hash from the blob data itself rather
+            // than the path. The on-disk filename is a raw digest
+            // (multihash prefix stripped by path_for), so round-tripping
+            // it back through path_for would fail. Re-hashing also
+            // verifies data integrity.
+            let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
+
+            match dst.write_data(&hash, &data).await {
+                Ok(_) => MirrorResult::Copied(data.len() as u64),
+                Err(e) => MirrorResult::Failed(format!("error writing {}: {}", path.display(), e)),
+            }
+        });
+    }
+
+    // Progress bar, updated as tasks complete
+    let pb = ProgressBar::new(total as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
+            .expect("valid progress bar template"),
+    );
+
+    let mut copied = 0u64;
     let mut skipped = 0u64;
+    let mut would_copy = 0u64;
     let mut failed = 0u64;
     let mut bytes_transferred = 0u64;
 
-    for (i, path) in blob_paths.iter().enumerate() {
-        // Check if destination already has this blob
-        match to_backend.exists(path).await {
-            Ok(true) => {
-                skipped += 1;
-                continue;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(MirrorResult::Copied(n)) => {
+                copied += 1;
+                bytes_transferred += n;
             }
-            Ok(false) => {}
-            Err(e) => {
-                eprintln!(
-                    "  [{}/{}] error checking {}: {}",
-                    i + 1,
-                    total,
-                    path.display(),
-                    e
-                );
+            Ok(MirrorResult::Skipped) => skipped += 1,
+            Ok(MirrorResult::WouldCopy) => would_copy += 1,
+            Ok(MirrorResult::Failed(msg)) => {
+                pb.suspend(|| eprintln!("  {}", msg));
                 failed += 1;
-                continue;
-            }
-        }
-
-        if args.dry_run {
-            would_copy += 1;
-            continue;
-        }
-
-        // Read from source
-        let data = match from_backend.read_data(path).await {
-            Ok(data) => data,
-            Err(e) => {
-                eprintln!(
-                    "  [{}/{}] error reading {}: {}",
-                    i + 1,
-                    total,
-                    path.display(),
-                    e
-                );
-                failed += 1;
-                continue;
-            }
-        };
-
-        // Derive the content hash from the blob data itself rather than
-        // the path. The on-disk filename is a raw digest (multihash prefix
-        // stripped by path_for), so round-tripping it back through
-        // path_for would fail. Re-hashing also verifies data integrity.
-        let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
-
-        match to_backend.write_data(&hash, &data).await {
-            Ok(_) => {
-                bytes_transferred += data.len() as u64;
-                would_copy += 1;
             }
             Err(e) => {
-                eprintln!(
-                    "  [{}/{}] error writing {}: {}",
-                    i + 1,
-                    total,
-                    path.display(),
-                    e
-                );
+                pb.suspend(|| eprintln!("  task panicked: {}", e));
                 failed += 1;
             }
         }
+        pb.inc(1);
     }
 
-    if args.dry_run {
+    pb.finish_and_clear();
+
+    if dry_run {
         println!(
             "Dry run complete: {} would be copied, {} already present",
             would_copy, skipped
@@ -349,7 +387,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
     } else {
         println!(
             "Mirror complete: {} copied ({}), {} skipped, {} failed",
-            would_copy,
+            copied,
             crate::format::human_bytes(bytes_transferred),
             skipped,
             failed
