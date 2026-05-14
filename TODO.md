@@ -1,7 +1,6 @@
 # TODO
 
-Consolidated backlog for blu. Crypto and key management work is
-tracked in PLAN-PQ.md. This file covers everything else.
+Consolidated backlog for blu.
 
 ## Release Prep
 
@@ -12,11 +11,15 @@ tracked in PLAN-PQ.md. This file covers everything else.
 - [ ] Crypto review (send Filippo an email?)
 - [ ] Start maintaining a [changelog](https://keepachangelog.com/en/1.1.0/)
 
-## Multi-Backend Support
+## Crypto / Key Management
 
-- [ ] Support multiple backends simultaneously for redundant backups
-      (e.g. local + S3, or S3 + Azure)
-- [ ] Config format: `[[backends]]` array with type/path/bucket fields
+- [ ] Multi-user access: invite, accept, remove (see
+      ENVELOPE_ENCRYPTION_DESIGN.md sections 5 and 6)
+- [ ] KEK rotation CLI (`blu kek rotate`, `blu kek status`)
+- [ ] Recovery kit: `blu recovery-kit generate` with optional PDF export
+
+## Storage Backends
+
 - [ ] Additional storage backends: DigitalOcean Spaces, Google Cloud
       Storage, Azure Blob Storage
 
@@ -34,8 +37,6 @@ tracked in PLAN-PQ.md. This file covers everything else.
 
 - [ ] Separate std/fs implementation from core API (accept bytes
       instead of filenames in lib, keep fs operations in tools layer)
-- [ ] Async I/O with tokio (S3 already uses tokio; extend to local
-      storage and encryption pipeline)
 - [ ] Streaming index I/O instead of loading full index into memory
       (memory-mapped files or streaming reads)
 
@@ -46,7 +47,8 @@ tracked in PLAN-PQ.md. This file covers everything else.
 - [ ] Add/edit/remove notes on files (larger text bodies than tags,
       searchable)
 - [ ] `.bluignore` file (similar to `.gitignore`)
-- [ ] Progress bars, color output, `blu doctor` diagnostics
+- [ ] Color output
+- [ ] `blu doctor` diagnostics
 
 ## Ideas (Low Priority)
 
@@ -55,3 +57,5 @@ tracked in PLAN-PQ.md. This file covers everything else.
 - [ ] Global hash table with multihash support (integer IDs mapping
       to multihash arrays for smaller indexes and algorithm agility)
 - [ ] Web UI for browsing vaults
+- [ ] Hardware key support (YubiKey/Ledger for UK storage)
+- [ ] Vault sharing via URL (`blu://vault/s3:bucket:prefix?invite=...`)

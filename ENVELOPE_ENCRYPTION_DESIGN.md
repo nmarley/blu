@@ -4,19 +4,6 @@ Canonical design document for blu's encryption architecture. Covers
 key hierarchy, envelope encryption, agent protocol, multi-user access,
 key rotation, and recovery.
 
-Implementation status (May 2026):
-
-  Core key hierarchy (BIP39, UK, KEK, DEK)   DONE
-  Agent daemon with session management        DONE
-  v2 file format (header + DEK payload)       DONE
-  KEK storage and wrapping                    DONE
-  BIP39 identity with biometric unlock        DONE
-  Post-quantum hybrid KEM (ML-KEM-768)        DONE (see PLAN-PQ.md)
-  mlock for agent secrets                     DONE
-  Multi-user access (invite/accept/remove)    NOT STARTED
-  KEK rotation CLI                            NOT STARTED
-  Recovery kit (PDF export)                   NOT STARTED
-
 ## Overview
 
 This document describes blu's encryption architecture using envelope
@@ -773,7 +760,7 @@ blu recovery-kit generate [--output <file.pdf>]
 - Rubber hose cryptanalysis (user reveals mnemonic under duress)
 - Compromised mnemonic (full access to all user's vaults)
 - Quantum computers targeting the X25519 UK->KEK layer (mitigated
-  by PQ hybrid KEM; see PLAN-PQ.md)
+  by ML-KEM-768 + X25519 hybrid KEM)
 
 ### Implementation Requirements
 
@@ -784,22 +771,6 @@ blu recovery-kit generate [--output <file.pdf>]
 5. **No secret logging:** Never log keys, mnemonics, or DEKs
 
 ## Future Considerations
-
-### Post-Quantum Cryptography (DONE)
-
-Implemented April 2026 via ML-KEM-768 + X25519 hybrid KEM. See
-PLAN-PQ.md for full details. Summary:
-
-- UK->KEK: New vaults wrap KEK using mlkem768x25519 (HPKE,
-  spec-compliant with C2SP age v1.1.0). Interoperable with Go
-  age v1.3.1.
-- KEK->DEK: ChaCha20-Poly1305 with 256-bit keys (quantum-safe).
-- DEK->data: ChaCha20-Poly1305 with 256-bit keys (quantum-safe).
-- BIP39 seed derives PQ keys via separate HKDF path ("blu-pq-v1").
-- Agent receives PQ seed via biometric unlock path.
-- Passphrase-only unlock path is X25519-only (PQ KEKs require
-  biometric or mnemonic recovery). This is an age spec constraint:
-  PQ and classical recipients cannot be mixed in one age file.
 
 ### Hardware Key Support
 

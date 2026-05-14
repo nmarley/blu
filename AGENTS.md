@@ -87,10 +87,8 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 
 ## Design docs
 
-- `PLAN.md` -- agent, envelope encryption, BIP39 identity design (all implemented)
-- `PLAN-PQ.md` -- post-quantum roadmap
 - `ENVELOPE_ENCRYPTION_DESIGN.md` -- canonical KEK/DEK design reference
-- `TODO.md` -- backlog (CI, multi-backend, async I/O, UX)
+- `TODO.md` -- consolidated backlog
 
 ## Platform
 
