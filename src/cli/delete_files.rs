@@ -9,13 +9,13 @@ use crate::error::BluError;
 // be used for getting hashesfrom files)
 
 /// Delete data from index and mark associated encrypted blobs as deleted.
-pub fn delete_files(args: DeleteFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&keys)?;
     let tag_index = match cfg.load_tag_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     // TODO: maybe add this (sorted file hashes) to index API and add the test there?

@@ -24,6 +24,7 @@ mod test {
 
     use super::blockref::BlockRef;
     use super::{ChunkMeta, Chunkerator, FileRef, PlainIndex};
+    use crate::error::BluError;
     use crate::hash::Hash;
     use crate::io::Position;
 
@@ -35,7 +36,7 @@ mod test {
     pub fn read_from_disk<P: AsRef<Path>>(
         filepath: P,
         chunk_size: usize,
-    ) -> Result<Vec<ChunkMeta>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<ChunkMeta>, BluError> {
         let chunker = Chunkerator::new(filepath, chunk_size)?;
         let chunkmetas: Vec<ChunkMeta> = chunker.into_iter().map(|e| ChunkMeta::new(&e)).collect();
         Ok(chunkmetas)

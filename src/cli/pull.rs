@@ -2,12 +2,13 @@
 
 use crate::cli::clapargs::PullArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::error::BluError;
 
 /// Pull indexes from the remote backend.
 ///
 /// This downloads the encrypted index files from the backend,
 /// allowing access to the vault from a different machine.
-pub async fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn pull(args: PullArgs) -> Result<(), BluError> {
     info!("Started pull");
 
     let (cfg, _keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -19,7 +20,9 @@ pub async fn pull(args: PullArgs) -> Result<(), Box<dyn std::error::Error>> {
     if !args.force && (plain_index_path.exists() || blob_index_path.exists()) {
         eprintln!("Warning: Local indexes exist and will be overwritten.");
         eprintln!("Use --force to confirm, or back up your local indexes first.");
-        return Err("Local indexes exist. Use --force to overwrite.".into());
+        return Err(BluError::Internal(
+            "Local indexes exist. Use --force to overwrite.".into(),
+        ));
     }
 
     let backend = match &args.backend {

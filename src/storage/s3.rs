@@ -4,6 +4,7 @@ use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::primitives::ByteStream;
 use std::path::{Path, PathBuf};
 
+use crate::error::BluError;
 use crate::hash::Hash;
 
 /// Amazon S3 storage backend.
@@ -68,7 +69,7 @@ impl AmazonS3 {
     }
 
     /// Read the data blob at the given path from S3.
-    pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, BluError> {
         let key = self.path_to_key(path);
 
         let object = self
@@ -78,18 +79,18 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
 
-        let body = object.body.collect().await.map_err(|e| e.to_string())?;
+        let body = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
         Ok(body.into_bytes().to_vec())
     }
 
     /// Write data to a content-addressed path derived from the hash.
-    pub async fn write_data(
-        &self,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         let path = super::path_for(hash)?;
         let key = self.path_to_key(&path);
 
@@ -103,13 +104,13 @@ impl AmazonS3 {
             .body(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
 
         Ok(path)
     }
 
     /// Check if a blob exists at the given path.
-    pub async fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn exists(&self, path: &Path) -> Result<bool, BluError> {
         let key = self.path_to_key(path);
 
         let result = self
@@ -128,13 +129,13 @@ impl AmazonS3 {
                         return Ok(false);
                     }
                 }
-                Err(Box::new(err) as Box<dyn std::error::Error>)
+                Err(BluError::S3Error(err.to_string()))
             }
         }
     }
 
     /// Delete a blob at the given path.
-    pub async fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete(&self, path: &Path) -> Result<(), BluError> {
         let key = self.path_to_key(path);
 
         self.client
@@ -143,17 +144,13 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
 
         Ok(())
     }
 
     /// Write data to a known path in the backend (not hash-derived).
-    pub async fn write_to_path(
-        &self,
-        path: &Path,
-        data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), BluError> {
         let key = self.path_to_key(path);
 
         info!("S3 write_to_path: key={}", key);
@@ -166,13 +163,13 @@ impl AmazonS3 {
             .body(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
 
         Ok(())
     }
 
     /// Read data from a known path in the backend (not hash-derived).
-    pub async fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, BluError> {
         let key = self.path_to_key(path);
 
         let object = self
@@ -182,9 +179,13 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
 
-        let body = object.body.collect().await.map_err(|e| e.to_string())?;
+        let body = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
         Ok(body.into_bytes().to_vec())
     }
 }

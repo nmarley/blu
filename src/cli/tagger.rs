@@ -15,7 +15,7 @@ use crate::tag::sanitize_tag;
 // This is a simpler alternative to --add and --remove actions/subcommands.
 
 /// Manipulate tags on data
-pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn tagger(args: TaggerArgs) -> Result<(), BluError> {
     info!("Started tagger util");
 
     if args.dry_run {
@@ -24,7 +24,7 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     if args.data_hash_filter.is_empty() {
         info!("Aborting, no file hashes provided");
-        return Err("no file hashes provided".into());
+        return Err(BluError::Internal("no file hashes provided".into()));
     }
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -38,7 +38,7 @@ pub fn tagger(args: TaggerArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut tag_index = match cfg.load_tag_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
     let files_map = index.files_map_ref();
 

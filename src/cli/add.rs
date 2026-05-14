@@ -1,13 +1,14 @@
 use crate::cli::clapargs::AddArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::error::BluError;
 
 /// Add local files to the index
-pub fn add(args: AddArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn add(args: AddArgs) -> Result<(), BluError> {
     info!("Started add");
 
     if args.add_paths.is_empty() {
         info!("Aborting, no paths given");
-        return Err("no paths given".into());
+        return Err(BluError::Internal("no paths given".into()));
     }
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;

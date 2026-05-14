@@ -8,7 +8,7 @@ use crate::keys;
 use crate::keys::mnemonic;
 
 /// Dispatch agent subcommands.
-pub fn agent(args: AgentArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn agent(args: AgentArgs) -> Result<(), BluError> {
     match args.command {
         AgentCommand::Status => agent_status(),
         AgentCommand::Stop => agent_stop(),
@@ -19,7 +19,7 @@ pub fn agent(args: AgentArgs) -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Neither path requires being inside a blu repository. The identity
 /// lives at `~/.blu/identity.age` and the agent resolves it directly.
-pub fn unlock() -> Result<(), Box<dyn std::error::Error>> {
+pub fn unlock() -> Result<(), BluError> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
 
@@ -52,8 +52,8 @@ pub fn unlock() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Attempt biometric unlock: retrieve seed via Touch ID, derive
 /// the PQ seed, and send it to the agent.
-fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::Error>> {
-    let seed = biometric::unlock().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+fn try_biometric_unlock(client: &AgentClient) -> Result<(), BluError> {
+    let seed = biometric::unlock()?;
     let pq_seed = mnemonic::derive_pq_seed(&seed)?;
     let pubkey = client.unlock_with_pq_seed(pq_seed.as_bytes())?;
     println!("unlocked via Touch ID ({})", pubkey);
@@ -65,7 +65,7 @@ fn try_biometric_unlock(client: &AgentClient) -> Result<(), Box<dyn std::error::
 ///
 /// No vault config is needed; the agent resolves `~/.blu/identity.age`
 /// itself. This means `blu agent unlock` works from any directory.
-fn unlock_with_passphrase(client: &AgentClient) -> Result<(), Box<dyn std::error::Error>> {
+fn unlock_with_passphrase(client: &AgentClient) -> Result<(), BluError> {
     // Try without passphrase first (unencrypted key file)
     match client.unlock("") {
         Ok(pubkey) => {
@@ -75,7 +75,7 @@ fn unlock_with_passphrase(client: &AgentClient) -> Result<(), Box<dyn std::error
         Err(BluError::WrongPassphrase) | Err(BluError::Internal(_)) => {
             // Key is passphrase-protected
         }
-        Err(e) => return Err(Box::new(e)),
+        Err(e) => return Err(e),
     }
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
@@ -86,7 +86,7 @@ fn unlock_with_passphrase(client: &AgentClient) -> Result<(), Box<dyn std::error
 }
 
 /// Lock the agent: zeroize all cached keys.
-pub fn lock() -> Result<(), Box<dyn std::error::Error>> {
+pub fn lock() -> Result<(), BluError> {
     let client = AgentClient::new()?;
 
     if !client.is_running() {
@@ -99,7 +99,7 @@ pub fn lock() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn agent_status() -> Result<(), Box<dyn std::error::Error>> {
+fn agent_status() -> Result<(), BluError> {
     let client = AgentClient::new()?;
 
     if !client.is_running() {
@@ -127,7 +127,7 @@ fn agent_status() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn agent_stop() -> Result<(), Box<dyn std::error::Error>> {
+fn agent_stop() -> Result<(), BluError> {
     let client = AgentClient::new()?;
 
     if !client.is_running() {

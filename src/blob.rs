@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::dek_provider::{decrypt_envelope, encrypt_envelope, DekProvider};
+use crate::error::BluError;
 use crate::hash::{self, Hash};
 use crate::io::{gen_std_enc_serde, Position};
 use crate::storage::{self, BackendKind};
@@ -48,7 +49,7 @@ pub struct BlobBuffer {
     positions: HashMap<Hash, BlobBlockLocation>,
 
     // in-flight upload tasks
-    inflight: Vec<tokio::task::JoinHandle<Result<PathBuf, String>>>,
+    inflight: Vec<tokio::task::JoinHandle<Result<PathBuf, BluError>>>,
 }
 
 impl BlobBuffer {
@@ -77,7 +78,7 @@ impl BlobBuffer {
         &mut self,
         chunk: &mut [u8],
         idx: &mut BlobIndex,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BluError> {
         let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
         let mut chunk_copy = chunk.to_vec();
         self.data.append(&mut chunk_copy);
@@ -107,10 +108,7 @@ impl BlobBuffer {
 
     /// Finalize the blob buffer, writing the last blob to disk and
     /// waiting for all in-flight uploads to complete.
-    pub async fn finalize(
-        &mut self,
-        idx: &mut BlobIndex,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn finalize(&mut self, idx: &mut BlobIndex) -> Result<(), BluError> {
         if !self.is_empty() {
             self.seal_and_upload(idx)?;
         }
@@ -118,11 +116,7 @@ impl BlobBuffer {
         // Await all in-flight uploads
         let handles = std::mem::take(&mut self.inflight);
         for handle in handles {
-            match handle.await {
-                Ok(Ok(_path)) => {}
-                Ok(Err(msg)) => return Err(msg.into()),
-                Err(e) => return Err(format!("blob upload task panicked: {}", e).into()),
-            }
+            handle.await??;
         }
 
         Ok(())
@@ -134,10 +128,7 @@ impl BlobBuffer {
     /// Returns the content-addressed path (known before the upload
     /// completes because it is derived from the hash of the encrypted
     /// blob data).
-    fn seal_and_upload(
-        &mut self,
-        idx: &mut BlobIndex,
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    fn seal_and_upload(&mut self, idx: &mut BlobIndex) -> Result<PathBuf, BluError> {
         let compressed = compress(&self.data)?;
         let encrypted = encrypt_envelope(&compressed, FileType::Blob, &self.keys)?;
 
@@ -151,14 +142,10 @@ impl BlobBuffer {
         }
         self.reset();
 
-        // Spawn the upload in the background
+        // Spawn the upload in the background. BluError is Send + Sync,
+        // so no stringification workaround is needed.
         let backend = self.storage_backend.clone();
-        let handle = tokio::spawn(async move {
-            backend
-                .write_data(&blob_hash, &encrypted)
-                .await
-                .map_err(|e| format!("blob upload failed: {}", e))
-        });
+        let handle = tokio::spawn(async move { backend.write_data(&blob_hash, &encrypted).await });
         self.inflight.push(handle);
 
         Ok(path)
@@ -227,10 +214,7 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
     ///
     /// Returns a borrowed slice into the cached decompressed blob, avoiding a
     /// per-chunk heap allocation.
-    pub async fn get_bytes(
-        &mut self,
-        location_ref: &BlobBlockLocation,
-    ) -> Result<&[u8], Box<dyn std::error::Error>> {
+    pub async fn get_bytes(&mut self, location_ref: &BlobBlockLocation) -> Result<&[u8], BluError> {
         let hash = storage::hash_from_path(&location_ref.path)?;
 
         if !self.cache.contains(&hash) {
@@ -290,12 +274,14 @@ impl BlobIndex {
     }
 
     /// Delete a chunk from index.
-    pub fn delete_chunk(&mut self, chunk_hash: &Hash) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn delete_chunk(&mut self, chunk_hash: &Hash) -> Result<(), BluError> {
         // get location (blob file path)
         let location = self
             .map
             .get(chunk_hash)
-            .ok_or("chunk not found in blob index")?;
+            .ok_or_else(|| BluError::BlockNotFound {
+                hash: chunk_hash.to_string(),
+            })?;
         // remove from path index (for tracking which chunks are in which blobs)
         let is_empty = match self.path_index.get_mut(&location.path) {
             Some(entry) => {
@@ -307,7 +293,10 @@ impl BlobIndex {
         if is_empty {
             self.path_index.remove(&location.path);
         }
-        let location = self.map.remove(chunk_hash).ok_or("should never get here")?;
+        let location = self
+            .map
+            .remove(chunk_hash)
+            .ok_or_else(|| BluError::Internal("chunk removed between get and remove".into()))?;
         self.paths_to_delete.insert(location.path);
         Ok(())
     }
@@ -320,14 +309,13 @@ impl BlobIndex {
     }
 
     /// Get the location of the block within the blob.
-    pub fn get_block_location_ref(
-        &self,
-        block_hash: &Hash,
-    ) -> Result<BlobBlockLocation, Box<dyn std::error::Error>> {
+    pub fn get_block_location_ref(&self, block_hash: &Hash) -> Result<BlobBlockLocation, BluError> {
         let location_ref = self
             .map
             .get(block_hash)
-            .ok_or("block hash not found in index")?;
+            .ok_or_else(|| BluError::BlockNotFound {
+                hash: block_hash.to_string(),
+            })?;
         Ok(location_ref.clone())
     }
 

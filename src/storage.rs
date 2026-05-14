@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 mod local;
 mod s3;
 
+use crate::error::BluError;
 use crate::hash::Hash;
 
 // Storage adapter
@@ -32,7 +33,7 @@ impl BackendKind {
     // around 8MiB by default ... maybe streaming doesn't make sense here.
 
     /// Read the data blob at the given path from the storage backend.
-    pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, BluError> {
         match self {
             Self::Local(b) => b.read_data(path).await,
             Self::AmazonS3(b) => b.read_data(path).await,
@@ -40,11 +41,7 @@ impl BackendKind {
     }
 
     /// Write data to a content-addressed path derived from the hash.
-    pub async fn write_data(
-        &self,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         match self {
             Self::Local(b) => b.write_data(hash, data).await,
             Self::AmazonS3(b) => b.write_data(hash, data).await,
@@ -52,7 +49,7 @@ impl BackendKind {
     }
 
     /// Check if a blob exists at the given path.
-    pub async fn exists(&self, path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn exists(&self, path: &Path) -> Result<bool, BluError> {
         match self {
             Self::Local(b) => b.exists(path).await,
             Self::AmazonS3(b) => b.exists(path).await,
@@ -60,7 +57,7 @@ impl BackendKind {
     }
 
     /// Delete a blob at the given path.
-    pub async fn delete(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete(&self, path: &Path) -> Result<(), BluError> {
         match self {
             Self::Local(b) => b.delete(path).await,
             Self::AmazonS3(b) => b.delete(path).await,
@@ -71,11 +68,7 @@ impl BackendKind {
     ///
     /// Used for index files and other data that must live at a
     /// predictable location rather than a content-addressed path.
-    pub async fn write_to_path(
-        &self,
-        path: &Path,
-        data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), BluError> {
         match self {
             Self::Local(b) => b.write_to_path(path, data).await,
             Self::AmazonS3(b) => b.write_to_path(path, data).await,
@@ -86,7 +79,7 @@ impl BackendKind {
     ///
     /// Counterpart to [`write_to_path`]. Used for retrieving index
     /// files and other data stored at predictable locations.
-    pub async fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub async fn read_from_path(&self, path: &Path) -> Result<Vec<u8>, BluError> {
         match self {
             Self::Local(b) => b.read_from_path(path).await,
             Self::AmazonS3(b) => b.read_from_path(path).await,
@@ -105,7 +98,7 @@ impl BackendKind {
 /// ... would be stored in:
 /// DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
-pub fn path_for(hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn path_for(hash: &Hash) -> Result<PathBuf, BluError> {
     // use multihash lib to properly separate multihash header code and size
     // (do not make assumptions about removing X number of bytes)
 
@@ -127,16 +120,15 @@ pub fn path_for(hash: &Hash) -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 /// extract the Hash part of the path and return it
-pub fn hash_from_path<P: AsRef<Path>>(path: P) -> Result<Hash, Box<dyn std::error::Error>> {
-    let file_name = path.as_ref().file_name().ok_or_else(|| {
-        Box::new(std::io::Error::other(
-            "Failed to extract file name from path",
-        ))
-    })?;
+pub fn hash_from_path<P: AsRef<Path>>(path: P) -> Result<Hash, BluError> {
+    let file_name = path
+        .as_ref()
+        .file_name()
+        .ok_or_else(|| BluError::Internal("failed to extract file name from path".into()))?;
 
     let path_str = file_name
         .to_str()
-        .ok_or_else(|| Box::new(std::io::Error::other("Failed to convert file name to str")))?;
+        .ok_or_else(|| BluError::Internal("failed to convert file name to str".into()))?;
 
     Ok(Hash::from(path_str))
 }

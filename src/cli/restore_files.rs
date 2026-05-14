@@ -31,12 +31,14 @@ enum PrefetchEvent {
 }
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
     info!("Started restore_files util");
 
     // Validate arguments
     if args.file_hashes.is_empty() && args.path.is_none() && !args.all {
-        return Err("Must specify --file-hashes, --path, or --all".into());
+        return Err(BluError::Internal(
+            "Must specify --file-hashes, --path, or --all".into(),
+        ));
     }
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -44,7 +46,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
     let blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
     let files_map = plain_index.files_map_ref();
 
@@ -315,7 +317,7 @@ async fn prefetch_blobs(
     backend: &storage::BackendKind,
     keys: &DekProvider,
     concurrency: usize,
-) -> Result<HashMap<Hash, Vec<u8>>, Box<dyn std::error::Error>> {
+) -> Result<HashMap<Hash, Vec<u8>>, BluError> {
     let total = needed.len();
     if total == 0 {
         return Ok(HashMap::new());
@@ -440,7 +442,10 @@ async fn prefetch_blobs(
     );
 
     if failed > 0 {
-        return Err(format!("{} blob(s) failed to fetch", failed).into());
+        return Err(BluError::StorageError(format!(
+            "{} blob(s) failed to fetch",
+            failed
+        )));
     }
 
     Ok(cache)
@@ -450,11 +455,14 @@ async fn prefetch_blobs(
 fn get_cached_bytes<'a>(
     cache: &'a HashMap<Hash, Vec<u8>>,
     location: &BlobBlockLocation,
-) -> Result<&'a [u8], Box<dyn std::error::Error>> {
+) -> Result<&'a [u8], BluError> {
     let blob_hash = storage::hash_from_path(location.blob_path())?;
-    let full_data = cache
-        .get(&blob_hash)
-        .ok_or_else(|| format!("blob not in cache: {}", location.blob_path().display()))?;
+    let full_data = cache.get(&blob_hash).ok_or_else(|| {
+        BluError::Internal(format!(
+            "blob not in cache: {}",
+            location.blob_path().display()
+        ))
+    })?;
     let pos = &location.position;
     Ok(&full_data[pos.offset..pos.offset + pos.size])
 }

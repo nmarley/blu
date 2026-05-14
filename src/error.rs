@@ -20,9 +20,9 @@ pub enum BluError {
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
 
-    /// Configuration file could not be read
-    #[error("could not read config file: {0}")]
-    ConfigReadError(#[from] std::io::Error),
+    /// I/O error (file read/write, network, etc.)
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
     // -------------------------------------------------------------------------
     // Key management errors
@@ -199,6 +199,24 @@ impl From<age::EncryptError> for BluError {
 impl From<age::DecryptError> for BluError {
     fn from(err: age::DecryptError) -> Self {
         BluError::DecryptionFailed(err.to_string())
+    }
+}
+
+impl From<multihash::Error> for BluError {
+    fn from(err: multihash::Error) -> Self {
+        BluError::Internal(err.to_string())
+    }
+}
+
+impl From<std::path::StripPrefixError> for BluError {
+    fn from(err: std::path::StripPrefixError) -> Self {
+        BluError::Internal(err.to_string())
+    }
+}
+
+impl From<tokio::task::JoinError> for BluError {
+    fn from(err: tokio::task::JoinError) -> Self {
+        BluError::Internal(format!("task join failed: {}", err))
     }
 }
 

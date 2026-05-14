@@ -7,7 +7,7 @@ use crate::error::BluError;
 use crate::hash::{self, Hash};
 
 /// Encrypt the plain text files in the index
-pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
     info!("Started encrypt_files util");
     info!("force_write_index option: {}", args.force_write_index);
 
@@ -21,7 +21,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), Box<dyn std::er
     let mut blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
     info!(
         "Blob index has {} blob files",

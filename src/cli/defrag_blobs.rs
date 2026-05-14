@@ -9,7 +9,7 @@ use crate::error::BluError;
 use crate::io::EncryptedSerializable;
 
 /// Defrag blobs is still a WIP
-pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), BluError> {
     info!("Started defrag_blobs util");
 
     info!("blob_index_path: {}", args.blob_index_path);

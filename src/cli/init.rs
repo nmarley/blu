@@ -9,6 +9,7 @@ use crate::cli::{
 };
 use crate::config::{self, EncryptionConfig};
 use crate::dek_provider::DekProvider;
+use crate::error::BluError;
 use crate::keys;
 
 /// Resolved inputs for vault initialization.
@@ -32,10 +33,7 @@ pub struct InitVaultParams {
 /// Every vault requires a PQ recipient. The KEK is wrapped with the
 /// PQ hybrid key (ML-KEM-768 + X25519), and all data is encrypted
 /// via the v2 envelope format (KEK/DEK hierarchy).
-pub fn init_vault(
-    dir: &Path,
-    params: InitVaultParams,
-) -> Result<InitVaultResult, Box<dyn std::error::Error>> {
+pub fn init_vault(dir: &Path, params: InitVaultParams) -> Result<InitVaultResult, BluError> {
     let bludir = dir.join(".blu/");
     fs::create_dir_all(&bludir)?;
 
@@ -87,12 +85,12 @@ pub struct InitVaultResult {
 ///
 /// Resolves user input (global identity, key file, passphrase prompts)
 /// then delegates to `init_vault()`.
-pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init(args: InitArgs) -> Result<(), BluError> {
     let dir = Path::new(&args.dir);
     let abs_path = match std::fs::canonicalize(dir) {
         Ok(dir) => dir,
         Err(e) => {
-            return Err(format!("fatal: {}", e).into());
+            return Err(BluError::Internal(format!("fatal: {}", e)));
         }
     };
 
@@ -109,10 +107,13 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the identity from global ~/.blu/identity.toml.
     let global_meta = load_global_identity()?;
 
-    let meta = global_meta.ok_or(
-        "no global identity found\n\
-         Run `blu identity init` to create one",
-    )?;
+    let meta = global_meta.ok_or_else(|| {
+        BluError::Internal(
+            "no global identity found\n\
+             Run `blu identity init` to create one"
+                .into(),
+        )
+    })?;
 
     let global_age_path = global_identity_age_path()?;
     let pq_seed = load_global_identity_pq_seed(&global_age_path, &args)?;
@@ -123,12 +124,11 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
         .to_public()
         .to_string();
     if derived_recipient != pq_recipient_str {
-        return Err(format!(
+        return Err(BluError::InvalidKeyFormat(format!(
             "identity mismatch: identity.age PQ key ({}) does not match identity.toml ({})",
             &derived_recipient[..20],
             &pq_recipient_str[..20],
-        )
-        .into());
+        )));
     }
 
     println!("Using global identity from ~/.blu/identity.toml");
@@ -157,21 +157,21 @@ pub fn init(args: InitArgs) -> Result<(), Box<dyn std::error::Error>> {
 fn load_global_identity_pq_seed(
     path: &std::path::Path,
     args: &InitArgs,
-) -> Result<crate::keys::hybrid_kem::HybridSeed, Box<dyn std::error::Error>> {
+) -> Result<crate::keys::hybrid_kem::HybridSeed, BluError> {
     if args.no_passphrase {
-        return keys::load_pq_seed(path, None).map_err(|e| e.into());
+        return keys::load_pq_seed(path, None);
     }
 
     // Try without passphrase first (unencrypted key)
     match keys::load_pq_seed(path, None) {
         Ok(id) => return Ok(id),
-        Err(crate::error::BluError::PassphraseRequired) => {}
-        Err(e) => return Err(e.into()),
+        Err(BluError::PassphraseRequired) => {}
+        Err(e) => return Err(e),
     }
 
     // Prompt for passphrase to decrypt global identity
     let pass = keys::prompt_passphrase("Enter passphrase for global identity: ", false)?;
-    keys::load_pq_seed(path, Some(&pass)).map_err(|e| e.into())
+    keys::load_pq_seed(path, Some(&pass))
 }
 
 #[cfg(test)]

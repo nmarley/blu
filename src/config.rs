@@ -110,20 +110,24 @@ impl Default for Config {
 }
 
 /// Read the vault config from the `.blu/config.toml` in the base directory.
-pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, Box<dyn std::error::Error>> {
+pub fn read_config<P: AsRef<Path>>(base_dir: P) -> Result<Config, BluError> {
     let base_dir = base_dir.as_ref();
     let config_toml = base_dir.join(".blu/config.toml");
 
-    let toml_str = fs::read_to_string(&config_toml)
-        .map_err(|_| format!("could not read config at {}", config_toml.display()))?;
+    let toml_str = fs::read_to_string(&config_toml).map_err(|_| {
+        BluError::InvalidConfig(format!(
+            "could not read config at {}",
+            config_toml.display()
+        ))
+    })?;
 
     let mut cfg: Config = toml::from_str(&toml_str)?;
     cfg.basedir = base_dir.canonicalize().map_err(|e| {
-        format!(
+        BluError::InvalidConfig(format!(
             "could not resolve blu repository at {}: {}",
             base_dir.display(),
             e
-        )
+        ))
     })?;
     cfg.resolve_backends()?;
     Ok(cfg)
@@ -157,11 +161,7 @@ macro_rules! load_index {
 macro_rules! write_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
         /// Write the index to the idxdir.
-        pub fn $name(
-            &self,
-            idx: &$idx_struct_name,
-            keys: &DekProvider,
-        ) -> Result<(), Box<dyn std::error::Error>> {
+        pub fn $name(&self, idx: &$idx_struct_name, keys: &DekProvider) -> Result<(), BluError> {
             let index_path = self.idxdir().join(&self.$idx_filename_varname);
             // encrypt + compress + serialize index to buf
             let mut buf = vec![];
@@ -201,7 +201,7 @@ impl Config {
     }
 
     /// Write the config back to `.blu/config.toml`.
-    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn save(&self) -> Result<(), BluError> {
         let config_path = self.bludir().join("config.toml");
         let toml_str = toml::to_string_pretty(self)?;
         fs::write(config_path, toml_str)?;
@@ -217,7 +217,7 @@ impl Config {
     ///
     /// Returns an error if `default_backend` names a key that does
     /// not exist in `backends`.
-    fn resolve_backends(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn resolve_backends(&mut self) -> Result<(), BluError> {
         if let Some(legacy) = self.backend.take() {
             // Old-format config: promote into the named map.
             self.backends.clear();
@@ -231,15 +231,14 @@ impl Config {
         }
 
         if self.backends.is_empty() {
-            return Err("no backends configured".into());
+            return Err(BluError::InvalidConfig("no backends configured".into()));
         }
 
         if !self.backends.contains_key(&self.default_backend) {
-            return Err(format!(
+            return Err(BluError::InvalidConfig(format!(
                 "default_backend \"{}\" not found in [backends]",
                 self.default_backend
-            )
-            .into());
+            )));
         }
 
         Ok(())
@@ -254,9 +253,7 @@ impl Config {
     write_index!(write_plain_index, PlainIndex, plain_index_filename);
 
     /// Construct a [`BackendKind`] from a [`BackendConfig`](backend::BackendConfig).
-    async fn build_backend(
-        cfg: &backend::BackendConfig,
-    ) -> Result<BackendKind, Box<dyn std::error::Error>> {
+    async fn build_backend(cfg: &backend::BackendConfig) -> Result<BackendKind, BluError> {
         match cfg {
             backend::BackendConfig::Local(ref local_backend) => {
                 Ok(BackendKind::Local(Local::new(&local_backend.path)))
@@ -273,19 +270,15 @@ impl Config {
     }
 
     /// Initializes the default storage backend.
-    pub async fn init_storage_backend(&self) -> Result<BackendKind, Box<dyn std::error::Error>> {
+    pub async fn init_storage_backend(&self) -> Result<BackendKind, BluError> {
         self.init_named_backend(&self.default_backend).await
     }
 
     /// Initializes a storage backend by name.
-    pub async fn init_named_backend(
-        &self,
-        name: &str,
-    ) -> Result<BackendKind, Box<dyn std::error::Error>> {
-        let cfg = self
-            .backends
-            .get(name)
-            .ok_or_else(|| format!("backend \"{}\" not found in config", name))?;
+    pub async fn init_named_backend(&self, name: &str) -> Result<BackendKind, BluError> {
+        let cfg = self.backends.get(name).ok_or_else(|| {
+            BluError::InvalidConfig(format!("backend \"{}\" not found in config", name))
+        })?;
         Self::build_backend(cfg).await
     }
 
@@ -308,10 +301,7 @@ impl Config {
     ///
     /// This uploads the encrypted index files to the backend, making them
     /// accessible from other machines with the same key.
-    pub async fn push_indexes(
-        &self,
-        backend: &BackendKind,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn push_indexes(&self, backend: &BackendKind) -> Result<(), BluError> {
         // Read local index data (synchronous fs reads are fast)
         let plain = self.read_local_index(&self.plain_index_filename);
         let blob = self.read_local_index(&self.blob_index_filename);
@@ -347,7 +337,7 @@ impl Config {
         data: Option<Vec<u8>>,
         remote_path: PathBuf,
         label: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BluError> {
         if let Some(data) = data {
             info!("Pushing {} index to {:?}", label, remote_path);
             backend.write_to_path(&remote_path, &data).await?;
@@ -359,10 +349,7 @@ impl Config {
     ///
     /// Downloads the encrypted index files from the backend
     /// concurrently, overwriting local indexes.
-    pub async fn pull_indexes(
-        &self,
-        backend: &BackendKind,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn pull_indexes(&self, backend: &BackendKind) -> Result<(), BluError> {
         let (r_plain, r_blob, r_tag) = tokio::join!(
             self.pull_one_index(
                 backend,
@@ -393,7 +380,7 @@ impl Config {
         backend: &BackendKind,
         remote_path: PathBuf,
         local_path: PathBuf,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BluError> {
         if backend.exists(&remote_path).await? {
             let data = backend.read_from_path(&remote_path).await?;
             fs::write(&local_path, data)?;

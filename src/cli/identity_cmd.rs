@@ -34,7 +34,7 @@ pub struct IdentityMeta {
 /// Load the global identity metadata from `~/.blu/identity.toml`.
 ///
 /// Returns `None` if no global identity exists.
-pub fn load_global_identity() -> Result<Option<IdentityMeta>, Box<dyn std::error::Error>> {
+pub fn load_global_identity() -> Result<Option<IdentityMeta>, BluError> {
     let toml_path = identity_toml_path()?;
     if !toml_path.exists() {
         return Ok(None);
@@ -45,12 +45,12 @@ pub fn load_global_identity() -> Result<Option<IdentityMeta>, Box<dyn std::error
 }
 
 /// Path to the global identity age file (`~/.blu/identity.age`).
-pub fn global_identity_age_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn global_identity_age_path() -> Result<PathBuf, BluError> {
     identity_age_path()
 }
 
 /// Dispatch identity subcommands.
-pub fn identity(args: IdentityArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn identity(args: IdentityArgs) -> Result<(), BluError> {
     match args.command {
         IdentityCommand::Init(a) => identity_init(a),
         IdentityCommand::Show => identity_show(),
@@ -59,8 +59,9 @@ pub fn identity(args: IdentityArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Resolve the `~/.blu/` directory, creating it if needed.
-fn global_blu_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("could not determine home directory")?;
+fn global_blu_dir() -> Result<PathBuf, BluError> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| BluError::Internal("could not determine home directory".into()))?;
     let dir = home.join(".blu");
     if !dir.exists() {
         fs::create_dir_all(&dir)?;
@@ -68,20 +69,22 @@ fn global_blu_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-fn identity_toml_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn identity_toml_path() -> Result<PathBuf, BluError> {
     Ok(global_blu_dir()?.join("identity.toml"))
 }
 
-fn identity_age_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn identity_age_path() -> Result<PathBuf, BluError> {
     Ok(global_blu_dir()?.join("identity.age"))
 }
 
-fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn identity_init(args: IdentityInitArgs) -> Result<(), BluError> {
     let toml_path = identity_toml_path()?;
     let age_path = identity_age_path()?;
 
     if toml_path.exists() && !args.force {
-        return Err("identity already exists (use --force to overwrite)".into());
+        return Err(BluError::Internal(
+            "identity already exists (use --force to overwrite)".into(),
+        ));
     }
 
     // Generate mnemonic
@@ -129,7 +132,9 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
     let mut confirm = String::new();
     io::stdin().lock().read_line(&mut confirm)?;
     if confirm.trim().to_lowercase() != "yes" {
-        return Err("aborted (mnemonic not confirmed)".into());
+        return Err(BluError::Internal(
+            "aborted (mnemonic not confirmed)".into(),
+        ));
     }
 
     // Save PQ seed to identity file
@@ -151,12 +156,14 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-fn identity_recover(args: IdentityRecoverArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn identity_recover(args: IdentityRecoverArgs) -> Result<(), BluError> {
     let toml_path = identity_toml_path()?;
     let age_path = identity_age_path()?;
 
     if toml_path.exists() && !args.force {
-        return Err("identity already exists (use --force to overwrite)".into());
+        return Err(BluError::Internal(
+            "identity already exists (use --force to overwrite)".into(),
+        ));
     }
 
     // Prompt for mnemonic
@@ -198,11 +205,13 @@ fn identity_recover(args: IdentityRecoverArgs) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn identity_show() -> Result<(), Box<dyn std::error::Error>> {
+fn identity_show() -> Result<(), BluError> {
     let toml_path = identity_toml_path()?;
 
     if !toml_path.exists() {
-        return Err("no identity found (run `blu identity init` to create one)".into());
+        return Err(BluError::Internal(
+            "no identity found (run `blu identity init` to create one)".into(),
+        ));
     }
 
     let content = fs::read_to_string(&toml_path)?;
@@ -232,7 +241,7 @@ fn save_pq_seed_file(
     seed: &keys::hybrid_kem::HybridSeed,
     age_path: &PathBuf,
     no_passphrase: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), BluError> {
     let passphrase = if no_passphrase {
         None
     } else {
@@ -253,7 +262,7 @@ fn save_identity_meta(
     pq_public_key: &str,
     biometric_enabled: bool,
     toml_path: &PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), BluError> {
     let meta = IdentityMeta {
         pq_public_key: pq_public_key.to_string(),
         created: Utc::now().to_rfc3339(),
@@ -284,7 +293,7 @@ fn setup_biometric_if_available(seed: &mnemonic::Seed) -> bool {
 
 /// Prompt for an optional passphrase (hidden input). Returns empty
 /// string if the user presses Enter without typing.
-fn prompt_optional_passphrase(prompt: &str) -> Result<String, Box<dyn std::error::Error>> {
+fn prompt_optional_passphrase(prompt: &str) -> Result<String, BluError> {
     let pass = rpassword::prompt_password(prompt)
         .map_err(|e| BluError::Internal(format!("failed to read passphrase: {}", e)))?;
     Ok(pass)

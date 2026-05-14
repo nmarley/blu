@@ -9,9 +9,10 @@ use crate::tag::TagIndex;
 
 use crate::cli::clapargs::{IndexType, ReadIndexArgs};
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::error::BluError;
 
 /// Read and print individual index files, for debugging
-pub fn read_index(args: ReadIndexArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn read_index(args: ReadIndexArgs) -> Result<(), BluError> {
     let index_file = &args.file;
 
     let (_cfg, keys) = load_config_and_keys(&LoadOptions::default())?;

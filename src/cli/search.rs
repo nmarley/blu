@@ -8,7 +8,7 @@ use crate::hash::Hash;
 use crate::search::FilenameSearchIndex;
 
 /// Search for filenames or tags
-pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn search(args: SearchArgs) -> Result<(), BluError> {
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     // TODO: load search index here ... (once implemented)
@@ -35,7 +35,7 @@ pub fn search(args: SearchArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(BluError::IndexNotFound(_)) => {}
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     // now print search results

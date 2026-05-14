@@ -16,7 +16,7 @@ use itertools::Itertools;
 /// 3. Writes the updated indexes
 ///
 /// It is idempotent and safe to run repeatedly.
-pub async fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
     info!("Started sync");
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -28,7 +28,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
             info!("No existing index, creating new one");
             PlainIndex::new_empty()
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     // Determine paths to add
@@ -55,7 +55,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
     let backend = match &args.backend {
         Some(name) => cfg.init_named_backend(name).await?,

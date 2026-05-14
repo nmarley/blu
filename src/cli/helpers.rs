@@ -50,10 +50,9 @@ impl Default for LoadOptions<'_> {
 pub fn load_config_and_keys(opts: &LoadOptions<'_>) -> Result<(Config, DekProvider)> {
     let dir = Path::new(".");
 
-    let cfg = config::read_config(dir).map_err(|e| {
+    let cfg = config::read_config(dir).inspect_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
-        BluError::InvalidConfig(e.to_string())
     })?;
 
     let keys = load_keys_from_config(&cfg, opts)?;
@@ -132,9 +131,8 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
 pub fn load_config() -> Result<Config> {
     let dir = Path::new(".");
 
-    config::read_config(dir).map_err(|e| {
+    config::read_config(dir).inspect_err(|e| {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
-        BluError::InvalidConfig(e.to_string())
     })
 }

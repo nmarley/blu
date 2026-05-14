@@ -9,9 +9,10 @@ use crate::cli::clapargs::{
 };
 use crate::config;
 use crate::config::backend::BackendConfig;
+use crate::error::BluError;
 
 /// Dispatch backend subcommands.
-pub async fn backend(args: BackendArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn backend(args: BackendArgs) -> Result<(), BluError> {
     match args.command {
         BackendCommand::Add(a) => add(a),
         BackendCommand::List(a) => list(a).await,
@@ -23,22 +24,29 @@ pub async fn backend(args: BackendArgs) -> Result<(), Box<dyn std::error::Error>
 }
 
 /// Add a named storage backend to the config.
-fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn add(args: BackendAddArgs) -> Result<(), BluError> {
     let mut cfg = config::read_config(".")?;
 
     if cfg.backends.contains_key(&args.name) {
-        return Err(format!("backend \"{}\" already exists", args.name).into());
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" already exists",
+            args.name
+        )));
     }
 
     let backend_cfg = match args.backend_type.as_str() {
         "local" => {
-            let path = args.path.ok_or("--path is required for local backends")?;
+            let path = args.path.ok_or_else(|| {
+                BluError::InvalidConfig("--path is required for local backends".into())
+            })?;
             BackendConfig::Local(config::backend::LocalConfig {
                 path: PathBuf::from(path),
             })
         }
         "s3" => {
-            let bucket = args.bucket.ok_or("--bucket is required for S3 backends")?;
+            let bucket = args.bucket.ok_or_else(|| {
+                BluError::InvalidConfig("--bucket is required for S3 backends".into())
+            })?;
             BackendConfig::AmazonS3(config::backend::S3Config {
                 bucket,
                 prefix: args.prefix,
@@ -46,7 +54,10 @@ fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
             })
         }
         other => {
-            return Err(format!("unknown backend type: \"{}\"", other).into());
+            return Err(BluError::InvalidConfig(format!(
+                "unknown backend type: \"{}\"",
+                other
+            )));
         }
     };
 
@@ -117,9 +128,8 @@ async fn count_existing(
 }
 
 /// List all configured backends.
-async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn list(args: BackendListArgs) -> Result<(), BluError> {
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
-    use crate::error::BluError;
 
     let cfg = config::read_config(".")?;
 
@@ -129,7 +139,7 @@ async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
         match cfg2.load_blob_index(&keys) {
             Ok(idx) => Some(idx.path_index.keys().cloned().collect()),
             Err(BluError::IndexNotFound(_)) => Some(Vec::new()),
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         }
     } else {
         None
@@ -173,20 +183,22 @@ async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Remove a named backend from the config.
-fn remove(args: BackendRemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn remove(args: BackendRemoveArgs) -> Result<(), BluError> {
     let mut cfg = config::read_config(".")?;
 
     if !cfg.backends.contains_key(&args.name) {
-        return Err(format!("backend \"{}\" not found", args.name).into());
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" not found",
+            args.name
+        )));
     }
 
     if cfg.default_backend == args.name {
-        return Err(format!(
+        return Err(BluError::InvalidConfig(format!(
             "cannot remove \"{}\" because it is the default backend; \
              run `blu backend set-default <other>` first",
             args.name
-        )
-        .into());
+        )));
     }
 
     cfg.backends.remove(&args.name);
@@ -197,11 +209,14 @@ fn remove(args: BackendRemoveArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Set the default backend.
-fn set_default(args: BackendSetDefaultArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn set_default(args: BackendSetDefaultArgs) -> Result<(), BluError> {
     let mut cfg = config::read_config(".")?;
 
     if !cfg.backends.contains_key(&args.name) {
-        return Err(format!("backend \"{}\" not found", args.name).into());
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" not found",
+            args.name
+        )));
     }
 
     cfg.default_backend = args.name.clone();
@@ -219,29 +234,32 @@ fn blob_paths_for_tag(
     tag: &str,
     cfg: &config::Config,
     keys: &crate::dek_provider::DekProvider,
-) -> Result<HashSet<PathBuf>, Box<dyn std::error::Error>> {
-    use crate::error::BluError;
-
+) -> Result<HashSet<PathBuf>, BluError> {
     let tag_index = match cfg.load_tag_index(keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
-            return Err("tag index not found (no tags exist)".into());
+            return Err(BluError::IndexNotFound(
+                "tag index not found (no tags exist)".into(),
+            ));
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     let file_hashes: Vec<_> = tag_index.search(tag).cloned().collect();
     if file_hashes.is_empty() {
-        return Err(format!("no files found with tag \"{}\"", tag).into());
+        return Err(BluError::IndexNotFound(format!(
+            "no files found with tag \"{}\"",
+            tag
+        )));
     }
 
     let plain_index = cfg.load_plain_index(keys)?;
     let blob_index = match cfg.load_blob_index(keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
-            return Err("no blob index found".into());
+            return Err(BluError::IndexNotFound("no blob index found".into()));
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     let mut paths = HashSet::new();
@@ -273,25 +291,32 @@ enum MirrorEvent {
 }
 
 /// Mirror blobs from one backend to another.
-async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
     use std::sync::Arc;
 
     use indicatif::{ProgressBar, ProgressStyle};
     use tokio::sync::{mpsc, Semaphore};
 
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
-    use crate::error::BluError;
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     if !cfg.backends.contains_key(&args.from) {
-        return Err(format!("source backend \"{}\" not found", args.from).into());
+        return Err(BluError::InvalidConfig(format!(
+            "source backend \"{}\" not found",
+            args.from
+        )));
     }
     if !cfg.backends.contains_key(&args.to) {
-        return Err(format!("destination backend \"{}\" not found", args.to).into());
+        return Err(BluError::InvalidConfig(format!(
+            "destination backend \"{}\" not found",
+            args.to
+        )));
     }
     if args.from == args.to {
-        return Err("source and destination must be different".into());
+        return Err(BluError::InvalidConfig(
+            "source and destination must be different".into(),
+        ));
     }
 
     let from_backend = cfg.init_named_backend(&args.from).await?;
@@ -307,7 +332,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
                 println!("No blob index found, nothing to mirror");
                 return Ok(());
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
         blob_index.path_index.keys().cloned().collect()
     };
@@ -352,8 +377,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
                 let _permit = sem.acquire().await.expect("semaphore closed");
 
                 // Check if destination already has this blob.
-                // Map errors to String immediately so no non-Send
-                // Box<dyn Error> lives across an await point.
+                // Format errors to String for progress channel display.
                 let exists = dst
                     .exists(&path)
                     .await
@@ -494,7 +518,10 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
     }
 
     if failed > 0 {
-        Err(format!("{} blob(s) failed to mirror", failed).into())
+        Err(BluError::StorageError(format!(
+            "{} blob(s) failed to mirror",
+            failed
+        )))
     } else {
         Ok(())
     }
@@ -515,7 +542,7 @@ enum DiffResult {
 }
 
 /// Compare blob sets between two backends.
-async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+async fn diff(args: BackendDiffArgs) -> Result<(), BluError> {
     use std::sync::Arc;
 
     use indicatif::{ProgressBar, ProgressStyle};
@@ -523,15 +550,20 @@ async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
     use tokio::task::JoinSet;
 
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
-    use crate::error::BluError;
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
     if !cfg.backends.contains_key(&args.from) {
-        return Err(format!("backend \"{}\" not found", args.from).into());
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" not found",
+            args.from
+        )));
     }
     if !cfg.backends.contains_key(&args.to) {
-        return Err(format!("backend \"{}\" not found", args.to).into());
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" not found",
+            args.to
+        )));
     }
 
     let from_backend = cfg.init_named_backend(&args.from).await?;
@@ -543,7 +575,7 @@ async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("No blob index found, nothing to diff");
             return Ok(());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     let blob_paths: Vec<PathBuf> = blob_index.path_index.into_keys().collect();
@@ -574,12 +606,8 @@ async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         tasks.spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
 
-            // Check both backends concurrently. Map errors to
-            // String so the future is Send (Box<dyn Error> is not).
-            let (from_res, to_res) = tokio::join!(
-                async { src.exists(&path).await.map_err(|e| e.to_string()) },
-                async { dst.exists(&path).await.map_err(|e| e.to_string()) },
-            );
+            // Check both backends concurrently.
+            let (from_res, to_res) = tokio::join!(src.exists(&path), dst.exists(&path),);
 
             let in_from = match from_res {
                 Ok(v) => v,

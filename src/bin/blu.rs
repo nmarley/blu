@@ -6,6 +6,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use blu::cli::{self, clapargs, helpers};
+use blu::error::BluError;
 
 #[tokio::main]
 async fn main() {
@@ -15,7 +16,7 @@ async fn main() {
     }
 }
 
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run() -> Result<(), BluError> {
     CombinedLogger::init(vec![TermLogger::new(
         LevelFilter::Debug,
         Config::default(),
@@ -37,7 +38,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         clapargs::Action::Unlock => return cli::unlock(),
         clapargs::Action::AgentDaemon => {
             let paths = blu::agent::AgentPaths::resolve()?;
-            return blu::agent::run_daemon(&paths).map_err(|e| e.into());
+            return blu::agent::run_daemon(&paths);
         }
         _ => {}
     }
@@ -49,10 +50,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // init can run without all these other checks ...
                 clapargs::Action::Init(a) => return cli::init(a),
                 _ => {
-                    return Err(
-                        "fatal: not a blu repository (or any of the parent directories): .blu"
-                            .into(),
-                    );
+                    return Err(BluError::NotARepository);
                 }
             };
         }
@@ -62,15 +60,19 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Ok(path) => path,
         Err(_e) => {
             // likely won't ever happen ...
-            return Err(
-                format!("fatal: unable to get absolute path for {:?}", &blu_basedir).into(),
-            );
+            return Err(BluError::Internal(format!(
+                "fatal: unable to get absolute path for {:?}",
+                &blu_basedir
+            )));
         }
     };
 
     // move into the basedir for all operations, like `git -C <dir>`
     if let Err(e) = env::set_current_dir(&abspath) {
-        return Err(format!("unable to chdir to '{:?}': {}", &abspath, e).into());
+        return Err(BluError::Internal(format!(
+            "unable to chdir to '{:?}': {}",
+            &abspath, e
+        )));
     }
 
     // TODO: Should key(s) be read and stored here in some kind of state or context?

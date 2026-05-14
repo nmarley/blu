@@ -7,11 +7,10 @@
 
 use std::io::{Read, Write};
 
+use crate::error::BluError;
+
 /// Decrypt some bytes using a passphrase.
-pub fn passphrase_decrypt(
-    data: &[u8],
-    passphrase: &str,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn passphrase_decrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>, BluError> {
     let decryptor = age::Decryptor::new(data)?;
     let identity = age::scrypt::Identity::new(passphrase.to_owned().into());
     let mut decrypted = vec![];
@@ -22,10 +21,7 @@ pub fn passphrase_decrypt(
 }
 
 /// Encrypt some bytes using a passphrase.
-pub fn passphrase_encrypt(
-    data: &[u8],
-    passphrase: &str,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+pub fn passphrase_encrypt(data: &[u8], passphrase: &str) -> Result<Vec<u8>, BluError> {
     let encryptor = age::Encryptor::with_user_passphrase(passphrase.to_owned().into());
 
     let mut encrypted = vec![];

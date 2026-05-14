@@ -30,7 +30,7 @@ use crate::hash::{self, Hash};
 const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
 
 /// Show the local status of the blu vault
-pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn status(args: StatusArgs) -> Result<(), BluError> {
     let dir = Path::new(".");
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let index = cfg.load_plain_index(&keys)?;
@@ -248,7 +248,7 @@ pub fn status(args: StatusArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("no blob index found, assuming no files are encrypted");
             return Ok(());
         }
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     let count_encrypted_chunks = index

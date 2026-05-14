@@ -1,4 +1,5 @@
 use crate::dek_provider::DekProvider;
+use crate::error::BluError;
 use serde::{Deserialize, Serialize};
 use std::io;
 
@@ -6,21 +7,17 @@ use std::io;
 /// written to a stream (and the reverse for reading).
 pub trait EncryptedSerializable {
     /// Serialize, compress, encrypt, and write to the given stream.
-    fn write<W: io::Write>(
-        &self,
-        stream: W,
-        keys: &DekProvider,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn write<W: io::Write>(&self, stream: W, keys: &DekProvider) -> Result<(), BluError>;
     /// Read, decrypt, decompress, and deserialize from the given stream.
-    fn read<R: io::Read>(stream: R, keys: &DekProvider) -> Result<Self, Box<dyn std::error::Error>>
+    fn read<R: io::Read>(stream: R, keys: &DekProvider) -> Result<Self, BluError>
     where
         Self: Sized;
     /// Deserialize from raw (unencrypted, uncompressed) bytes.
-    fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>>
+    fn deserialize_bytes(data: &[u8]) -> Result<Self, BluError>
     where
         Self: Sized;
     /// Serialize to raw (unencrypted, uncompressed) bytes.
-    fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+    fn serialize_bytes(&self) -> Result<Vec<u8>, BluError>;
 }
 
 /// Macro to generate the standard `EncryptedSerializable` implementation
@@ -32,7 +29,7 @@ macro_rules! gen_std_enc_serde {
                 &self,
                 mut stream: W,
                 keys: &crate::dek_provider::DekProvider,
-            ) -> Result<(), Box<dyn std::error::Error>> {
+            ) -> Result<(), crate::error::BluError> {
                 let serialized = self.serialize_bytes()?;
                 let compressed = compress(&serialized)?;
                 let encrypted = crate::dek_provider::encrypt_envelope(
@@ -44,12 +41,12 @@ macro_rules! gen_std_enc_serde {
                 Ok(())
             }
 
-            fn deserialize_bytes(data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+            fn deserialize_bytes(data: &[u8]) -> Result<Self, crate::error::BluError> {
                 let decoded: Self = bincode::deserialize(data)?;
                 Ok(decoded)
             }
 
-            fn serialize_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            fn serialize_bytes(&self) -> Result<Vec<u8>, crate::error::BluError> {
                 let encoded: Vec<u8> = bincode::serialize(&self)?;
                 Ok(encoded)
             }
@@ -57,7 +54,7 @@ macro_rules! gen_std_enc_serde {
             fn read<R: io::Read>(
                 mut stream: R,
                 keys: &crate::dek_provider::DekProvider,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
+            ) -> Result<Self, crate::error::BluError> {
                 let mut encrypted = Vec::new();
                 let _ = stream.read_to_end(&mut encrypted)?;
                 let compressed = crate::dek_provider::decrypt_envelope(&encrypted, keys)?;

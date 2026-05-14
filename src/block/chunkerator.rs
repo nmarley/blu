@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+use crate::error::BluError;
+
 /// Chunkerator reads files a "chunk" at a time, and returns chunks via the
 /// iterator.
 ///
@@ -20,11 +22,8 @@ pub struct Chunkerator {
 
 impl Chunkerator {
     /// Create a new Chunkerator, given a chunk size.
-    pub fn new<P: AsRef<Path>>(
-        filepath: P,
-        chunk_size: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let f = File::open(filepath.as_ref()).unwrap();
+    pub fn new<P: AsRef<Path>>(filepath: P, chunk_size: usize) -> Result<Self, BluError> {
+        let f = File::open(filepath.as_ref())?;
         let reader = BufReader::with_capacity(chunk_size, f);
         Ok(Self { buf_reader: reader })
     }

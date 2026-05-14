@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
+use crate::error::BluError;
 use crate::format::datetime_format;
 use crate::hash::{Hash, SHA2_512};
 use crate::io::{gen_std_enc_serde, Position};
@@ -40,7 +41,7 @@ pub struct PlainIndex {
 
 impl PlainIndex {
     /// Create a new PlainIndex given a directory path.
-    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new<P: AsRef<Path>>(dir: P) -> Result<Self, BluError> {
         Self::new_custom_chunk_size(dir, DEFAULT_CHUNK_SIZE)
     }
 
@@ -49,7 +50,7 @@ impl PlainIndex {
     pub fn new_custom_chunk_size<P: AsRef<Path>>(
         dir: P,
         chunk_size: usize,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, BluError> {
         let mut idx = Self::new_empty();
         idx.add(dir, Some(chunk_size))?;
         Ok(idx)
@@ -60,7 +61,7 @@ impl PlainIndex {
         &mut self,
         path: P,
         chunk_size: Option<usize>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BluError> {
         let chunk_size = match chunk_size {
             Some(cs) => cs,
             None => DEFAULT_CHUNK_SIZE,
@@ -69,7 +70,7 @@ impl PlainIndex {
 
         // filter all '.blu' files + dirs
         if path.as_ref().starts_with(".blu/") || path.as_ref().starts_with("./.blu/") {
-            return Err("cannot add .blu files or dirs".into());
+            return Err(BluError::Internal("cannot add .blu files or dirs".into()));
         }
 
         match path.as_ref() {
@@ -104,7 +105,7 @@ impl PlainIndex {
         &mut self,
         path: P,
         chunk_size: usize,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BluError> {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
         // TODO: extensible hashing -- get hasher type from config / hasher from
@@ -232,7 +233,7 @@ impl PlainIndex {
         &mut self,
         base_dir: P,
         chunk_size: usize,
-    ) -> Result<(Vec<FileRef>, Vec<BlockRef>), Box<dyn std::error::Error>> {
+    ) -> Result<(Vec<FileRef>, Vec<BlockRef>), BluError> {
         let new_index = Self::new_custom_chunk_size(base_dir, chunk_size)?;
 
         let mut to_delete: HashSet<Hash> = HashSet::new();

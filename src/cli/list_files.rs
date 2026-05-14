@@ -7,14 +7,14 @@ use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 
 /// List files in the index, optionally filtered
-pub fn list_files(args: ListFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list_files(args: ListFilesArgs) -> Result<(), BluError> {
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&keys)?;
 
     let tag_index = match cfg.load_tag_index(&keys) {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     };
 
     // TODO: sort by file name? hash? should the order be deterministic? Since
