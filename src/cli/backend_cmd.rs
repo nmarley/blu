@@ -401,8 +401,28 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), Box<dyn std::error::Error
     }
 }
 
+/// Outcome of a single blob diff task.
+enum DiffResult {
+    /// Blob exists in both backends.
+    Both,
+    /// Blob exists only in the source ("from") backend.
+    FromOnly,
+    /// Blob exists only in the destination ("to") backend.
+    ToOnly,
+    /// Blob not found in either backend (includes path for warning).
+    Neither(String),
+    /// An error occurred checking existence (message for reporting).
+    Error(String),
+}
+
 /// Compare blob sets between two backends.
 async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use indicatif::{ProgressBar, ProgressStyle};
+    use tokio::sync::Semaphore;
+    use tokio::task::JoinSet;
+
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
     use crate::error::BluError;
 
@@ -427,7 +447,7 @@ async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => return Err(e.into()),
     };
 
-    let blob_paths: Vec<&PathBuf> = blob_index.path_index.keys().collect();
+    let blob_paths: Vec<PathBuf> = blob_index.path_index.into_keys().collect();
     let total = blob_paths.len();
 
     if total == 0 {
@@ -440,53 +460,100 @@ async fn diff(args: BackendDiffArgs) -> Result<(), Box<dyn std::error::Error>> {
         total, args.from, args.to
     );
 
+    let from_name = args.from.clone();
+    let to_name = args.to.clone();
+    let semaphore = Arc::new(Semaphore::new(args.jobs as usize));
+    let mut tasks = JoinSet::new();
+
+    for path in blob_paths {
+        let sem = Arc::clone(&semaphore);
+        let src = from_backend.clone();
+        let dst = to_backend.clone();
+        let f_name = from_name.clone();
+        let t_name = to_name.clone();
+
+        tasks.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+
+            // Check both backends concurrently. Map errors to
+            // String so the future is Send (Box<dyn Error> is not).
+            let (from_res, to_res) = tokio::join!(
+                async { src.exists(&path).await.map_err(|e| e.to_string()) },
+                async { dst.exists(&path).await.map_err(|e| e.to_string()) },
+            );
+
+            let in_from = match from_res {
+                Ok(v) => v,
+                Err(e) => {
+                    return DiffResult::Error(format!(
+                        "error checking {} in \"{}\": {}",
+                        path.display(),
+                        f_name,
+                        e
+                    ));
+                }
+            };
+            let in_to = match to_res {
+                Ok(v) => v,
+                Err(e) => {
+                    return DiffResult::Error(format!(
+                        "error checking {} in \"{}\": {}",
+                        path.display(),
+                        t_name,
+                        e
+                    ));
+                }
+            };
+
+            match (in_from, in_to) {
+                (true, true) => DiffResult::Both,
+                (true, false) => DiffResult::FromOnly,
+                (false, true) => DiffResult::ToOnly,
+                (false, false) => DiffResult::Neither(path.display().to_string()),
+            }
+        });
+    }
+
+    let pb = ProgressBar::new(total as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40} {pos}/{len} [{elapsed_precise}]")
+            .expect("valid progress bar template"),
+    );
+
     let mut both = 0u64;
     let mut from_only = 0u64;
     let mut to_only = 0u64;
     let mut errors = 0u64;
 
-    for path in &blob_paths {
-        let in_from = match from_backend.exists(path).await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "  error checking {} in \"{}\": {}",
-                    path.display(),
-                    args.from,
-                    e
-                );
-                errors += 1;
-                continue;
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(DiffResult::Both) => both += 1,
+            Ok(DiffResult::FromOnly) => from_only += 1,
+            Ok(DiffResult::ToOnly) => to_only += 1,
+            Ok(DiffResult::Neither(p)) => {
+                pb.suspend(|| {
+                    eprintln!("  warning: {} not found in either backend", p);
+                });
             }
-        };
-        let in_to = match to_backend.exists(path).await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!(
-                    "  error checking {} in \"{}\": {}",
-                    path.display(),
-                    args.to,
-                    e
-                );
+            Ok(DiffResult::Error(msg)) => {
+                pb.suspend(|| eprintln!("  {}", msg));
                 errors += 1;
-                continue;
             }
-        };
-
-        match (in_from, in_to) {
-            (true, true) => both += 1,
-            (true, false) => from_only += 1,
-            (false, true) => to_only += 1,
-            (false, false) => {
-                eprintln!("  warning: {} not found in either backend", path.display());
+            Err(e) => {
+                pb.suspend(|| eprintln!("  task panicked: {}", e));
+                errors += 1;
             }
         }
+        pb.inc(1);
     }
+
+    pb.finish_and_clear();
 
     println!();
     println!("  both:           {}", both);
-    println!("  \"{}\" only:  {}", args.from, from_only);
-    println!("  \"{}\" only:  {}", args.to, to_only);
+    println!("  \"{}\" only:  {}", from_name, from_only);
+    println!("  \"{}\" only:  {}", to_name, to_only);
     if errors > 0 {
         println!("  errors:         {}", errors);
     }
