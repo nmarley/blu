@@ -66,6 +66,56 @@ fn add(args: BackendAddArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Count how many of the given paths exist in a backend, concurrently.
+async fn count_existing(
+    backend: &crate::storage::BackendKind,
+    paths: &[PathBuf],
+    concurrency: usize,
+) -> u64 {
+    use std::sync::Arc;
+
+    use indicatif::{ProgressBar, ProgressStyle};
+    use tokio::sync::Semaphore;
+    use tokio::task::JoinSet;
+
+    let total = paths.len();
+    if total == 0 {
+        return 0;
+    }
+
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let mut tasks = JoinSet::new();
+
+    for path in paths {
+        let sem = Arc::clone(&semaphore);
+        let be = backend.clone();
+        let p = path.clone();
+
+        tasks.spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            matches!(be.exists(&p).await, Ok(true))
+        });
+    }
+
+    let pb = ProgressBar::new(total as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40} {pos}/{len} [{elapsed_precise}]")
+            .expect("valid progress bar template"),
+    );
+
+    let mut present = 0u64;
+    while let Some(result) = tasks.join_next().await {
+        if matches!(result, Ok(true)) {
+            present += 1;
+        }
+        pb.inc(1);
+    }
+
+    pb.finish_and_clear();
+    present
+}
+
 /// List all configured backends.
 async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::helpers::{load_config_and_keys, LoadOptions};
@@ -74,11 +124,11 @@ async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = config::read_config(".")?;
 
     // If --stats, load the blob index to count blobs per backend
-    let blob_paths: Option<HashSet<PathBuf>> = if args.stats {
+    let blob_paths: Option<Vec<PathBuf>> = if args.stats {
         let (cfg2, keys) = load_config_and_keys(&LoadOptions::default())?;
         match cfg2.load_blob_index(&keys) {
             Ok(idx) => Some(idx.path_index.keys().cloned().collect()),
-            Err(BluError::IndexNotFound(_)) => Some(HashSet::new()),
+            Err(BluError::IndexNotFound(_)) => Some(Vec::new()),
             Err(e) => return Err(e.into()),
         }
     } else {
@@ -110,14 +160,7 @@ async fn list(args: BackendListArgs) -> Result<(), Box<dyn std::error::Error>> {
 
         let stats_str = if let Some(ref paths) = blob_paths {
             let be = cfg.init_named_backend(name).await?;
-            let mut present = 0u64;
-            for path in paths {
-                match be.exists(path).await {
-                    Ok(true) => present += 1,
-                    Ok(false) => {}
-                    Err(_) => {}
-                }
-            }
+            let present = count_existing(&be, paths, 16).await;
             format!("  [{}/{} blobs]", present, paths.len())
         } else {
             String::new()
