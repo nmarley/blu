@@ -193,16 +193,16 @@ mod test {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(datadir));
 
-        // Test data
         let data = b"Hello, world!";
         let mh = multihash(data);
         let hash = Hash::from(mh.to_bytes());
 
-        // Write the data
-        let pathbuf = storage.write_data(&hash, data).await.unwrap();
+        // write_data returns a relative content-addressed path
+        let rel_path = storage.write_data(&hash, data).await.unwrap();
+        assert_eq!(rel_path, path_for(&hash).unwrap());
 
-        // Read the data back and verify it
-        let read_data = storage.read_data(&pathbuf).await.unwrap();
+        // read_data accepts the same relative path
+        let read_data = storage.read_data(&rel_path).await.unwrap();
         assert_eq!(data.to_vec(), read_data);
     }
 
@@ -211,27 +211,24 @@ mod test {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(&datadir));
 
-        // Test data
         let data = b"Test data for exists/delete";
         let mh = multihash(data);
         let hash = Hash::from(mh.to_bytes());
 
-        // Initially the file should not exist
-        let pathbuf = datadir.path().join(path_for(&hash).unwrap());
-        assert!(!storage.exists(&pathbuf).await.unwrap());
+        // All methods use relative content-addressed paths;
+        // the backend prepends datadir internally.
+        let rel_path = path_for(&hash).unwrap();
 
-        // Write the data
+        assert!(!storage.exists(&rel_path).await.unwrap());
+
         let written_path = storage.write_data(&hash, data).await.unwrap();
-        assert_eq!(pathbuf, written_path);
+        assert_eq!(rel_path, written_path);
 
-        // Now it should exist
-        assert!(storage.exists(&pathbuf).await.unwrap());
+        assert!(storage.exists(&rel_path).await.unwrap());
 
-        // Delete it
-        storage.delete(&pathbuf).await.unwrap();
+        storage.delete(&rel_path).await.unwrap();
 
-        // Now it should not exist
-        assert!(!storage.exists(&pathbuf).await.unwrap());
+        assert!(!storage.exists(&rel_path).await.unwrap());
     }
 }
 
