@@ -312,78 +312,93 @@ impl Config {
         &self,
         backend: &BackendKind,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Read local index files
-        let plain_index_path = self.idxdir().join(&self.plain_index_filename);
-        let blob_index_path = self.idxdir().join(&self.blob_index_filename);
+        // Read local index data (synchronous fs reads are fast)
+        let plain = self.read_local_index(&self.plain_index_filename);
+        let blob = self.read_local_index(&self.blob_index_filename);
+        let tag = self.read_local_index(&self.tag_index_filename);
 
-        // Upload plain index
-        if plain_index_path.exists() {
-            let data = fs::read(&plain_index_path)?;
-            let remote_path = self.remote_plain_index_path();
-            info!("Pushing plain index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)
-                .await?;
-        }
-
-        // Upload blob index
-        if blob_index_path.exists() {
-            let data = fs::read(&blob_index_path)?;
-            let remote_path = self.remote_blob_index_path();
-            info!("Pushing blob index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)
-                .await?;
-        }
-
-        // Upload tag index if it exists
-        let tag_index_path = self.idxdir().join(&self.tag_index_filename);
-        if tag_index_path.exists() {
-            let data = fs::read(&tag_index_path)?;
-            let remote_path = self.remote_tag_index_path();
-            info!("Pushing tag index to {:?}", remote_path);
-            self.write_index_to_backend(backend, &data, &remote_path)
-                .await?;
-        }
+        // Upload all indexes concurrently
+        let (r_plain, r_blob, r_tag) = tokio::join!(
+            self.push_one_index(backend, plain, self.remote_plain_index_path(), "plain"),
+            self.push_one_index(backend, blob, self.remote_blob_index_path(), "blob"),
+            self.push_one_index(backend, tag, self.remote_tag_index_path(), "tag"),
+        );
+        r_plain?;
+        r_blob?;
+        r_tag?;
 
         Ok(())
     }
 
-    /// Helper to write index data to a specific path in the backend.
-    async fn write_index_to_backend(
+    /// Read a local index file, returning None if it does not exist.
+    fn read_local_index(&self, filename: &Path) -> Option<Vec<u8>> {
+        let path = self.idxdir().join(filename);
+        if path.exists() {
+            fs::read(&path).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Push a single index file to the backend (no-op if data is None).
+    async fn push_one_index(
         &self,
         backend: &BackendKind,
-        data: &[u8],
-        path: &Path,
+        data: Option<Vec<u8>>,
+        remote_path: PathBuf,
+        label: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend.write_to_path(path, data).await
+        if let Some(data) = data {
+            info!("Pushing {} index to {:?}", label, remote_path);
+            backend.write_to_path(&remote_path, &data).await?;
+        }
+        Ok(())
     }
 
     /// Pull indexes from the remote backend.
     ///
-    /// This downloads the encrypted index files from the backend,
-    /// overwriting local indexes.
+    /// Downloads the encrypted index files from the backend
+    /// concurrently, overwriting local indexes.
     pub async fn pull_indexes(
         &self,
         backend: &BackendKind,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let remote_paths = [
-            self.remote_plain_index_path(),
-            self.remote_blob_index_path(),
-            self.remote_tag_index_path(),
-        ];
-        let local_paths = [
-            self.idxdir().join(&self.plain_index_filename),
-            self.idxdir().join(&self.blob_index_filename),
-            self.idxdir().join(&self.tag_index_filename),
-        ];
+        let (r_plain, r_blob, r_tag) = tokio::join!(
+            self.pull_one_index(
+                backend,
+                self.remote_plain_index_path(),
+                self.idxdir().join(&self.plain_index_filename),
+            ),
+            self.pull_one_index(
+                backend,
+                self.remote_blob_index_path(),
+                self.idxdir().join(&self.blob_index_filename),
+            ),
+            self.pull_one_index(
+                backend,
+                self.remote_tag_index_path(),
+                self.idxdir().join(&self.tag_index_filename),
+            ),
+        );
+        r_plain?;
+        r_blob?;
+        r_tag?;
 
-        for (remote_path, local_path) in remote_paths.iter().zip(local_paths.iter()) {
-            if backend.exists(remote_path).await? {
-                let data = backend.read_from_path(remote_path).await?;
-                fs::write(local_path, data)?;
-                info!("Pulled index {:?}", remote_path);
-            }
+        Ok(())
+    }
+
+    /// Pull a single index from the backend if it exists remotely.
+    async fn pull_one_index(
+        &self,
+        backend: &BackendKind,
+        remote_path: PathBuf,
+        local_path: PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if backend.exists(&remote_path).await? {
+            let data = backend.read_from_path(&remote_path).await?;
+            fs::write(&local_path, data)?;
+            info!("Pulled index {:?}", remote_path);
         }
-
         Ok(())
     }
 }

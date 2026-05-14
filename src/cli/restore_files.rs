@@ -1,16 +1,34 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use glob::Pattern;
+use indicatif::{ProgressBar, ProgressStyle};
+use tokio::sync::{mpsc, Semaphore};
 
-use crate::blob::EncBlobReader;
+use crate::blob::BlobBlockLocation;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::compression::decompress;
+use crate::dek_provider::{decrypt_envelope, DekProvider};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
+use crate::storage;
+
+/// Progress event sent from prefetch workers to the progress consumer.
+enum PrefetchEvent {
+    /// A blob was fetched, decrypted, and cached.
+    Fetched {
+        blob_hash: Hash,
+        data: Vec<u8>,
+        bytes: u64,
+    },
+    /// A blob fetch or decrypt failed.
+    Failed(String),
+}
 
 /// Restore plain-text files from the archive, requires index + necessary encrypted blobs
 pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +52,6 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
         Some(name) => cfg.init_named_backend(name).await?,
         None => cfg.init_storage_backend().await?,
     };
-    let mut reader = EncBlobReader::new(&keys, &backend);
 
     // Build path pattern matcher if specified
     let path_pattern = args.path.as_ref().map(|p| {
@@ -90,9 +107,44 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
 
     println!("Found {} file(s) to restore", unique_hashes.len());
 
+    // Collect all unique blob paths needed for the restore
+    let mut needed_blob_paths: HashMap<Hash, PathBuf> = HashMap::new();
+
+    for file_hash in &unique_hashes {
+        let fileref = match plain_index.get_fileref_ref(file_hash) {
+            Some(fileref) => fileref,
+            None => continue,
+        };
+
+        for chunkmeta in &fileref.chunkmetas {
+            if !blob_index.has_chunk(&chunkmeta.hash) {
+                continue;
+            }
+            if let Ok(location) = blob_index.get_block_location_ref(&chunkmeta.hash) {
+                let blob_hash = storage::hash_from_path(location.blob_path())?;
+                needed_blob_paths
+                    .entry(blob_hash)
+                    .or_insert_with(|| location.blob_path().clone());
+            }
+        }
+    }
+
+    let total_blobs = needed_blob_paths.len();
+    println!("Prefetching {} blob(s)...", total_blobs);
+
+    // Prefetch all blobs concurrently
+    let blob_cache = prefetch_blobs(
+        needed_blob_paths,
+        &backend,
+        &keys,
+        16, // concurrency
+    )
+    .await?;
+
     // Parse destination directory
     let dest_dir = args.to.as_ref().map(PathBuf::from);
 
+    // Restore files using the prefetched cache
     'outer: for file_hash in unique_hashes.into_iter() {
         let fileref = match plain_index.get_fileref_ref(&file_hash) {
             Some(fileref) => fileref,
@@ -181,12 +233,6 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
 
         for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
             if !blob_index.has_chunk(&chunkmeta.hash) {
-                // TODO: maybe don't abort (esp. for large files which would
-                // piss ppl off), and instead just write the other chunks and
-                // log the ones not found in the blob index. The files would be
-                // corrupted / not intact so we should report it, but could
-                // ostensibly be fixed w/some repair tool if the blobs can be
-                // found later.
                 eprintln!(
                     "Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}",
                     chunkmeta.hash, file_hash
@@ -210,7 +256,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
                 blob_block_location_ref.position.size,
             );
 
-            let block_data = reader.get_bytes(&blob_block_location_ref).await.unwrap();
+            let block_data = get_cached_bytes(&blob_cache, &blob_block_location_ref)?;
             fh.write_all_at(block_data, offset)?;
             trace!(
                 "wrote {} bytes at offset {} to {:?}",
@@ -260,4 +306,155 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), Box<dyn std::er
     }
 
     Ok(())
+}
+
+/// Prefetch all needed blobs concurrently, returning a cache of
+/// blob_hash -> decrypted, decompressed blob data.
+async fn prefetch_blobs(
+    needed: HashMap<Hash, PathBuf>,
+    backend: &storage::BackendKind,
+    keys: &DekProvider,
+    concurrency: usize,
+) -> Result<HashMap<Hash, Vec<u8>>, Box<dyn std::error::Error>> {
+    let total = needed.len();
+    if total == 0 {
+        return Ok(HashMap::new());
+    }
+
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let (tx, mut rx) = mpsc::channel::<PrefetchEvent>(concurrency * 4);
+
+    // Spawn worker tasks
+    let workers = tokio::spawn({
+        let backend = backend.clone();
+        let keys = keys.clone();
+        async move {
+            let mut tasks = tokio::task::JoinSet::new();
+
+            for (blob_hash, blob_path) in needed {
+                let sem = Arc::clone(&semaphore);
+                let be = backend.clone();
+                let k = keys.clone();
+                let tx = tx.clone();
+
+                tasks.spawn(async move {
+                    let _permit = sem.acquire().await.expect("semaphore closed");
+
+                    let raw = be
+                        .read_data(&blob_path)
+                        .await
+                        .map_err(|e| format!("error reading blob {}: {}", blob_path.display(), e));
+
+                    let raw = match raw {
+                        Ok(data) => data,
+                        Err(msg) => {
+                            let _ = tx.send(PrefetchEvent::Failed(msg)).await;
+                            return;
+                        }
+                    };
+
+                    let bytes = raw.len() as u64;
+
+                    let decrypted = match decrypt_envelope(&raw, &k) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            let msg =
+                                format!("error decrypting blob {}: {}", blob_path.display(), e);
+                            let _ = tx.send(PrefetchEvent::Failed(msg)).await;
+                            return;
+                        }
+                    };
+
+                    let decompressed = match decompress(&decrypted) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            let msg =
+                                format!("error decompressing blob {}: {}", blob_path.display(), e);
+                            let _ = tx.send(PrefetchEvent::Failed(msg)).await;
+                            return;
+                        }
+                    };
+
+                    let _ = tx
+                        .send(PrefetchEvent::Fetched {
+                            blob_hash,
+                            data: decompressed,
+                            bytes,
+                        })
+                        .await;
+                });
+            }
+
+            drop(tx);
+            while tasks.join_next().await.is_some() {}
+        }
+    });
+
+    // Progress bar consumer
+    let pb = ProgressBar::new(total as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
+            .expect("valid progress bar template"),
+    );
+
+    let mut cache: HashMap<Hash, Vec<u8>> = HashMap::with_capacity(total);
+    let mut fetched = 0u64;
+    let mut failed = 0u64;
+    let mut bytes_total = 0u64;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            PrefetchEvent::Fetched {
+                blob_hash,
+                data,
+                bytes,
+            } => {
+                fetched += 1;
+                bytes_total += bytes;
+                cache.insert(blob_hash, data);
+                pb.inc(1);
+            }
+            PrefetchEvent::Failed(msg) => {
+                pb.suspend(|| eprintln!("  {}", msg));
+                failed += 1;
+                pb.inc(1);
+            }
+        }
+
+        pb.set_message(format!(
+            "{} fetched, {} failed, {}",
+            fetched,
+            failed,
+            human_bytes(bytes_total),
+        ));
+    }
+
+    pb.finish_and_clear();
+    workers.await?;
+
+    println!(
+        "Prefetch complete: {} blobs ({})",
+        fetched,
+        human_bytes(bytes_total),
+    );
+
+    if failed > 0 {
+        return Err(format!("{} blob(s) failed to fetch", failed).into());
+    }
+
+    Ok(cache)
+}
+
+/// Look up chunk data from the prefetched blob cache.
+fn get_cached_bytes<'a>(
+    cache: &'a HashMap<Hash, Vec<u8>>,
+    location: &BlobBlockLocation,
+) -> Result<&'a [u8], Box<dyn std::error::Error>> {
+    let blob_hash = storage::hash_from_path(location.blob_path())?;
+    let full_data = cache
+        .get(&blob_hash)
+        .ok_or_else(|| format!("blob not in cache: {}", location.blob_path().display()))?;
+    let pos = &location.position;
+    Ok(&full_data[pos.offset..pos.offset + pos.size])
 }

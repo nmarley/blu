@@ -28,9 +28,15 @@ const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 
 /// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks
 /// (or unused blocks), etc.
+///
+/// Blob uploads are pipelined: when the buffer fills up, the blob is
+/// compressed, encrypted, and handed off to a background upload task.
+/// The buffer resets immediately so the next blob can start filling
+/// while the previous one is still uploading. All in-flight uploads
+/// are awaited in [`BlobBuffer::finalize`].
 // #[derive(Debug)]
-pub struct BlobBuffer<'a> {
-    storage_backend: &'a BackendKind,
+pub struct BlobBuffer {
+    storage_backend: BackendKind,
 
     // encryption
     keys: DekProvider,
@@ -40,22 +46,26 @@ pub struct BlobBuffer<'a> {
     blob_capacity: usize,
     offset: usize,
     positions: HashMap<Hash, BlobBlockLocation>,
+
+    // in-flight upload tasks
+    inflight: Vec<tokio::task::JoinHandle<Result<PathBuf, String>>>,
 }
 
-impl<'a> BlobBuffer<'a> {
+impl BlobBuffer {
     /// Create a new BlobBuffer with the default capacity
-    pub fn new(backend: &'a BackendKind, keys: DekProvider) -> Self {
+    pub fn new(backend: &BackendKind, keys: DekProvider) -> Self {
         Self::with_capacity(backend, keys, DEFAULT_BLOB_CAPACITY_BYTES)
     }
     /// Create a new BlobBuffer with a specified capacity
-    pub fn with_capacity(backend: &'a BackendKind, keys: DekProvider, capacity: usize) -> Self {
+    pub fn with_capacity(backend: &BackendKind, keys: DekProvider, capacity: usize) -> Self {
         Self {
-            storage_backend: backend,
+            storage_backend: backend.clone(),
             keys,
             data: vec![],
             blob_capacity: capacity,
             offset: 0,
             positions: HashMap::new(),
+            inflight: Vec::new(),
         }
     }
 
@@ -86,8 +96,8 @@ impl<'a> BlobBuffer<'a> {
         self.offset += size;
 
         if self.is_full() {
-            let path = self.roll_new_blob(idx).await?;
-            debug!("Rolled new blob at {:?}!", path);
+            let path = self.seal_and_upload(idx)?;
+            debug!("Sealed blob for upload at {:?}!", path);
             return Ok(());
         }
 
@@ -95,53 +105,63 @@ impl<'a> BlobBuffer<'a> {
         Ok(())
     }
 
-    /// Finalize the blob buffer, writing the last blob to disk and updating the index.
+    /// Finalize the blob buffer, writing the last blob to disk and
+    /// waiting for all in-flight uploads to complete.
     pub async fn finalize(
         &mut self,
         idx: &mut BlobIndex,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_empty() {
-            self.roll_new_blob(idx).await?;
+            self.seal_and_upload(idx)?;
         }
+
+        // Await all in-flight uploads
+        let handles = std::mem::take(&mut self.inflight);
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(_path)) => {}
+                Ok(Err(msg)) => return Err(msg.into()),
+                Err(e) => return Err(format!("blob upload task panicked: {}", e).into()),
+            }
+        }
+
         Ok(())
     }
 
-    async fn write_blob(&self, data: &[u8]) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let raw_bytes = data;
-        let blobfile_hash = Hash::from(hash::multihash(raw_bytes).to_bytes());
-        self.storage_backend
-            .write_data(&blobfile_hash, raw_bytes)
-            .await
-    }
-
-    // TODO: rename this
-    async fn roll_new_blob(
+    /// Compress, encrypt, derive the path, update the index, spawn
+    /// the upload in the background, and reset the buffer.
+    ///
+    /// Returns the content-addressed path (known before the upload
+    /// completes because it is derived from the hash of the encrypted
+    /// blob data).
+    fn seal_and_upload(
         &mut self,
         idx: &mut BlobIndex,
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
-        // compress / encrypt here
-        // 1. serialize (done, this is self.data)
-        // 2. compress
-        // 3. encrypt
         let compressed = compress(&self.data)?;
         let encrypted = encrypt_envelope(&compressed, FileType::Blob, &self.keys)?;
 
-        let path = self.write_blob(&encrypted).await?;
+        let blob_hash = Hash::from(hash::multihash(&encrypted).to_bytes());
+        let path = storage::path_for(&blob_hash)?;
+
+        // Update the index immediately (path is deterministic)
         for (chunk_hash, location) in self.positions.iter_mut() {
             location.path = path.clone();
             idx.add_chunk_location(chunk_hash, location);
         }
         self.reset();
-        Ok(path)
-    }
 
-    // Do not use, for testing only.
-    // TODO: Remove this entirely
-    fn _eject_blob(&mut self) -> (Vec<u8>, HashMap<Hash, BlobBlockLocation>) {
-        let data = core::mem::take(&mut self.data);
-        let pos = core::mem::take(&mut self.positions);
-        self.reset();
-        (data, pos)
+        // Spawn the upload in the background
+        let backend = self.storage_backend.clone();
+        let handle = tokio::spawn(async move {
+            backend
+                .write_data(&blob_hash, &encrypted)
+                .await
+                .map_err(|e| format!("blob upload failed: {}", e))
+        });
+        self.inflight.push(handle);
+
+        Ok(path)
     }
 
     fn is_full(&self) -> bool {
@@ -349,7 +369,7 @@ mod test {
         BackendKind::Local(Local::new(datadir))
     }
 
-    async fn test_blobbuf(backend: &BackendKind) -> (BlobBuffer<'_>, BlobIndex) {
+    async fn test_blobbuf(backend: &BackendKind) -> (BlobBuffer, BlobIndex) {
         let keys = test_keys();
         let mut vec: Vec<Vec<u8>> = vec![
             vec![0x0b, 0x0a, 0x00],
@@ -401,34 +421,27 @@ mod test {
     #[tokio::test]
     async fn blob() {
         let backend = temp_local_backend();
-        let (mut blob_buf, mut _idx) = test_blobbuf(&backend).await;
-        // TODO: Test the interface, not the implementation
-        let (data, positions) = blob_buf._eject_blob();
-        assert_eq!(
-            data,
-            vec![
-                0x0b, 0x0a, 0x00, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e,
-                0xad
-            ]
-        );
-        let expected_positions: HashMap<Hash, Position> = HashMap::from([
-            (
-                Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"),
-                Position { offset: 0, size: 3 }
-            ),
-            (
-                Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"),
-                Position { offset: 3, size: 4 },
-            ),
-            (
-                Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"),
-                Position { offset: 7, size: 8 },
-            ),
-        ]);
-        let positions: HashMap<Hash, Position> = positions
-            .into_iter()
-            .map(|(k, v)| (k, v.position))
-            .collect();
-        assert_eq!(positions, expected_positions);
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // After finalize, all 3 chunks should be indexed
+        assert_eq!(idx.count_chunks_indexed(), 3);
+        assert_eq!(idx.count_blob_files(), 1);
+
+        // Verify each chunk has the correct position in the blob
+        let loc1 = idx
+            .get_block_location_ref(&Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"))
+            .unwrap();
+        assert_eq!(loc1.position, Position { offset: 0, size: 3 });
+
+        let loc2 = idx
+            .get_block_location_ref(&Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"))
+            .unwrap();
+        assert_eq!(loc2.position, Position { offset: 3, size: 4 });
+
+        let loc3 = idx
+            .get_block_location_ref(&Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"))
+            .unwrap();
+        assert_eq!(loc3.position, Position { offset: 7, size: 8 });
     }
 }
