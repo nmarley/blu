@@ -257,12 +257,16 @@ pub fn status(args: StatusArgs) -> Result<(), BluError> {
         .filter(|(block_hash, _blockref)| blob_index.map.contains_key(block_hash))
         .count();
     let total_chunks = index.blocks.len();
-    let encrypted_pct = (count_encrypted_chunks as f64 / total_chunks as f64) * 100.0;
 
-    println!(
-        "{} of {} chunks in index are encrypted ({:.2}%)",
-        count_encrypted_chunks, total_chunks, encrypted_pct
-    );
+    if total_chunks == 0 {
+        println!("no chunks in index");
+    } else {
+        let encrypted_pct = (count_encrypted_chunks as f64 / total_chunks as f64) * 100.0;
+        println!(
+            "{} of {} chunks in index are encrypted ({:.2}%)",
+            count_encrypted_chunks, total_chunks, encrypted_pct
+        );
+    }
 
     Ok(())
 }
