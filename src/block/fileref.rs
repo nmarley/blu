@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::ChunkMeta;
+use crate::error::BluError;
 
 /// FileRef is a container encapsulating a Vec<ChunkMeta> (collection of hashes
 /// of chunks read from a fs::File) and filesystem references to it (filenames)
@@ -43,8 +44,12 @@ impl FileRef {
         }
     }
 
-    pub fn get_a_path(&self) -> PathBuf {
-        self.paths.iter().next().unwrap().to_path_buf()
+    pub fn get_a_path(&self) -> Result<PathBuf, BluError> {
+        self.paths
+            .iter()
+            .next()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| BluError::IndexCorrupted("fileref has no paths".into()))
     }
 
     pub fn total_size(&self) -> u64 {

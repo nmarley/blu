@@ -24,21 +24,17 @@ impl std::fmt::Debug for Hash {
         // use multihash lib to properly separate multihash header code and size
         // (do not make assumptions about removing X number of bytes)
         //
-        // let mh = Multihash::from_bytes(&hash.to_bytes())?;
-        // // dbg!(&mh.code());
-        // // dbg!(&mh.size());
-        // // dbg!(&mh.digest());
-        //
         // TODO: re-implement how we store the multihash in the Hash type, or
         // just alias to MultiHash w/some syntactic sugar methods
-        let mh: Multihash<64> = Multihash::from_bytes(&self.0).unwrap();
-        let _ = write!(
-            f,
-            "Hash {{ code: {}, digest: {} }}",
-            mh.code(),
-            &hex::encode(mh.digest())
-        );
-        Ok(())
+        match Multihash::<64>::from_bytes(&self.0) {
+            Ok(mh) => write!(
+                f,
+                "Hash {{ code: {}, digest: {} }}",
+                mh.code(),
+                &hex::encode(mh.digest())
+            ),
+            Err(_) => write!(f, "Hash {{ raw: {} }}", hex::encode(&self.0)),
+        }
     }
 }
 
@@ -75,11 +71,13 @@ impl Hash {
 
     /// Return a short version of hash in hex
     pub fn dbg_short(&self, len: usize) -> String {
-        let mh: Multihash<64> = Multihash::from_bytes(&self.0).unwrap();
-        hex::encode(mh.digest())
-            .chars()
-            .take(len)
-            .collect::<String>()
+        match Multihash::<64>::from_bytes(&self.0) {
+            Ok(mh) => hex::encode(mh.digest())
+                .chars()
+                .take(len)
+                .collect::<String>(),
+            Err(_) => hex::encode(&self.0).chars().take(len).collect::<String>(),
+        }
     }
 }
 

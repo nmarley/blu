@@ -84,7 +84,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
                     hash: cm.hash.to_string(),
                 }
             })?;
-            let data = plain_index.read_block_bytes(block_ref);
+            let data = plain_index.read_block_bytes(block_ref)?;
 
             // Verify hash matches
             let block_hash2 = Hash::from(hash::multihash(&data).to_bytes());

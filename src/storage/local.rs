@@ -38,7 +38,10 @@ impl Local {
         let hash_path = super::path_for(hash)?;
         let full_path = self.datadir.join(&hash_path);
 
-        tokio::fs::create_dir_all(full_path.parent().unwrap()).await?;
+        let parent = full_path.parent().ok_or_else(|| {
+            BluError::Internal(format!("path has no parent: {}", full_path.display()))
+        })?;
+        tokio::fs::create_dir_all(parent).await?;
         tokio::fs::write(&full_path, data).await?;
         Ok(hash_path)
     }

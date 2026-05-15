@@ -68,7 +68,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
                     hash: cm.hash.to_string(),
                 }
             })?;
-            let data = plain_index.read_block_bytes(block_ref);
+            let data = plain_index.read_block_bytes(block_ref)?;
 
             // NOTE: we probably want to somehow keep this around / add it as a
             // checksum to ensure that the data is not corrupted

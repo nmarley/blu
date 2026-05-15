@@ -230,7 +230,10 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
             trace!("Blob cache hit: {}", location_ref.path.display());
         }
 
-        let full_data = self.cache.get(&hash).unwrap();
+        let full_data = self
+            .cache
+            .get(&hash)
+            .ok_or_else(|| BluError::Internal("blob cache miss immediately after insert".into()))?;
         let pos = &location_ref.position;
         Ok(&full_data[pos.offset..pos.offset + pos.size])
     }

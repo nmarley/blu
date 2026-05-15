@@ -164,9 +164,12 @@ impl PlainIndex {
 
     /// Returns the number of unique bytes indexed.
     pub fn uniq_bytes_indexed(&self) -> u64 {
-        self.blocks.iter().fold(0u64, |acc, elem| {
-            elem.1.references.iter().next().unwrap().1.size as u64 + acc
-        })
+        self.blocks
+            .iter()
+            .fold(0u64, |acc, elem| match elem.1.references.values().next() {
+                Some(pos) => pos.size as u64 + acc,
+                None => acc,
+            })
     }
 
     /// Returns the total number of bytes indexed.
@@ -215,16 +218,24 @@ impl PlainIndex {
 
     // TODO: Should this be block hash instead?
     /// Read the bytes from disk and return them for a given blockref.
-    pub fn read_block_bytes(&self, blockref: &BlockRef) -> Vec<u8> {
-        let (file_hash, disk_index) = blockref.references.iter().next().unwrap();
-        let fileref = self.get_fileref_ref(file_hash).unwrap();
-        let filename = fileref.get_a_path();
+    pub fn read_block_bytes(&self, blockref: &BlockRef) -> Result<Vec<u8>, BluError> {
+        let (file_hash, disk_index) = blockref
+            .references
+            .iter()
+            .next()
+            .ok_or_else(|| BluError::IndexCorrupted("blockref has no references".into()))?;
+        let fileref =
+            self.get_fileref_ref(file_hash)
+                .ok_or_else(|| BluError::FileHashNotFound {
+                    hash: file_hash.to_string(),
+                })?;
+        let filename = fileref.get_a_path()?;
 
-        let mut f = std::fs::File::open(filename).unwrap();
+        let mut f = std::fs::File::open(&filename)?;
         let mut buf: Vec<u8> = vec![0; disk_index.size];
-        let _seekptr = f.seek(SeekFrom::Start(disk_index.offset as u64)).unwrap();
-        f.read_exact(&mut buf).unwrap();
-        buf
+        f.seek(SeekFrom::Start(disk_index.offset as u64))?;
+        f.read_exact(&mut buf)?;
+        Ok(buf)
     }
 
     /// Update the existing index, given a directory path, and return a list of removed (dangling)
@@ -268,9 +279,10 @@ impl PlainIndex {
         // to_delete HashSet<&Hash>
         let mut deleted_filerefs: Vec<FileRef> = vec![];
         for hash in to_delete.into_iter() {
-            let e = self.files.remove_entry(&hash).unwrap();
-            deleted_filerefs.push(e.1);
-            is_updated = true;
+            if let Some(e) = self.files.remove_entry(&hash) {
+                deleted_filerefs.push(e.1);
+                is_updated = true;
+            }
         }
 
         // blockrefs
@@ -307,9 +319,10 @@ impl PlainIndex {
         // to_delete HashSet<&Hash>
         let mut deleted_blockrefs: Vec<BlockRef> = vec![];
         for hash in to_delete.into_iter() {
-            let e = self.blocks.remove_entry(&hash).unwrap();
-            deleted_blockrefs.push(e.1);
-            is_updated = true;
+            if let Some(e) = self.blocks.remove_entry(&hash) {
+                deleted_blockrefs.push(e.1);
+                is_updated = true;
+            }
         }
 
         if is_updated {
