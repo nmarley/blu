@@ -33,7 +33,14 @@ pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), BluError> {
     for (blob_path, set_chunk_hashes) in blob_index.path_index.iter() {
         let mut blob_size = 0_usize;
         for chunk_hash in set_chunk_hashes.iter() {
-            blob_size += blob_index.map.get(chunk_hash).unwrap().position.size;
+            let chunk_entry =
+                blob_index
+                    .map
+                    .get(chunk_hash)
+                    .ok_or_else(|| BluError::BlockNotFound {
+                        hash: chunk_hash.to_string(),
+                    })?;
+            blob_size += chunk_entry.position.size;
         }
         info!(
             "Got blob path: {} with {} hashes, {} total bytes",

@@ -48,7 +48,11 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
     // TODO: consider rayon for parallelizing this
     for file_hash in file_hashes {
         info!("file_hash: {:?}", &file_hash.dbg_short(7));
-        let file_ref = files_map.get(file_hash).unwrap();
+        let file_ref = files_map
+            .get(file_hash)
+            .ok_or_else(|| BluError::FileHashNotFound {
+                hash: file_hash.to_string(),
+            })?;
         info!("chunks count: {}", file_ref.chunkmetas.len());
 
         // TODO: possible to do nested parallel iteration?
@@ -59,7 +63,11 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
                 continue;
             }
 
-            let block_ref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
+            let block_ref = plain_index.blocks_map_ref().get(&cm.hash).ok_or_else(|| {
+                BluError::BlockNotFound {
+                    hash: cm.hash.to_string(),
+                }
+            })?;
             let data = plain_index.read_block_bytes(block_ref);
 
             // NOTE: we probably want to somehow keep this around / add it as a

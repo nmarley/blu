@@ -32,7 +32,11 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), BluError> {
 
     // per hash file hash, list the data
     for file_hash in file_hashes {
-        let file_ref = files_ref.get(file_hash).unwrap();
+        let file_ref = files_ref
+            .get(file_hash)
+            .ok_or_else(|| BluError::FileHashNotFound {
+                hash: file_hash.to_string(),
+            })?;
         if let Some(ref filter) = args.filter {
             let mut found_match = false;
             // try and filter

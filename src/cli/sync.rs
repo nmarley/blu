@@ -68,14 +68,22 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
     let file_hashes = files_map.keys().clone().sorted_unstable();
 
     for file_hash in file_hashes {
-        let file_ref = files_map.get(file_hash).unwrap();
+        let file_ref = files_map
+            .get(file_hash)
+            .ok_or_else(|| BluError::FileHashNotFound {
+                hash: file_hash.to_string(),
+            })?;
 
         for cm in &file_ref.chunkmetas {
             if blob_index.has_chunk(&cm.hash) {
                 continue; // Already encrypted
             }
 
-            let block_ref = plain_index.blocks_map_ref().get(&cm.hash).unwrap();
+            let block_ref = plain_index.blocks_map_ref().get(&cm.hash).ok_or_else(|| {
+                BluError::BlockNotFound {
+                    hash: cm.hash.to_string(),
+                }
+            })?;
             let data = plain_index.read_block_bytes(block_ref);
 
             // Verify hash matches

@@ -56,12 +56,18 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
     };
 
     // Build path pattern matcher if specified
-    let path_pattern = args.path.as_ref().map(|p| {
-        Pattern::new(p).unwrap_or_else(|e| {
-            warn!("Invalid glob pattern '{}': {}, treating as literal", p, e);
-            Pattern::new(&glob::Pattern::escape(p)).unwrap()
-        })
-    });
+    let path_pattern = match args.path.as_ref() {
+        Some(p) => match Pattern::new(p) {
+            Ok(pat) => Some(pat),
+            Err(e) => {
+                warn!("Invalid glob pattern '{}': {}, treating as literal", p, e);
+                Some(Pattern::new(&glob::Pattern::escape(p)).map_err(|e| {
+                    BluError::Internal(format!("failed to escape glob pattern '{}': {}", p, e))
+                })?)
+            }
+        },
+        None => None,
+    };
 
     // Collect files to restore
     let mut unique_hashes: HashSet<Hash> = HashSet::new();
@@ -171,8 +177,22 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
         let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = if let Some(ref dest) = dest_dir
         {
             // Restore to destination directory with original filename
-            let first_path = fileref.paths.iter().next().unwrap();
-            let filename = first_path.file_name().unwrap();
+            let first_path = match fileref.paths.iter().next() {
+                Some(p) => p,
+                None => {
+                    eprintln!(
+                        "Unable to restore file: no paths recorded for hash {:?}",
+                        file_hash
+                    );
+                    continue 'outer;
+                }
+            };
+            let filename = first_path.file_name().ok_or_else(|| {
+                BluError::Internal(format!(
+                    "path has no filename component: {}",
+                    first_path.display()
+                ))
+            })?;
             let dest_path = Path::new(dest).join(filename);
 
             // For --to mode, we only restore to one location (no hard links)
@@ -180,7 +200,16 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
         } else {
             // Restore to original paths
             let mut path_iter = fileref.paths.iter();
-            let first = path_iter.next().unwrap().clone();
+            let first = match path_iter.next() {
+                Some(p) => p.clone(),
+                None => {
+                    eprintln!(
+                        "Unable to restore file: no paths recorded for hash {:?}",
+                        file_hash
+                    );
+                    continue 'outer;
+                }
+            };
             let others = path_iter.cloned().collect::<Vec<_>>();
             (first, others)
         };
