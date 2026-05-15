@@ -11,9 +11,10 @@ Ranked by impact and effort. Updated 2026-05-15.
 ## Tier 2: Low-Hanging Fruit
 
 3. [ ] Enhance `blu status` with backend awareness (blob counts, sync state)
-4. [ ] Remove dead config code (`prune_deleted`, `prune_dangling`, `KeyID`, `KeyType`)
-5. [ ] Guard divide-by-zero in status when `total_chunks == 0`
-6. [ ] Replace joke panic message in `encrypt_files.rs` with proper BluError
+4. [x] Remove dead config code (`prune_deleted`, `prune_dangling`, `KeyID`, `KeyType`)
+5. [x] Guard divide-by-zero in status when `total_chunks == 0`
+6. [x] Replace joke panic message in `encrypt_files.rs` with proper BluError
+       (added `BlockHashMismatch` variant to `BluError`)
 
 ## Tier 3: Important Polish
 

@@ -12,8 +12,9 @@ The cryptographic core (envelope encryption, PQ hybrid KEK wrapping,
 ChaCha20-Poly1305 pipeline, agent daemon with mlock'd memory) is solid
 and well-tested. The content-addressed storage model, named multi-backend
 config system, and backend mirror/diff commands are polished. The CLI
-surface layer has significant gaps: several commands are stubs, error
-handling relies on bare unwraps, and zero CLI-layer tests exist.
+surface layer has improved: delete_files is functional, bare unwraps
+have been replaced with proper error propagation (24 fixed), and dead
+config code has been removed. Zero CLI-layer tests still exist.
 
 ## Area-by-Area Status
 
@@ -44,41 +45,37 @@ enumeration; index loss means no discovery). No `blu doctor` diagnostics.
 
 Works for basic new/deleted/renamed/modified detection in deep and
 shallow modes, plus encrypted-chunks percentage. Self-admits "probably
-has bugs" at line 12.
+has bugs" at line 12. Divide-by-zero on empty index is now guarded.
 
 Missing:
 - Files in PlainIndex not yet encrypted (TODO line 14)
 - Aggregate stats: file count, bytes deduplicated, tag count (TODO line 16)
 - Zero awareness of backend health, sync state, or remote reachability
 - Full-file hash comparison for new files in shallow mode (TODO line 85)
-- Potential divide-by-zero if total_chunks == 0
 
-### Delete Files (`src/cli/delete_files.rs`): STUB (CRITICAL)
+### Delete Files (`src/cli/delete_files.rs`): WORKING
 
-**This command is a no-op.** It loads indexes, prints some file info,
-and returns `Ok(())` without modifying any index or storage. Users who
-think they are deleting data are not.
+Functional: removes files from PlainIndex, cascades orphaned blocks
+from PlainIndex, removes tags, and persists all three indexes. Bare
+unwraps replaced with proper error propagation.
 
 Missing:
-- No PlainIndex mutation
-- No BlobIndex mutation
-- No blob deletion from storage backends
-- No tag cascade/cleanup
-- Bare `.unwrap()` at line 31 (panic on inconsistent index)
+- No BlobIndex mutation (encrypted blobs not deleted from backends)
+- No blob garbage collection (deferred to Tier 4)
 
 ### Defrag Blobs (`src/cli/defrag_blobs.rs`): STUB
 
 68 lines total. Loads blob index, iterates paths, sums sizes, then does
 nothing. The bin-packing algorithm is referenced but not implemented.
-Both dry-run and live paths log and return. Bare `.unwrap()` at line 36.
+Both dry-run and live paths log and return.
 
 ### Search (`src/cli/search.rs` + `src/search.rs`): PARTIAL
 
 Functional for basic substring search across filenames and tags. Rebuilds
 the suffix-table search index from scratch on every invocation (not
 persisted). `Box::leak` for `'static` lifetime (acceptable for CLI, not
-for long-running processes). Two bare `.unwrap()` calls that panic on
-non-UTF-8 paths or stale hashes.
+for long-running processes). Bare unwraps replaced with proper error
+propagation.
 
 Missing: no persistence, no fuzzy matching, no boolean/compound queries.
 
@@ -98,20 +95,14 @@ Missing:
 - No `blu_version` compatibility check
 - No S3 field validation (bucket name, region)
 - No local backend path validation (exists? writable?)
-- `prune_deleted` and `prune_dangling` fields exist but are never
-  read or acted upon anywhere
-- Dead code: `KeyID` struct and `KeyType` enum appear unused
 
-### Error Handling: GOOD CORE, ROUGH EDGES
+### Error Handling: GOOD
 
-`BluError` in `src/error.rs` has 22 variants, 9 From impls, covers
-all major error categories. Well-structured with thiserror.
-
-13 bare `.unwrap()` calls in production CLI code (outside test modules).
-All follow the pattern of iterating index keys then calling
-`.get(key).unwrap()` on the same index. Safe under normal conditions;
-panics on corrupted or partially-written indexes. Should be replaced
-with proper error propagation.
+`BluError` in `src/error.rs` has 23 variants (added `BlockHashMismatch`),
+9 From impls, covers all major error categories. Well-structured with
+thiserror. All 24 bare `.unwrap()` calls in production CLI code have
+been replaced with proper error propagation. The joke `assert_eq!`
+panic in encrypt_files has been replaced with `BlockHashMismatch`.
 
 ### Test Coverage: GAPS IN CLI
 
@@ -122,21 +113,9 @@ surface is untested.
 
 ## Bare Unwraps in Production Code
 
-| File | Line | Trigger |
-|------|------|---------|
-| sync.rs | 71 | File hash missing from index |
-| sync.rs | 78 | Block hash missing from index |
-| search.rs | 21 | Non-UTF-8 path |
-| search.rs | 44 | Stale hash in search results |
-| list_files.rs | 35 | File hash missing from sorted keys |
-| encrypt_files.rs | 51 | File hash missing from index |
-| encrypt_files.rs | 62 | Block hash missing from index |
-| delete_files.rs | 31 | File hash missing from sorted keys |
-| defrag_blobs.rs | 36 | Chunk hash missing from blob index |
-| restore_files.rs | 62 | Invalid glob pattern |
-| restore_files.rs | 174 | Empty paths set in fileref |
-| restore_files.rs | 175 | Path with no filename component |
-| restore_files.rs | 183 | Empty path iterator |
+All 24 bare `.unwrap()` calls (13 CLI + 11 core lib) have been replaced
+with proper `BluError` propagation. The `assert_eq!` panic in
+encrypt_files.rs was replaced with `BluError::BlockHashMismatch`.
 
 ## Build Notes
 
