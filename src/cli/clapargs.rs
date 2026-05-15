@@ -224,8 +224,15 @@ pub struct DefragBlobsArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct DeleteFilesArgs {
+    /// Filter by hash prefix, path substring, or tag (required unless --all)
     #[arg(long)]
     pub filter: Option<String>,
+
+    /// Delete all files from the index
+    #[arg(long)]
+    pub all: bool,
+
+    /// Show what would be deleted without modifying indexes
     #[arg(long, default_value = "false")]
     pub dry_run: bool,
 }

@@ -4,8 +4,9 @@ Ranked by impact and effort. Updated 2026-05-15.
 
 ## Tier 1: Critical
 
-1. [ ] `delete_files` is a no-op (prints info, returns Ok, mutates nothing)
-2. [ ] Replace 13 bare `.unwrap()` calls in CLI code with proper error propagation
+1. [x] `delete_files` is a no-op (prints info, returns Ok, mutates nothing)
+2. [x] Replace bare `.unwrap()` calls with proper error propagation
+       (24 fixed: 13 CLI + 11 core lib)
 
 ## Tier 2: Low-Hanging Fruit
 
@@ -22,6 +23,7 @@ Ranked by impact and effort. Updated 2026-05-15.
 
 ## Tier 4: Bigger Lifts
 
-10. [ ] Full delete cascade design (blob marking, live/dead ratio, repacking)
-11. [ ] `blu doctor` diagnostics command
-12. [ ] CLI test coverage (sync, encrypt, delete, tag)
+10. [ ] Backend blob garbage collection (act on `paths_to_delete` from delete cascade)
+11. [ ] Blob defragmentation (repack blobs with dead chunks)
+12. [ ] `blu doctor` diagnostics command
+13. [ ] CLI test coverage (sync, encrypt, delete, tag)
