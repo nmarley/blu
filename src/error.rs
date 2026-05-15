@@ -114,6 +114,15 @@ pub enum BluError {
         hash: String,
     },
 
+    /// Block data does not match its expected hash
+    #[error("block hash mismatch: expected {expected}, got {actual}")]
+    BlockHashMismatch {
+        /// The hash the index claims the block should have
+        expected: String,
+        /// The hash computed from the actual block data
+        actual: String,
+    },
+
     // -------------------------------------------------------------------------
     // File operation errors
     // -------------------------------------------------------------------------

@@ -70,13 +70,14 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
             })?;
             let data = plain_index.read_block_bytes(block_ref)?;
 
-            // NOTE: we probably want to somehow keep this around / add it as a
-            // checksum to ensure that the data is not corrupted
+            // Verify the block data matches its hash (integrity check)
             let block_hash2 = Hash::from(hash::multihash(&data).to_bytes());
-            assert_eq!(
-                &cm.hash, &block_hash2,
-                "block_hash mismatch (unresolvable black death of the universe error)"
-            );
+            if cm.hash != block_hash2 {
+                return Err(BluError::BlockHashMismatch {
+                    expected: cm.hash.to_string(),
+                    actual: block_hash2.to_string(),
+                });
+            }
 
             // add it to the blob buffer
             // info!("Adding chunk to blob buffer");
