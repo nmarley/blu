@@ -14,27 +14,6 @@ use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 /// Backend config structures, one for each supported backend.
 pub mod backend;
 
-// for now locked to just Age keys, for simplicity
-/// KeyType is the type of key used to encrypt/decrypt data. Currently only Age
-/// keys are supported.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
-pub enum KeyType {
-    // RSA,
-    // DSA,
-    // ECDSA,
-    // Ed25519,
-    /// Age key
-    Age,
-}
-
-/// KeyID is a unique identifier for a key. It is a combination of the key type
-/// and public key, but in reality is just the public key.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Hash, Eq, PartialOrd, Ord)]
-pub struct KeyID {
-    r#type: KeyType,
-    public_key: String, // TODO: Vec<u8> ?
-}
-
 /// Encryption configuration for a blu vault.
 ///
 /// The identity (private key) lives at `~/.blu/identity.age` and is
@@ -81,11 +60,6 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     backend: Option<backend::BackendConfig>,
 
-    // should blu delete Encrypted from filesystem, if the plain version was deleted?
-    prune_deleted: bool,
-    // should blu delete dangling Encrypted from filesystem?
-    prune_dangling: bool,
-
     plain_index_filename: PathBuf,
     tag_index_filename: PathBuf,
     blob_index_filename: PathBuf,
@@ -100,8 +74,6 @@ impl Default for Config {
             blu_version: env!("CARGO_PKG_VERSION").to_string(),
             encryption: None,
             basedir: PathBuf::from("."),
-            prune_deleted: false,
-            prune_dangling: false,
             plain_index_filename: INDEX_FILENAME.into(),
             tag_index_filename: TAG_INDEX_FILENAME.into(),
             blob_index_filename: BLOB_INDEX_FILENAME.into(),
