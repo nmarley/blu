@@ -1,31 +1,43 @@
 # Priorities
 
-Ranked by impact and effort. Updated 2026-05-15.
+Ranked by impact for beta readiness. Updated 2026-05-15.
 
-## Tier 1: Critical
+## Completed
 
 1. [x] `delete_files` is a no-op (prints info, returns Ok, mutates nothing)
 2. [x] Replace bare `.unwrap()` calls with proper error propagation
        (24 fixed: 13 CLI + 11 core lib)
-
-## Tier 2: Low-Hanging Fruit
-
-3. [x] Enhance `blu status` with vault summary (file/chunk/blob/tag
-       stats, dedup savings, backend listing, pending GC)
-4. [x] Remove dead config code (`prune_deleted`, `prune_dangling`, `KeyID`, `KeyType`)
+3. [x] Enhance `blu status` with vault summary
+4. [x] Remove dead config code
 5. [x] Guard divide-by-zero in status when `total_chunks == 0`
 6. [x] Replace joke panic message in `encrypt_files.rs` with proper BluError
-       (added `BlockHashMismatch` variant to `BluError`)
 
-## Tier 3: Important Polish
+## Tier 1: Finish the Data Pipeline
 
-7. [ ] Config validation (version compat, S3 fields, local path existence)
-8. [ ] Feature-gate S3 and security-framework in Cargo.toml
-9. [ ] Persist the search index (constant exists, serde not wired up)
+7. [ ] Complete delete cascade (mutate BlobIndex, remove dead blobs
+       from backends, full end-to-end)
+8. [ ] Implement blob defragmentation (repack blobs with dead chunks)
 
-## Tier 4: Bigger Lifts
+## Tier 2: Test Coverage and CI
 
-10. [ ] Backend blob garbage collection (act on `paths_to_delete` from delete cascade)
-11. [ ] Blob defragmentation (repack blobs with dead chunks)
-12. [ ] `blu doctor` diagnostics command
-13. [ ] CLI test coverage (sync, encrypt, delete, tag)
+9. [ ] Set up GitHub Actions CI (cargo build + cargo test on push)
+10. [ ] encrypt command tests
+11. [ ] delete command tests
+12. [ ] sync command tests
+13. [ ] restore command tests
+14. [ ] list-files command tests
+15. [ ] status command tests
+16. [ ] search command tests
+17. [ ] backend command tests
+18. [ ] tag command tests
+
+## Tier 3: Beta Readiness
+
+19. [ ] `blu doctor` diagnostics command
+
+## Tier 4: Polish
+
+20. [ ] Config validation (version compat, S3 fields, local path
+       existence)
+21. [ ] Feature-gate S3 and security-framework in Cargo.toml
+22. [ ] Persist the search index (constant exists, serde not wired up)
