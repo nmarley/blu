@@ -1,6 +1,6 @@
 # Pulse Check
 
-Last updated: 2026-05-15
+Last updated: 2026-05-16
 
 Version: 0.5.0 (pre-release, beta quality)
 
@@ -10,9 +10,11 @@ The cryptographic core (envelope encryption, PQ hybrid KEK wrapping,
 ChaCha20-Poly1305 pipeline, agent daemon with mlock'd memory) is solid
 and well-tested. The content-addressed storage model, named multi-backend
 config system, and backend mirror/diff commands are polished. The CLI
-surface layer has improved: delete_files is functional, bare unwraps
-have been replaced with proper error propagation (24 fixed), and dead
-config code has been removed. Zero CLI-layer tests still exist.
+surface layer has improved: delete_files has a full cascade with inline
+scrub support, defrag-blobs is a real repack command backed by shared
+logic, bare unwraps have been replaced with proper error propagation
+(24 fixed), and dead config code has been removed. Tier 1 (data
+pipeline) is complete. Zero CLI-layer tests still exist.
 
 ## Area-by-Area Status
 
@@ -62,15 +64,27 @@ I/O. Supports `--backend` flag for targeting a specific backend.
 
 `BlobIndex::delete_chunk` correctly distinguishes fully-dead blobs
 (all chunks removed, safe to delete from backend) from partially-dead
-blobs (still have live chunks, left for defrag to repack). Six new
-tests cover partial deletion, full deletion, drain semantics, error
-cases, multi-blob scenarios, and end-to-end backend file removal.
+blobs (still have live chunks, tracked in `paths_to_repack` for defrag).
+`--scrub` flag triggers inline repack of partially-dead blobs after
+deletion. Without `--scrub`, prints an advisory with the count of
+blobs pending repack. Tests cover partial deletion, full deletion,
+drain semantics, error cases, multi-blob scenarios, end-to-end backend
+file removal, repack round-trips, and data integrity verification.
 
-### Defrag Blobs (`src/cli/defrag_blobs.rs`): STUB
+### Defrag Blobs (`src/cli/defrag_blobs.rs`): COMPLETE
 
-Stub. Loads blob index, iterates paths, sums sizes, then does
-nothing. The bin-packing algorithm is referenced but not implemented.
-Both dry-run and live paths log and return.
+Fully rewritten. Loads blob index from vault config (like other
+commands), checks `BlobIndex::paths_to_repack` for candidates, and
+calls the shared `repack_blobs()` function. Supports `--dry-run`
+(lists candidates with live chunk counts) and `--backend` for
+targeting a specific named backend. The shared repack logic reads
+live chunks from old blobs via `EncBlobReader`, writes them into
+fresh `BlobBuffer` instances (re-compressed, re-encrypted with new
+DEKs), deletes old blobs from the backend, and returns stats.
+
+`delete-files --scrub` calls the same `repack_blobs()` for inline
+repack after deletion. Without `--scrub`, an advisory message shows
+how many blobs have dead chunks pending repack.
 
 ### Search (`src/cli/search.rs` + `src/search.rs`): PARTIAL
 
@@ -108,11 +122,12 @@ been replaced with proper error propagation.
 ### Test Coverage: GAPS IN CLI
 
 Tests are heavily concentrated in crypto/keys/agent/format modules.
-The delete cascade in the blob module has tests covering BlobIndex
-mutation, partial/full blob death, drain semantics, and end-to-end
-backend file removal. Zero tests for CLI subcommand entry points:
-status, delete, search, defrag, sync, encrypt, restore, list,
-backend.
+The blob module has tests covering BlobIndex mutation, partial/full
+blob death, drain semantics, end-to-end backend file removal, repack
+round-trips (surviving chunks in new blobs, old blobs gone), noop
+repack, and data integrity verification after repack. Zero tests for
+CLI subcommand entry points: status, delete, search, defrag, sync,
+encrypt, restore, list, backend.
 
 ## Bare Unwraps in Production Code
 

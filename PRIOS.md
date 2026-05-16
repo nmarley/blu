@@ -1,6 +1,6 @@
 # Priorities
 
-Ranked by impact for beta readiness. Updated 2026-05-15.
+Ranked by impact for beta readiness. Updated 2026-05-16.
 
 ## Completed
 
@@ -16,7 +16,7 @@ Ranked by impact for beta readiness. Updated 2026-05-15.
 
 7. [x] Complete delete cascade (mutate BlobIndex, remove dead blobs
        from backends, full end-to-end)
-8. [ ] Implement blob defragmentation (repack blobs with dead chunks)
+8. [x] Implement blob defragmentation (repack blobs with dead chunks)
 
 ## Tier 2: Test Coverage and CI
 

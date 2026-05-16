@@ -37,38 +37,36 @@ Shared repack logic (used by both `--scrub` and `defrag-blobs`):
 
 ## Stages
 
-Stage 1: Add `paths_to_repack` to `BlobIndex`
+Stage 1: Add `paths_to_repack` to `BlobIndex` [DONE]
   1a. Add the field to the struct with serde, default empty
   1b. Update `delete_chunk()` to populate it for partial deletes
   1c. Add `drain_paths_to_repack()` method
   1d. Tests: verify partial delete populates `paths_to_repack`,
       full delete does not, drain clears the set
 
-Stage 2: Shared repack function
-  2a. Add `repack_blobs()` in `src/blob.rs` (or `src/repack.rs` if
-      it gets large). Takes `&mut BlobIndex`, `&BackendKind`,
-      `&DekProvider`. Operates on `paths_to_repack`.
+Stage 2: Shared repack function [DONE]
+  2a. Add `repack_blobs()` in `src/blob.rs`. Takes `&mut BlobIndex`,
+      `&BackendKind`, `&DekProvider`. Operates on `paths_to_repack`.
   2b. Read each live chunk from old blob via `EncBlobReader`
   2c. Write into fresh `BlobBuffer`, finalize, delete old blobs
   2d. Clear `paths_to_repack`
   2e. Return stats (blobs repacked, chunks moved, old blobs deleted)
-  2f. Tests: create blob with 3 chunks, delete 1, repack, verify
-      surviving chunks in new blob, old blob gone from backend
+  2f. Tests: repack round-trip, noop, data integrity verification
 
-Stage 3: Wire `--scrub` into `delete-files`
+Stage 3: Wire `--scrub` into `delete-files` [DONE]
   3a. Add `--scrub` flag to `DeleteFilesArgs`
   3b. After existing delete cascade, if `--scrub`: call `repack_blobs()`
   3c. Print scrub stats
   3d. If not `--scrub` and `paths_to_repack` is non-empty, print
       advisory message with count
 
-Stage 4: Rewrite `defrag-blobs`
+Stage 4: Rewrite `defrag-blobs` [DONE]
   4a. Drop raw `blob_index_path` arg, load from config like other cmds
   4b. Make async, add `--backend` flag
   4c. Call `repack_blobs()` on accumulated `paths_to_repack`
   4d. Dry-run mode: print what would be repacked without doing it
   4e. Print stats, write updated blob index
 
-Stage 5: Update docs and metadata
+Stage 5: Update docs and metadata [DONE]
   5a. Update PRIOS.md (mark item 8 done)
   5b. Update PULSE.md defrag section
