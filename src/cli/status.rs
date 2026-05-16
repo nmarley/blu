@@ -1,20 +1,11 @@
-/// This is a basic status check util, similar to `git status` command.
-/// Currently it's very rudimentary and checks for new, deleted and renamed
-/// files. It has two modes: shallow and deep. Deep mode is the default for blu
-/// filesystem dirs smaller than a certain size (1 GB currently), and shallow
-/// mode will be invoked above that. The reason for this is that deep mode is a
-/// lot slower, as it hashes every file in the blu dir. Shallow mode only checks
-/// filesystem metadata, and then hashes files that don't match what is expected
-/// from the index.
+/// Status check utility, similar to `git status`.
 ///
-/// It is possible to force shallow or deep mode with the `--type` option.
-///
-/// Probably has bugs.
+/// Two modes: shallow (filesystem metadata only) and deep (hash every file).
+/// Deep is the default for vaults under 1 GiB; shallow kicks in above that.
+/// Force either with `--type`.
 ///
 /// TODO:
 /// - [ ] Display files which are in the PlainIndex but not encrypted
-/// - [ ] Display stats, e.g. # files, # bytes de-duplicated (saved), x tags
-///   being used, etc.
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -24,6 +15,7 @@ use crate::cli::clapargs::{StatusArgs, StatusCheckType};
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::cli::output::FileDisplay;
 use crate::error::BluError;
+use crate::format::human_bytes;
 use crate::hash::{self, Hash};
 
 // 1 GB? (before they ruined the abbreviation)
@@ -206,68 +198,110 @@ pub fn status(args: StatusArgs) -> Result<(), BluError> {
         }
     };
 
-    // now display results
+    // Display changes (new/deleted/renamed/modified)
+    let has_changes = !vec_new_files.is_empty()
+        || !vec_removed_files.is_empty()
+        || !vec_paths_updated.is_empty()
+        || !vec_size_mismatch.is_empty();
+
     println!();
-    if !vec_new_files.is_empty() {
-        println!("new: ");
-        for fref in vec_new_files {
-            println!("    {}", fref);
+    if has_changes {
+        println!("changes:");
+        for fref in &vec_new_files {
+            println!("    new:      {}", fref);
         }
+        for fref in &vec_removed_files {
+            println!("    deleted:  {}", fref);
+        }
+        for fref in &vec_paths_updated {
+            println!("    renamed:  {}", fref);
+        }
+        for fref in &vec_size_mismatch {
+            println!("    modified: {}", fref);
+        }
+        println!();
+    } else {
+        println!("no changes detected");
         println!();
     }
 
-    if !vec_removed_files.is_empty() {
-        println!("deleted: ");
-        for fref in vec_removed_files {
-            println!("    {}", fref);
-        }
-        println!();
-    }
+    // Vault summary: file and dedup stats from the plain index
+    let file_count = index.files_map_ref().len();
+    let total_bytes = index.total_bytes_indexed();
+    let dedup_bytes = index.duplicate_bytes_indexed();
+    let total_chunks = index.count_blocks();
 
-    if !vec_paths_updated.is_empty() {
-        println!("path(s) updated (renamed on filesystem): ");
-        for fref in vec_paths_updated {
-            println!("    {}", fref);
-        }
-        println!();
+    println!("vault:");
+    println!(
+        "    files:    {} ({})",
+        file_count,
+        human_bytes(total_bytes),
+    );
+    if dedup_bytes > 0 {
+        println!("    dedup:    {} saved", human_bytes(dedup_bytes));
     }
+    println!("    chunks:   {} unique", total_chunks);
 
-    if !vec_size_mismatch.is_empty() {
-        println!("size mismatch: ");
-        for fref in vec_size_mismatch {
-            println!("    {}", fref);
-        }
-        println!();
-    }
-
-    // Now show encrypted status ... but the thing is, _files_ are not encrypted, but rather the chunks
-    // are. So we need to iterate over the chunks and see if they are encrypted or not.
+    // Blob / encryption stats
     let blob_index = match cfg.load_blob_index(&keys) {
         Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => {
-            println!("no blob index found, assuming no files are encrypted");
-            return Ok(());
-        }
+        Err(BluError::IndexNotFound(_)) => Default::default(),
         Err(e) => return Err(e),
     };
 
-    let count_encrypted_chunks = index
+    let blob_file_count = blob_index.count_blob_files();
+    let encrypted_chunks = index
         .blocks
         .iter()
-        .filter(|(block_hash, _blockref)| blob_index.map.contains_key(block_hash))
+        .filter(|(block_hash, _)| blob_index.map.contains_key(block_hash))
         .count();
-    let total_chunks = index.blocks.len();
 
     if total_chunks == 0 {
-        println!("no chunks in index");
+        println!("    blobs:    none (no chunks in index)");
     } else {
-        let encrypted_pct = (count_encrypted_chunks as f64 / total_chunks as f64) * 100.0;
+        let pct = (encrypted_chunks as f64 / total_chunks as f64) * 100.0;
         println!(
-            "{} of {} chunks in index are encrypted ({:.2}%)",
-            count_encrypted_chunks, total_chunks, encrypted_pct
+            "    blobs:    {} blob files, {} of {} chunks encrypted ({:.1}%)",
+            blob_file_count, encrypted_chunks, total_chunks, pct,
+        );
+    }
+    if !blob_index.paths_to_delete.is_empty() {
+        println!(
+            "    gc:       {} blob files pending deletion",
+            blob_index.paths_to_delete.len(),
         );
     }
 
+    // Tag stats
+    let tag_index = match cfg.load_tag_index(&keys) {
+        Ok(idx) => idx,
+        Err(BluError::IndexNotFound(_)) => Default::default(),
+        Err(e) => return Err(e),
+    };
+
+    let unique_tags = tag_index.list_all_tags().len();
+    let tagged_files = tag_index.file_tags.len();
+    if unique_tags > 0 {
+        println!(
+            "    tags:     {} unique across {} files",
+            unique_tags, tagged_files,
+        );
+    }
+
+    // Backend listing
+    let backend_names: Vec<&str> = cfg.backends.keys().map(|s| s.as_str()).collect();
+    let mut backend_parts: Vec<String> = Vec::new();
+    for name in &backend_names {
+        if *name == cfg.default_backend {
+            backend_parts.push(format!("{} (default)", name));
+        } else {
+            backend_parts.push(name.to_string());
+        }
+    }
+    backend_parts.sort();
+    println!("    backends: {}", backend_parts.join(", "));
+
+    println!();
     Ok(())
 }
 
