@@ -81,7 +81,7 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::Add(a) => cli::add(a),
         clapargs::Action::Backend(a) => cli::backend(a).await,
         clapargs::Action::DebugIndex(a) => cli::debug_index(a),
-        clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a),
+        clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a).await,
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a).await,
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a).await,
         clapargs::Action::Init(a) => cli::init(a),

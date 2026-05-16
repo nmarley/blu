@@ -1,75 +1,51 @@
-use std::fs;
-use std::path::Path;
-
-use crate::blob::BlobIndex;
+use crate::blob::repack_blobs;
 use crate::cli::clapargs::DefragBlobsArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
-use crate::dek_provider::DekProvider;
 use crate::error::BluError;
-use crate::io::EncryptedSerializable;
 
-/// Defrag blobs is still a WIP
-pub fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), BluError> {
-    info!("Started defrag_blobs util");
+/// Repack partially-dead blobs that have accumulated dead chunks
+/// from prior delete operations.
+///
+/// Loads the blob index from the vault config (like other commands),
+/// checks `paths_to_repack` for candidates, and either reports what
+/// would be done (dry-run) or performs the repack and writes the
+/// updated index back.
+pub async fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), BluError> {
+    let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
+    let mut blob_index = cfg.load_blob_index(&keys)?;
 
-    info!("blob_index_path: {}", args.blob_index_path);
+    let pending = blob_index.paths_to_repack.len();
+    if pending == 0 {
+        println!("No blobs need repacking");
+        return Ok(());
+    }
 
-    let (_cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
+    println!("{} blob(s) queued for repack", pending);
 
-    let blob_index = load_blob_index(&keys, args.blob_index_path)?;
-    info!(
-        "Blob index has {} blob files",
-        blob_index.count_blob_files()
+    if args.dry_run {
+        for blob_path in &blob_index.paths_to_repack {
+            let live_chunks = blob_index
+                .path_index
+                .get(blob_path)
+                .map(|s| s.len())
+                .unwrap_or(0);
+            println!("  {} ({} live chunks)", blob_path.display(), live_chunks,);
+        }
+        println!("(dry run, no changes made)");
+        return Ok(());
+    }
+
+    let backend_name = args.backend.as_deref().unwrap_or(&cfg.default_backend);
+    let backend = cfg.init_named_backend(backend_name).await?;
+
+    let stats = repack_blobs(&mut blob_index, &backend, &keys).await?;
+
+    cfg.write_blob_index(&blob_index, &keys)?;
+
+    println!(
+        "Repacked {} blob(s), moved {} chunks, deleted {} old blob(s)",
+        stats.blobs_repacked, stats.chunks_moved, stats.old_blobs_deleted,
     );
 
-    // Now we've hit the classic Bin Packing problem:
-    // https://en.wikipedia.org/wiki/Bin_packing_problem
-    //
-    // Let's just use the First-Fit Decreasing (FFD) algorithm and call it good
-    // (enough).
-
-    // let backend = cfg.init_storage_backend()?;
-
-    for (blob_path, set_chunk_hashes) in blob_index.path_index.iter() {
-        let mut blob_size = 0_usize;
-        for chunk_hash in set_chunk_hashes.iter() {
-            let chunk_entry =
-                blob_index
-                    .map
-                    .get(chunk_hash)
-                    .ok_or_else(|| BluError::BlockNotFound {
-                        hash: chunk_hash.to_string(),
-                    })?;
-            blob_size += chunk_entry.position.size;
-        }
-        info!(
-            "Got blob path: {} with {} hashes, {} total bytes",
-            blob_path.display(),
-            set_chunk_hashes.len(),
-            blob_size,
-        );
-    }
-
-    if !args.dry_run {
-        info!("do something here");
-    } else {
-        info!("Got dry_run flag, will not write");
-    }
-
     Ok(())
-}
-
-fn load_blob_index<P: AsRef<Path>>(
-    keys: &DekProvider,
-    index_path: P,
-) -> Result<BlobIndex, BluError> {
-    let path = index_path.as_ref();
-    let index_data: Vec<u8> = fs::read(path).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => BluError::IndexNotFound(path.display().to_string()),
-        _ => BluError::Internal(format!("failed to read index at {}: {}", path.display(), e)),
-    })?;
-    BlobIndex::read(&index_data[..], keys).map_err(|e| BluError::IndexLoadFailed {
-        path: path.to_path_buf(),
-        reason: e.to_string(),
-    })
 }

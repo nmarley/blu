@@ -215,10 +215,13 @@ pub struct DebugIndexArgs {}
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct DefragBlobsArgs {
-    pub blob_index_path: String,
-
+    /// Show what would be repacked without modifying anything
     #[arg(long, default_value = "false")]
     pub dry_run: bool,
+
+    /// Use a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
 }
 
 #[allow(missing_docs)]
