@@ -236,6 +236,10 @@ pub struct DeleteFilesArgs {
     #[arg(long, default_value = "false")]
     pub dry_run: bool,
 
+    /// Repack partially-dead blobs inline after deletion
+    #[arg(long)]
+    pub scrub: bool,
+
     /// Delete blobs from a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,

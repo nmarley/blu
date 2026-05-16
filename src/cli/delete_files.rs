@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use crate::blob::repack_blobs;
 use crate::cli::clapargs::DeleteFilesArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
@@ -127,9 +128,18 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     let dead_blob_paths = blob_index.drain_paths_to_delete();
     let blobs_deleted = dead_blob_paths.len();
 
-    if !dead_blob_paths.is_empty() {
+    // Initialize backend if we need to delete blobs or scrub
+    let need_backend =
+        !dead_blob_paths.is_empty() || (args.scrub && !blob_index.paths_to_repack.is_empty());
+    let backend = if need_backend {
         let backend_name = args.backend.as_deref().unwrap_or(&cfg.default_backend);
-        let backend = cfg.init_named_backend(backend_name).await?;
+        Some(cfg.init_named_backend(backend_name).await?)
+    } else {
+        None
+    };
+
+    if !dead_blob_paths.is_empty() {
+        let backend = backend.as_ref().expect("backend initialized above");
         let mut delete_errors: Vec<String> = Vec::new();
 
         for blob_path in &dead_blob_paths {
@@ -149,6 +159,24 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
         }
     }
 
+    // Scrub: repack partially-dead blobs inline
+    let repack_stats = if args.scrub && !blob_index.paths_to_repack.is_empty() {
+        let backend = backend.as_ref().expect("backend initialized above");
+        Some(repack_blobs(&mut blob_index, backend, &keys).await?)
+    } else {
+        None
+    };
+
+    // Advisory: tell the user about pending repack candidates
+    let pending_repack = blob_index.paths_to_repack.len();
+    if !args.scrub && pending_repack > 0 {
+        println!(
+            "\n{} blob(s) have dead chunks and can be reclaimed with \
+             --scrub or defrag-blobs",
+            pending_repack,
+        );
+    }
+
     // Write all modified indexes back
     cfg.write_plain_index(&plain_index, &keys)?;
     cfg.write_tag_index(&tag_index, &keys)?;
@@ -162,6 +190,14 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
         chunks_deleted,
         blobs_deleted,
     );
+
+    if let Some(stats) = repack_stats {
+        println!(
+            "Scrub: repacked {} blob(s), moved {} chunks, \
+             deleted {} old blob(s)",
+            stats.blobs_repacked, stats.chunks_moved, stats.old_blobs_deleted,
+        );
+    }
 
     Ok(())
 }
