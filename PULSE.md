@@ -41,17 +41,18 @@ filtering.
 Missing: no `list` method on backends (relies entirely on index for blob
 enumeration; index loss means no discovery). No `blu doctor` diagnostics.
 
-### Status Command (`src/cli/status.rs`): PARTIAL
+### Status Command (`src/cli/status.rs`): WORKING
 
-Works for basic new/deleted/renamed/modified detection in deep and
-shallow modes, plus encrypted-chunks percentage. Self-admits "probably
-has bugs" at line 12. Divide-by-zero on empty index is now guarded.
+Shows new/deleted/renamed/modified file detection in deep and shallow
+modes, plus a vault summary: file count, total size, dedup savings,
+chunk count, blob file count, encryption percentage, pending GC count,
+tag stats, and configured backends. Divide-by-zero on empty index is
+guarded. Changes section uses consistent prefixed labels.
 
 Missing:
-- Files in PlainIndex not yet encrypted (TODO line 14)
-- Aggregate stats: file count, bytes deduplicated, tag count (TODO line 16)
-- Zero awareness of backend health, sync state, or remote reachability
-- Full-file hash comparison for new files in shallow mode (TODO line 85)
+- Files in PlainIndex not yet encrypted (TODO)
+- Remote backend reachability check (would require async/network)
+- Full-file hash comparison for new files in shallow mode
 
 ### Delete Files (`src/cli/delete_files.rs`): WORKING
 
