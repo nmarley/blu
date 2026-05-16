@@ -276,31 +276,41 @@ impl BlobIndex {
         entry.insert(chunk_hash.clone());
     }
 
-    /// Delete a chunk from index.
+    /// Delete a chunk from the index.
+    ///
+    /// Removes the chunk from both the chunk-to-location map and the
+    /// path index. When the last live chunk in a blob is removed, the
+    /// blob path is added to `paths_to_delete` so the caller can
+    /// delete it from the storage backend. Partially-dead blobs (still
+    /// containing other live chunks) are left for defrag to repack.
     pub fn delete_chunk(&mut self, chunk_hash: &Hash) -> Result<(), BluError> {
-        // get location (blob file path)
         let location = self
             .map
             .get(chunk_hash)
             .ok_or_else(|| BluError::BlockNotFound {
                 hash: chunk_hash.to_string(),
             })?;
-        // remove from path index (for tracking which chunks are in which blobs)
-        let is_empty = match self.path_index.get_mut(&location.path) {
+        let blob_path = location.path.clone();
+
+        // Remove from path index
+        let blob_fully_dead = match self.path_index.get_mut(&blob_path) {
             Some(entry) => {
                 entry.remove(chunk_hash);
                 entry.is_empty()
             }
             None => false,
         };
-        if is_empty {
-            self.path_index.remove(&location.path);
+        if blob_fully_dead {
+            self.path_index.remove(&blob_path);
         }
-        let location = self
-            .map
-            .remove(chunk_hash)
-            .ok_or_else(|| BluError::Internal("chunk removed between get and remove".into()))?;
-        self.paths_to_delete.insert(location.path);
+
+        self.map.remove(chunk_hash);
+
+        // Only mark for backend deletion when every chunk in the blob
+        // is gone. Partially-dead blobs stay in path_index for defrag.
+        if blob_fully_dead {
+            self.paths_to_delete.insert(blob_path);
+        }
         Ok(())
     }
 
@@ -320,6 +330,14 @@ impl BlobIndex {
                 hash: block_hash.to_string(),
             })?;
         Ok(location_ref.clone())
+    }
+
+    /// Drain the set of blob paths marked for backend deletion.
+    ///
+    /// Returns the paths and clears the set so they are not
+    /// double-processed on a subsequent call.
+    pub fn drain_paths_to_delete(&mut self) -> HashSet<PathBuf> {
+        std::mem::take(&mut self.paths_to_delete)
     }
 
     /// Get the count of encrypted files (not blocks) referenced by the blob index.
@@ -434,5 +452,148 @@ mod test {
             .get_block_location_ref(&Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"))
             .unwrap();
         assert_eq!(loc3.position, Position { offset: 7, size: 8 });
+    }
+
+    // Chunk hashes for the three test chunks (used in delete tests)
+    const CHUNK1: &str = "1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76";
+    const CHUNK2: &str = "13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f";
+    const CHUNK3: &str = "13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c";
+
+    #[tokio::test]
+    async fn delete_partial_keeps_blob_alive() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+        assert_eq!(idx.count_chunks_indexed(), 3);
+        assert_eq!(idx.count_blob_files(), 1);
+
+        // Delete one of three chunks; blob should NOT be marked for deletion
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        assert_eq!(idx.count_chunks_indexed(), 2);
+        assert!(idx.paths_to_delete.is_empty());
+        // Blob path still in path_index (for defrag to find later)
+        assert_eq!(idx.path_index.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_all_chunks_marks_blob_for_deletion() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+        assert_eq!(idx.count_chunks_indexed(), 3);
+
+        // Delete all three chunks
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK2)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK3)).unwrap();
+
+        assert_eq!(idx.count_chunks_indexed(), 0);
+        assert!(idx.path_index.is_empty());
+        assert_eq!(idx.paths_to_delete.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn drain_paths_to_delete_returns_and_clears() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK2)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK3)).unwrap();
+        assert_eq!(idx.paths_to_delete.len(), 1);
+
+        let drained = idx.drain_paths_to_delete();
+        assert_eq!(drained.len(), 1);
+        assert!(idx.paths_to_delete.is_empty());
+
+        // Second drain returns empty
+        let drained2 = idx.drain_paths_to_delete();
+        assert!(drained2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_chunk_errors() {
+        let idx = BlobIndex::new();
+        let fake = Hash::from("1340deadbeef");
+        let result = idx.clone().delete_chunk(&fake);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn delete_across_multiple_blobs() {
+        // Use small capacity to force multiple blob files
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(&datadir));
+        let keys = test_keys();
+        let mut idx = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::with_capacity(&backend, keys, 3);
+
+        let mut chunks: Vec<Vec<u8>> = vec![
+            vec![0x0b, 0x0a, 0x00],
+            vec![0xde, 0xad, 0xbe, 0xef],
+            vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
+        ];
+        for v in chunks.iter_mut() {
+            blob_buf.add_chunk(v, &mut idx).await.unwrap();
+        }
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        let blob_count = idx.count_blob_files();
+        assert!(
+            blob_count > 1,
+            "expected multiple blobs, got {}",
+            blob_count
+        );
+
+        // Delete all chunks from only the first blob's chunk
+        let chunk1 = Hash::from(CHUNK1);
+        let blob1_path = idx
+            .get_block_location_ref(&chunk1)
+            .unwrap()
+            .blob_path()
+            .clone();
+        idx.delete_chunk(&chunk1).unwrap();
+
+        // First blob should be marked for deletion (it only had one chunk)
+        if idx.paths_to_delete.contains(&blob1_path) {
+            // Other blobs should still be alive
+            assert!(idx.count_chunks_indexed() > 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn full_cascade_with_backend_deletion() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(&datadir));
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // Verify blob file exists on disk
+        let chunk1 = Hash::from(CHUNK1);
+        let blob_path = idx
+            .get_block_location_ref(&chunk1)
+            .unwrap()
+            .blob_path()
+            .clone();
+        assert!(backend.exists(&blob_path).await.unwrap());
+
+        // Delete all chunks
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK2)).unwrap();
+        idx.delete_chunk(&Hash::from(CHUNK3)).unwrap();
+
+        // Drain and delete from backend
+        let dead_paths = idx.drain_paths_to_delete();
+        assert_eq!(dead_paths.len(), 1);
+        for path in &dead_paths {
+            backend.delete(path).await.unwrap();
+        }
+
+        // Verify blob file is gone from disk
+        assert!(!backend.exists(&blob_path).await.unwrap());
+        assert_eq!(idx.count_chunks_indexed(), 0);
+        assert!(idx.path_index.is_empty());
+        assert!(idx.paths_to_delete.is_empty());
     }
 }

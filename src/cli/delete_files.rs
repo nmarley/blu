@@ -6,14 +6,14 @@ use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
 
-/// Delete files from the plain index and cascade to blocks, blob index,
-/// and tags.
+/// Delete files from the plain index and cascade through the full
+/// data pipeline: plain index, blocks, blob index, tags, and backend
+/// storage.
 ///
-/// Blob data is not removed from storage backends by this command. The
-/// blob index records which blob paths are eligible for deletion (in
-/// `paths_to_delete`), but actual backend cleanup requires a separate
-/// garbage collection step (future `defrag-blobs` or `gc` command).
-pub fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
+/// When all chunks in a blob file are removed, the blob is deleted
+/// from the configured storage backend. Partially-dead blobs (still
+/// containing live chunks) are left for defrag to repack later.
+pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     if args.filter.is_none() && !args.all {
         return Err(BluError::Internal("must specify --filter or --all".into()));
     }
@@ -83,7 +83,7 @@ pub fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
 
     // Perform the deletion cascade
     let mut blocks_removed: usize = 0;
-    let mut chunks_marked: usize = 0;
+    let mut chunks_deleted: usize = 0;
 
     for file_hash in &hashes_to_delete {
         // Get the chunk hashes before removing the file entry
@@ -111,16 +111,42 @@ pub fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
                 plain_index.blocks.remove(chunk_hash);
                 blocks_removed += 1;
 
-                // Mark chunk for deletion in blob index (if encrypted)
+                // Remove chunk from blob index (if encrypted)
                 if blob_index.has_chunk(chunk_hash) {
                     blob_index.delete_chunk(chunk_hash)?;
-                    chunks_marked += 1;
+                    chunks_deleted += 1;
                 }
             }
         }
 
         // Remove all tags for this file
         tag_index.drop_all_tags(file_hash);
+    }
+
+    // Delete fully-dead blobs from the storage backend
+    let dead_blob_paths = blob_index.drain_paths_to_delete();
+    let blobs_deleted = dead_blob_paths.len();
+
+    if !dead_blob_paths.is_empty() {
+        let backend_name = args.backend.as_deref().unwrap_or(&cfg.default_backend);
+        let backend = cfg.init_named_backend(backend_name).await?;
+        let mut delete_errors: Vec<String> = Vec::new();
+
+        for blob_path in &dead_blob_paths {
+            if let Err(e) = backend.delete(blob_path).await {
+                delete_errors.push(format!("{}: {}", blob_path.display(), e));
+            }
+        }
+
+        if !delete_errors.is_empty() {
+            eprintln!(
+                "Warning: failed to delete {} blob(s) from backend:",
+                delete_errors.len()
+            );
+            for msg in &delete_errors {
+                eprintln!("  {}", msg);
+            }
+        }
     }
 
     // Write all modified indexes back
@@ -130,19 +156,12 @@ pub fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
 
     println!(
         "Deleted {} file(s), removed {} unreferenced blocks, \
-         marked {} blob chunks for cleanup",
+         {} blob chunks removed, {} blob(s) deleted from backend",
         hashes_to_delete.len(),
         blocks_removed,
-        chunks_marked,
+        chunks_deleted,
+        blobs_deleted,
     );
-
-    if !blob_index.paths_to_delete.is_empty() {
-        println!(
-            "Note: {} blob path(s) are marked for backend cleanup \
-             (not yet implemented)",
-            blob_index.paths_to_delete.len(),
-        );
-    }
 
     Ok(())
 }

@@ -235,6 +235,10 @@ pub struct DeleteFilesArgs {
     /// Show what would be deleted without modifying indexes
     #[arg(long, default_value = "false")]
     pub dry_run: bool,
+
+    /// Delete blobs from a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
 }
 
 #[allow(missing_docs)]

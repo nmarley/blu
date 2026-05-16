@@ -14,7 +14,7 @@ Ranked by impact for beta readiness. Updated 2026-05-15.
 
 ## Tier 1: Finish the Data Pipeline
 
-7. [ ] Complete delete cascade (mutate BlobIndex, remove dead blobs
+7. [x] Complete delete cascade (mutate BlobIndex, remove dead blobs
        from backends, full end-to-end)
 8. [ ] Implement blob defragmentation (repack blobs with dead chunks)
 

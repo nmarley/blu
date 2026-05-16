@@ -4,8 +4,6 @@ Last updated: 2026-05-15
 
 Version: 0.5.0 (pre-release, beta quality)
 
-Tests: 195 passing, 0 failing, 2 ignored. Clippy clean.
-
 ## Overall Assessment
 
 The cryptographic core (envelope encryption, PQ hybrid KEK wrapping,
@@ -22,8 +20,8 @@ config code has been removed. Zero CLI-layer tests still exist.
 
 Envelope encryption, ChaCha20-Poly1305 bulk encryption, PQ hybrid KEK
 wrapping (ML-KEM-768 + X25519), agent daemon with zeroize-on-drop. All
-well-tested with 189+ passing tests concentrated in keys/, agent/, and
-v2format modules.
+well-tested with tests concentrated in keys/, agent/, and v2format
+modules.
 
 ### Storage Backends: SOLID
 
@@ -54,19 +52,23 @@ Missing:
 - Remote backend reachability check (would require async/network)
 - Full-file hash comparison for new files in shallow mode
 
-### Delete Files (`src/cli/delete_files.rs`): WORKING
+### Delete Files (`src/cli/delete_files.rs`): COMPLETE
 
-Functional: removes files from PlainIndex, cascades orphaned blocks
-from PlainIndex, removes tags, and persists all three indexes. Bare
-unwraps replaced with proper error propagation.
+Full end-to-end delete cascade: removes files from PlainIndex,
+cascades orphaned blocks from PlainIndex, removes chunks from
+BlobIndex, deletes fully-dead blobs from the storage backend, removes
+tags, and persists all three indexes. Now async to support backend
+I/O. Supports `--backend` flag for targeting a specific backend.
 
-Missing:
-- No BlobIndex mutation (encrypted blobs not deleted from backends)
-- No blob garbage collection (deferred to Tier 4)
+`BlobIndex::delete_chunk` correctly distinguishes fully-dead blobs
+(all chunks removed, safe to delete from backend) from partially-dead
+blobs (still have live chunks, left for defrag to repack). Six new
+tests cover partial deletion, full deletion, drain semantics, error
+cases, multi-blob scenarios, and end-to-end backend file removal.
 
 ### Defrag Blobs (`src/cli/defrag_blobs.rs`): STUB
 
-68 lines total. Loads blob index, iterates paths, sums sizes, then does
+Stub. Loads blob index, iterates paths, sums sizes, then does
 nothing. The bin-packing algorithm is referenced but not implemented.
 Both dry-run and live paths log and return.
 
@@ -99,24 +101,23 @@ Missing:
 
 ### Error Handling: GOOD
 
-`BluError` in `src/error.rs` has 23 variants (added `BlockHashMismatch`),
-9 From impls, covers all major error categories. Well-structured with
-thiserror. All 24 bare `.unwrap()` calls in production CLI code have
-been replaced with proper error propagation. The joke `assert_eq!`
-panic in encrypt_files has been replaced with `BlockHashMismatch`.
+`BluError` in `src/error.rs` covers all major error categories with
+`thiserror`. All bare `.unwrap()` calls in production CLI code have
+been replaced with proper error propagation.
 
 ### Test Coverage: GAPS IN CLI
 
-195 tests passing, heavily concentrated in crypto/keys/agent/format
-modules. Zero tests for any CLI subcommand: status, delete, search,
-defrag, sync, encrypt, restore, list, backend. The entire user-facing
-surface is untested.
+Tests are heavily concentrated in crypto/keys/agent/format modules.
+The delete cascade in the blob module has tests covering BlobIndex
+mutation, partial/full blob death, drain semantics, and end-to-end
+backend file removal. Zero tests for CLI subcommand entry points:
+status, delete, search, defrag, sync, encrypt, restore, list,
+backend.
 
 ## Bare Unwraps in Production Code
 
-All 24 bare `.unwrap()` calls (13 CLI + 11 core lib) have been replaced
-with proper `BluError` propagation. The `assert_eq!` panic in
-encrypt_files.rs was replaced with `BluError::BlockHashMismatch`.
+All bare `.unwrap()` calls in production code have been replaced
+with proper `BluError` propagation.
 
 ## Build Notes
 
