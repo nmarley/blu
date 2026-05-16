@@ -253,6 +253,11 @@ pub struct BlobIndex {
     /// A set of paths to delete from storage backend, which have been removed
     /// from the map and path_index already
     pub paths_to_delete: HashSet<PathBuf>,
+    /// Blob paths that still contain live chunks but have had at least one
+    /// chunk removed. These are candidates for repacking by `defrag-blobs`
+    /// or `delete-files --scrub`.
+    #[serde(default)]
+    pub paths_to_repack: HashSet<PathBuf>,
 }
 
 impl BlobIndex {
@@ -262,6 +267,7 @@ impl BlobIndex {
             map: HashMap::new(),
             path_index: HashMap::new(),
             paths_to_delete: HashSet::new(),
+            paths_to_repack: HashSet::new(),
         }
     }
 
@@ -306,10 +312,14 @@ impl BlobIndex {
 
         self.map.remove(chunk_hash);
 
-        // Only mark for backend deletion when every chunk in the blob
-        // is gone. Partially-dead blobs stay in path_index for defrag.
         if blob_fully_dead {
-            self.paths_to_delete.insert(blob_path);
+            // Every chunk is gone; mark for backend deletion.
+            self.paths_to_delete.insert(blob_path.clone());
+            // No longer a repack candidate since it will be deleted.
+            self.paths_to_repack.remove(&blob_path);
+        } else {
+            // Still has live chunks; mark for repacking.
+            self.paths_to_repack.insert(blob_path);
         }
         Ok(())
     }
@@ -338,6 +348,14 @@ impl BlobIndex {
     /// double-processed on a subsequent call.
     pub fn drain_paths_to_delete(&mut self) -> HashSet<PathBuf> {
         std::mem::take(&mut self.paths_to_delete)
+    }
+
+    /// Drain the set of blob paths marked for repacking.
+    ///
+    /// Returns the paths and clears the set so they are not
+    /// double-processed on a subsequent call.
+    pub fn drain_paths_to_repack(&mut self) -> HashSet<PathBuf> {
+        std::mem::take(&mut self.paths_to_repack)
     }
 
     /// Get the count of encrypted files (not blocks) referenced by the blob index.
@@ -473,6 +491,8 @@ mod test {
         assert!(idx.paths_to_delete.is_empty());
         // Blob path still in path_index (for defrag to find later)
         assert_eq!(idx.path_index.len(), 1);
+        // Partially-dead blob should be marked for repack
+        assert_eq!(idx.paths_to_repack.len(), 1);
     }
 
     #[tokio::test]
@@ -490,6 +510,8 @@ mod test {
         assert_eq!(idx.count_chunks_indexed(), 0);
         assert!(idx.path_index.is_empty());
         assert_eq!(idx.paths_to_delete.len(), 1);
+        // Fully-dead blob must NOT be in repack set
+        assert!(idx.paths_to_repack.is_empty());
     }
 
     #[tokio::test]
@@ -510,6 +532,45 @@ mod test {
         // Second drain returns empty
         let drained2 = idx.drain_paths_to_delete();
         assert!(drained2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drain_paths_to_repack_returns_and_clears() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // Partial delete: one chunk removed, blob still alive
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        assert_eq!(idx.paths_to_repack.len(), 1);
+
+        let drained = idx.drain_paths_to_repack();
+        assert_eq!(drained.len(), 1);
+        assert!(idx.paths_to_repack.is_empty());
+
+        // Second drain returns empty
+        let drained2 = idx.drain_paths_to_repack();
+        assert!(drained2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repack_cleared_when_blob_fully_dead() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // First delete: partial, blob enters repack set
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        assert_eq!(idx.paths_to_repack.len(), 1);
+
+        // Second delete: still partial
+        idx.delete_chunk(&Hash::from(CHUNK2)).unwrap();
+        assert_eq!(idx.paths_to_repack.len(), 1);
+
+        // Third delete: fully dead, moved from repack to delete
+        idx.delete_chunk(&Hash::from(CHUNK3)).unwrap();
+        assert!(idx.paths_to_repack.is_empty());
+        assert_eq!(idx.paths_to_delete.len(), 1);
     }
 
     #[tokio::test]
