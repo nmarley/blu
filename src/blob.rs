@@ -239,6 +239,90 @@ impl<'a, 'b> EncBlobReader<'a, 'b> {
     }
 }
 
+/// Statistics returned by [`repack_blobs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepackStats {
+    /// Number of old blobs that were repacked.
+    pub blobs_repacked: usize,
+    /// Number of live chunks moved into fresh blobs.
+    pub chunks_moved: usize,
+    /// Number of old blob files deleted from the backend.
+    pub old_blobs_deleted: usize,
+}
+
+/// Repack partially-dead blobs tracked by `BlobIndex::paths_to_repack`.
+///
+/// For each candidate blob, the live chunks are read from the backend,
+/// written into a fresh `BlobBuffer` (re-compressed, re-encrypted with
+/// a new DEK), and the old blob is deleted. The `BlobIndex` is updated
+/// in place: map entries are overwritten with new locations and stale
+/// `path_index` entries are removed.
+///
+/// Returns statistics about the work performed.
+pub async fn repack_blobs(
+    idx: &mut BlobIndex,
+    backend: &BackendKind,
+    keys: &DekProvider,
+) -> Result<RepackStats, BluError> {
+    let candidates = idx.drain_paths_to_repack();
+    if candidates.is_empty() {
+        return Ok(RepackStats {
+            blobs_repacked: 0,
+            chunks_moved: 0,
+            old_blobs_deleted: 0,
+        });
+    }
+
+    // Collect chunk hashes and their locations upfront so we avoid
+    // borrow conflicts when mutating idx through BlobBuffer later.
+    let mut chunks_to_move: Vec<(Hash, BlobBlockLocation)> = Vec::new();
+    for blob_path in &candidates {
+        if let Some(chunk_hashes) = idx.path_index.get(blob_path) {
+            for chunk_hash in chunk_hashes.iter() {
+                if let Some(location) = idx.map.get(chunk_hash) {
+                    chunks_to_move.push((chunk_hash.clone(), location.clone()));
+                }
+            }
+        }
+    }
+
+    // Read all live chunk data from the old blobs.
+    let mut reader = EncBlobReader::new(keys, backend);
+    let mut chunk_data: Vec<Vec<u8>> = Vec::with_capacity(chunks_to_move.len());
+    for (_hash, location) in &chunks_to_move {
+        let data = reader.get_bytes(location).await?;
+        chunk_data.push(data.to_vec());
+    }
+    drop(reader);
+
+    // Remove stale path_index entries for the old blobs. Map entries
+    // will be overwritten by add_chunk_location inside BlobBuffer.
+    for blob_path in &candidates {
+        idx.path_index.remove(blob_path);
+    }
+
+    // Write live chunks into fresh blobs.
+    let mut blob_buf = BlobBuffer::new(backend, keys.clone());
+    let chunks_moved = chunk_data.len();
+    for mut data in chunk_data {
+        blob_buf.add_chunk(&mut data, idx).await?;
+    }
+    blob_buf.finalize(idx).await?;
+
+    // Delete old blob files from the backend.
+    let mut old_blobs_deleted = 0;
+    for blob_path in &candidates {
+        backend.delete(blob_path).await?;
+        old_blobs_deleted += 1;
+    }
+
+    Ok(RepackStats {
+        blobs_repacked: candidates.len(),
+        chunks_moved,
+        old_blobs_deleted,
+    })
+}
+
 /// BlobIndex maps the unencrypted chunk hashes to the encrypted blob files and positions within.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Default, Eq)]
 pub struct BlobIndex {
@@ -656,5 +740,123 @@ mod test {
         assert_eq!(idx.count_chunks_indexed(), 0);
         assert!(idx.path_index.is_empty());
         assert!(idx.paths_to_delete.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repack_moves_surviving_chunks_to_new_blob() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(&datadir));
+        let keys = test_keys();
+
+        let mut vec: Vec<Vec<u8>> = vec![
+            vec![0x0b, 0x0a, 0x00],
+            vec![0xde, 0xad, 0xbe, 0xef],
+            vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad],
+        ];
+        let mut idx = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
+        for v in vec.iter_mut() {
+            blob_buf.add_chunk(v, &mut idx).await.unwrap();
+        }
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        assert_eq!(idx.count_chunks_indexed(), 3);
+        assert_eq!(idx.count_blob_files(), 1);
+
+        // Remember the original blob path
+        let original_blob_path = idx
+            .get_block_location_ref(&Hash::from(CHUNK1))
+            .unwrap()
+            .blob_path()
+            .clone();
+        assert!(backend.exists(&original_blob_path).await.unwrap());
+
+        // Delete one chunk (partial), triggering repack candidacy
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        assert_eq!(idx.paths_to_repack.len(), 1);
+
+        // Repack with the same keys used to encrypt
+        let stats = repack_blobs(&mut idx, &backend, &keys).await.unwrap();
+        assert_eq!(stats.blobs_repacked, 1);
+        assert_eq!(stats.chunks_moved, 2);
+        assert_eq!(stats.old_blobs_deleted, 1);
+
+        // Old blob file gone from backend
+        assert!(!backend.exists(&original_blob_path).await.unwrap());
+
+        // Surviving chunks still indexed and in a new blob
+        assert_eq!(idx.count_chunks_indexed(), 2);
+        assert!(idx.has_chunk(&Hash::from(CHUNK2)));
+        assert!(idx.has_chunk(&Hash::from(CHUNK3)));
+        assert!(!idx.has_chunk(&Hash::from(CHUNK1)));
+
+        // New blob path differs from original
+        let new_blob_path = idx
+            .get_block_location_ref(&Hash::from(CHUNK2))
+            .unwrap()
+            .blob_path()
+            .clone();
+        assert_ne!(new_blob_path, original_blob_path);
+        assert!(backend.exists(&new_blob_path).await.unwrap());
+
+        // paths_to_repack is empty after repack
+        assert!(idx.paths_to_repack.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repack_noop_when_nothing_to_repack() {
+        let backend = temp_local_backend();
+        let (mut blob_buf, mut idx) = test_blobbuf(&backend).await;
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // No deletes, so nothing to repack
+        assert!(idx.paths_to_repack.is_empty());
+
+        let stats = repack_blobs(&mut idx, &backend, &test_keys())
+            .await
+            .unwrap();
+        assert_eq!(stats.blobs_repacked, 0);
+        assert_eq!(stats.chunks_moved, 0);
+        assert_eq!(stats.old_blobs_deleted, 0);
+        assert_eq!(idx.count_chunks_indexed(), 3);
+    }
+
+    #[tokio::test]
+    async fn repack_data_integrity() {
+        // Verify that chunk data survives a repack round-trip:
+        // write chunks, delete one, repack, then read back the
+        // surviving chunks and compare byte-for-byte.
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(&datadir));
+        let keys = test_keys();
+
+        let chunk2_data: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef];
+        let chunk3_data: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0xbe, 0xef, 0x2e, 0xad];
+
+        let mut vec: Vec<Vec<u8>> = vec![
+            vec![0x0b, 0x0a, 0x00],
+            chunk2_data.clone(),
+            chunk3_data.clone(),
+        ];
+        let mut idx = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
+        for v in vec.iter_mut() {
+            blob_buf.add_chunk(v, &mut idx).await.unwrap();
+        }
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // Delete chunk 1, repack
+        idx.delete_chunk(&Hash::from(CHUNK1)).unwrap();
+        repack_blobs(&mut idx, &backend, &keys).await.unwrap();
+
+        // Read back surviving chunks through EncBlobReader
+        let mut reader = EncBlobReader::new(&keys, &backend);
+        let loc2 = idx.get_block_location_ref(&Hash::from(CHUNK2)).unwrap();
+        let read2 = reader.get_bytes(&loc2).await.unwrap();
+        assert_eq!(read2, chunk2_data.as_slice());
+
+        let loc3 = idx.get_block_location_ref(&Hash::from(CHUNK3)).unwrap();
+        let read3 = reader.get_bytes(&loc3).await.unwrap();
+        assert_eq!(read3, chunk3_data.as_slice());
     }
 }
