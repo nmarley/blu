@@ -175,12 +175,6 @@ pub type Result<T> = std::result::Result<T, BluError>;
 
 // Convenience conversions from common error types
 
-impl From<bincode::Error> for BluError {
-    fn from(err: bincode::Error) -> Self {
-        BluError::DeserializationError(err.to_string())
-    }
-}
-
 impl From<toml::de::Error> for BluError {
     fn from(err: toml::de::Error) -> Self {
         BluError::InvalidConfig(err.to_string())

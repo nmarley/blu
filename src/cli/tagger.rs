@@ -35,11 +35,7 @@ pub fn tagger(args: TaggerArgs) -> Result<(), BluError> {
     // interaction w/the filesystem (bad).
 
     let index = cfg.load_plain_index(&keys)?;
-    let mut tag_index = match cfg.load_tag_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let mut tag_index = cfg.load_tag_index_or_default(&keys);
     let files_map = index.files_map_ref();
 
     let tag_action = &args.tag_action;

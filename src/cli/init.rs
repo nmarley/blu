@@ -2,6 +2,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+use crate::agent::AgentClient;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::InitArgs;
 use crate::cli::{
@@ -115,20 +116,31 @@ pub fn init(args: InitArgs) -> Result<(), BluError> {
         )
     })?;
 
-    let global_age_path = global_identity_age_path()?;
-    let pq_seed = load_global_identity_pq_seed(&global_age_path, &args)?;
     let pq_recipient_str = meta.pq_public_key;
 
-    // Verify the loaded PQ seed matches the metadata
-    let derived_recipient = crate::keys::pq::PqIdentity::new(pq_seed)
-        .to_public()
-        .to_string();
-    if derived_recipient != pq_recipient_str {
-        return Err(BluError::InvalidKeyFormat(format!(
-            "identity mismatch: identity.age PQ key ({}) does not match identity.toml ({})",
-            &derived_recipient[..20],
-            &pq_recipient_str[..20],
-        )));
+    // Verify the identity: prefer the already-unlocked agent (no
+    // passphrase needed), fall back to decrypting identity.age.
+    if let Some(agent_pubkey) = try_agent_public_key() {
+        if agent_pubkey != pq_recipient_str {
+            return Err(BluError::InvalidKeyFormat(format!(
+                "identity mismatch: agent PQ key ({}) does not match identity.toml ({})",
+                &agent_pubkey[..20],
+                &pq_recipient_str[..20],
+            )));
+        }
+    } else {
+        let global_age_path = global_identity_age_path()?;
+        let pq_seed = load_global_identity_pq_seed(&global_age_path, &args)?;
+        let derived_recipient = crate::keys::pq::PqIdentity::new(pq_seed)
+            .to_public()
+            .to_string();
+        if derived_recipient != pq_recipient_str {
+            return Err(BluError::InvalidKeyFormat(format!(
+                "identity mismatch: identity.age PQ key ({}) does not match identity.toml ({})",
+                &derived_recipient[..20],
+                &pq_recipient_str[..20],
+            )));
+        }
     }
 
     println!("Using global identity from ~/.blu/identity.toml");
@@ -150,6 +162,24 @@ pub fn init(args: InitArgs) -> Result<(), BluError> {
     println!("Vault is protected with post-quantum hybrid encryption.");
 
     Ok(())
+}
+
+/// Try to get the PQ public key from an already-unlocked agent.
+///
+/// Returns `Some(public_key)` if the agent is running and unlocked,
+/// `None` otherwise. This lets `init` verify the identity without
+/// prompting for a passphrase.
+fn try_agent_public_key() -> Option<String> {
+    let client = AgentClient::new().ok()?;
+    if !client.is_running() {
+        return None;
+    }
+    let resp = client.status().ok()?;
+    let unlocked = resp["result"]["unlocked"].as_bool().unwrap_or(false);
+    if !unlocked {
+        return None;
+    }
+    resp["result"]["public_key"].as_str().map(|s| s.to_string())
 }
 
 /// Load the global PQ identity file, trying without passphrase

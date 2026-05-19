@@ -21,16 +21,8 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let mut plain_index = cfg.load_plain_index(&keys)?;
-    let mut tag_index = match cfg.load_tag_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
-    let mut blob_index = match cfg.load_blob_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let mut tag_index = cfg.load_tag_index_or_default(&keys);
+    let mut blob_index = cfg.load_blob_index_or_default(&keys);
 
     // Collect file hashes that match the filter
     let hashes_to_delete =

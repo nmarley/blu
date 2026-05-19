@@ -1,7 +1,6 @@
 //! Sync command - combines add + encrypt in a single operation.
 
 use crate::blob::BlobBuffer;
-use crate::block::PlainIndex;
 use crate::cli::clapargs::SyncArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
@@ -21,15 +20,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
-    // Load the plain index (or create a new one if none exists)
-    let mut plain_index = match cfg.load_plain_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => {
-            info!("No existing index, creating new one");
-            PlainIndex::new_empty()
-        }
-        Err(e) => return Err(e),
-    };
+    let mut plain_index = cfg.load_plain_index_or_default(&keys);
 
     // Determine paths to add
     let paths_to_add = if args.paths.is_empty() {
@@ -52,11 +43,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
     cfg.write_plain_index(&plain_index, &keys)?;
 
     // Step 2: Encrypt chunks that are not yet encrypted
-    let mut blob_index = match cfg.load_blob_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let mut blob_index = cfg.load_blob_index_or_default(&keys);
     let backend = match &args.backend {
         Some(name) => cfg.init_named_backend(name).await?,
         None => cfg.init_storage_backend().await?,

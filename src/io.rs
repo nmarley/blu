@@ -42,13 +42,16 @@ macro_rules! gen_std_enc_serde {
             }
 
             fn deserialize_bytes(data: &[u8]) -> Result<Self, crate::error::BluError> {
-                let decoded: Self = bincode::deserialize(data)?;
+                let decoded: Self = ciborium::from_reader(data)
+                    .map_err(|e| crate::error::BluError::DeserializationError(e.to_string()))?;
                 Ok(decoded)
             }
 
             fn serialize_bytes(&self) -> Result<Vec<u8>, crate::error::BluError> {
-                let encoded: Vec<u8> = bincode::serialize(&self)?;
-                Ok(encoded)
+                let mut buf = Vec::new();
+                ciborium::into_writer(&self, &mut buf)
+                    .map_err(|e| crate::error::BluError::SerializationError(e.to_string()))?;
+                Ok(buf)
             }
 
             fn read<R: io::Read>(

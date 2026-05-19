@@ -18,11 +18,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
     // TODO: ... do we only encrypt the files in index, or do we add/update
     // files, THEN encrypt everything that is not already encrypted?
 
-    let mut blob_index = match cfg.load_blob_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let mut blob_index = cfg.load_blob_index_or_default(&keys);
     info!(
         "Blob index has {} blob files",
         blob_index.count_blob_files()

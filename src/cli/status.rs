@@ -243,11 +243,7 @@ pub fn status(args: StatusArgs) -> Result<(), BluError> {
     println!("    chunks:   {} unique", total_chunks);
 
     // Blob / encryption stats
-    let blob_index = match cfg.load_blob_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let blob_index = cfg.load_blob_index_or_default(&keys);
 
     let blob_file_count = blob_index.count_blob_files();
     let encrypted_chunks = index
@@ -273,11 +269,7 @@ pub fn status(args: StatusArgs) -> Result<(), BluError> {
     }
 
     // Tag stats
-    let tag_index = match cfg.load_tag_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let tag_index = cfg.load_tag_index_or_default(&keys);
 
     let unique_tags = tag_index.list_all_tags().len();
     let tagged_files = tag_index.file_tags.len();

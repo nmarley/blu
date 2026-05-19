@@ -43,11 +43,7 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&keys)?;
-    let blob_index = match cfg.load_blob_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let blob_index = cfg.load_blob_index_or_default(&keys);
     let files_map = plain_index.files_map_ref();
 
     let backend = match &args.backend {
@@ -173,11 +169,12 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
             fileref.chunkmetas.len(),
         );
 
-        // Determine restore path(s) based on --to option
-        let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = if let Some(ref dest) = dest_dir
-        {
-            // Restore to destination directory with original filename
-            let first_path = match fileref.paths.iter().next() {
+        // Determine restore path(s) based on --to option.
+        // In both modes, the first path gets the data and the rest
+        // are hard-linked to it (deduplication).
+        let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = {
+            let mut path_iter = fileref.paths.iter();
+            let first_orig = match path_iter.next() {
                 Some(p) => p,
                 None => {
                     eprintln!(
@@ -187,31 +184,19 @@ pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
                     continue 'outer;
                 }
             };
-            let filename = first_path.file_name().ok_or_else(|| {
-                BluError::Internal(format!(
-                    "path has no filename component: {}",
-                    first_path.display()
-                ))
-            })?;
-            let dest_path = Path::new(dest).join(filename);
 
-            // For --to mode, we only restore to one location (no hard links)
-            (dest_path, vec![])
-        } else {
-            // Restore to original paths
-            let mut path_iter = fileref.paths.iter();
-            let first = match path_iter.next() {
-                Some(p) => p.clone(),
-                None => {
-                    eprintln!(
-                        "Unable to restore file: no paths recorded for hash {:?}",
-                        file_hash
-                    );
-                    continue 'outer;
-                }
-            };
-            let others = path_iter.cloned().collect::<Vec<_>>();
-            (first, others)
+            if let Some(ref dest) = dest_dir {
+                // --to mode: preserve relative directory structure
+                let first = Path::new(dest).join(first_orig);
+                let others = path_iter
+                    .map(|p| Path::new(dest).join(p))
+                    .collect::<Vec<_>>();
+                (first, others)
+            } else {
+                // Restore to original paths
+                let others = path_iter.cloned().collect::<Vec<_>>();
+                (first_orig.clone(), others)
+            }
         };
 
         // Print all original paths

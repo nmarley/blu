@@ -136,11 +136,13 @@ async fn list(args: BackendListArgs) -> Result<(), BluError> {
     // If --stats, load the blob index to count blobs per backend
     let blob_paths: Option<Vec<PathBuf>> = if args.stats {
         let (cfg2, keys) = load_config_and_keys(&LoadOptions::default())?;
-        match cfg2.load_blob_index(&keys) {
-            Ok(idx) => Some(idx.path_index.keys().cloned().collect()),
-            Err(BluError::IndexNotFound(_)) => Some(Vec::new()),
-            Err(e) => return Err(e),
-        }
+        Some(
+            cfg2.load_blob_index_or_default(&keys)
+                .path_index
+                .keys()
+                .cloned()
+                .collect(),
+        )
     } else {
         None
     };
@@ -330,6 +332,12 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
             Ok(idx) => idx,
             Err(BluError::IndexNotFound(_)) => {
                 println!("No blob index found, nothing to mirror");
+                return Ok(());
+            }
+            Err(BluError::IndexLoadFailed { ref reason, .. })
+                if reason.contains("deserialization") =>
+            {
+                println!("Blob index unreadable ({}), nothing to mirror", reason);
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -573,6 +581,10 @@ async fn diff(args: BackendDiffArgs) -> Result<(), BluError> {
         Ok(idx) => idx,
         Err(BluError::IndexNotFound(_)) => {
             println!("No blob index found, nothing to diff");
+            return Ok(());
+        }
+        Err(BluError::IndexLoadFailed { ref reason, .. }) if reason.contains("deserialization") => {
+            println!("Blob index unreadable ({}), nothing to diff", reason);
             return Ok(());
         }
         Err(e) => return Err(e),

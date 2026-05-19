@@ -129,6 +129,46 @@ macro_rules! load_index {
     };
 }
 
+/// Macro to generate graceful index-load methods that return a default
+/// value when the index is missing or has an incompatible format.
+///
+/// This is the right choice for supplementary indexes (blob, tag) and
+/// for commands that can rebuild the index from scratch (sync, add).
+macro_rules! load_index_or_default {
+    ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident, $default_expr:expr) => {
+        /// Load the index, returning a default value if the file is
+        /// missing or cannot be deserialized (e.g. format migration).
+        pub fn $name(&self, keys: &DekProvider) -> $idx_struct_name {
+            let index_path = self.idxdir().join(&self.$idx_filename_varname);
+            let index_data = match fs::read(&index_path) {
+                Ok(data) => data,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return $default_expr;
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Cannot read index at {}: {}, using empty default",
+                        index_path.display(),
+                        e
+                    );
+                    return $default_expr;
+                }
+            };
+            match $idx_struct_name::read(&index_data[..], keys) {
+                Ok(idx) => idx,
+                Err(e) => {
+                    log::warn!(
+                        "Index at {} unreadable ({}), using empty default",
+                        index_path.display(),
+                        e
+                    );
+                    $default_expr
+                }
+            }
+        }
+    };
+}
+
 /// Macro to generate write methods for each index type.
 macro_rules! write_index {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident) => {
@@ -219,6 +259,25 @@ impl Config {
     load_index!(load_blob_index, BlobIndex, blob_index_filename);
     load_index!(load_tag_index, TagIndex, tag_index_filename);
     load_index!(load_plain_index, PlainIndex, plain_index_filename);
+
+    load_index_or_default!(
+        load_blob_index_or_default,
+        BlobIndex,
+        blob_index_filename,
+        BlobIndex::default()
+    );
+    load_index_or_default!(
+        load_tag_index_or_default,
+        TagIndex,
+        tag_index_filename,
+        TagIndex::default()
+    );
+    load_index_or_default!(
+        load_plain_index_or_default,
+        PlainIndex,
+        plain_index_filename,
+        PlainIndex::new_empty()
+    );
 
     write_index!(write_blob_index, BlobIndex, blob_index_filename);
     write_index!(write_tag_index, TagIndex, tag_index_filename);

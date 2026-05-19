@@ -11,11 +11,7 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), BluError> {
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&keys)?;
 
-    let tag_index = match cfg.load_tag_index(&keys) {
-        Ok(idx) => idx,
-        Err(BluError::IndexNotFound(_)) => Default::default(),
-        Err(e) => return Err(e),
-    };
+    let tag_index = cfg.load_tag_index_or_default(&keys);
 
     // TODO: sort by file name? hash? should the order be deterministic? Since
     // this returns a hash(ref) and we'd have to delve to get filename and make

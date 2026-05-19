@@ -13,7 +13,7 @@ pub fn add(args: AddArgs) -> Result<(), BluError> {
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
-    let mut plain_index = cfg.load_plain_index(&keys)?;
+    let mut plain_index = cfg.load_plain_index_or_default(&keys);
 
     // iterate each path
     for p in args.add_paths {

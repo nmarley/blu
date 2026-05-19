@@ -28,16 +28,11 @@ pub fn search(args: SearchArgs) -> Result<(), BluError> {
         search_results.insert(file_hash.clone());
     }
 
-    // load tag index
-    match cfg.load_tag_index(&keys) {
-        Ok(tag_index) => {
-            for file_hash in tag_index.search(&args.needle) {
-                search_results.insert(file_hash.clone());
-            }
-        }
-        Err(BluError::IndexNotFound(_)) => {}
-        Err(e) => return Err(e),
-    };
+    // search tag index
+    let tag_index = cfg.load_tag_index_or_default(&keys);
+    for file_hash in tag_index.search(&args.needle) {
+        search_results.insert(file_hash.clone());
+    }
 
     // now print search results
     println!("Got {} result(s):\n", search_results.len());
