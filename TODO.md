@@ -1,6 +1,6 @@
 # TODO
 
-Consolidated backlog for blu.
+Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
 
 ## Release Prep
 
@@ -24,16 +24,9 @@ Consolidated backlog for blu.
 
 ## Data Management
 
-- [ ] Full data deletes (plain index deletes vs. full encrypted
-      chunk deletes with blob marking)
-- [ ] Blob defragmentation (reclaim space from deleted chunks by
-      repacking remaining chunks into new blob files)
 - [ ] Event collision handling (e.g. user deletes from one backend,
       syncs from another where data is still active; consider event
       sourcing pattern)
-- [ ] Need to ensure deletes from blob files w/other data, the other data
-      compacted / moved to fresh blobs if the user wants a full delete/scrub.
-      Unsure about the design, discuss w/Opus or Sonnet, etc.
 
 ## Architecture
 
