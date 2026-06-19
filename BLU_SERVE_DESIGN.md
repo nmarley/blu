@@ -61,9 +61,9 @@ Any S3 client           Any filesystem client
 ```
 
 `blu serve` is a long-running local process (like the agent daemon).
-It holds the decrypted indexes in memory, maintains an LRU blob cache,
-and serves client requests by resolving virtual paths through the
-chunk and blob layers.
+It maintains a local redb database as its working index, an LRU blob
+cache, and serves client requests by resolving virtual paths through
+the chunk and blob layers.
 
 ## 3. Index Strategy
 
@@ -79,39 +79,68 @@ Three encrypted indexes (CBOR, gzipped, v2 envelope):
 
 ### For `blu serve`
 
-On startup:
+The local index store is a redb database (Rust-native, single-file,
+ACID, no FFI or external process). redb is the working copy;
+encrypted CBOR on the backend is the source of truth and the
+interchange format.
 
-1. Pull all index files from the backend (`cfg.pull_indexes`)
-2. Decrypt and deserialize into memory (existing `EncryptedSerializable`
-   path)
-3. Build a path index (`PlainIndex::build_path_index()` already exists,
-   returns `HashMap<PathBuf, Hash>`)
-4. Optionally persist decrypted indexes to a local B-tree (SQLite or
-   redb) for fast restarts
+**Why redb rather than in-memory HashMaps:**
 
-On writes:
+- `blu serve` is a long-running daemon. Pinning hundreds of megabytes
+  of deserialized HashMaps in resident memory permanently is wasteful
+  when redb pages data in and out through the OS page cache as needed.
+- Startup time. Deserializing a large CBOR blob into in-memory
+  HashMaps takes seconds and scales linearly with index size. redb
+  opens in milliseconds regardless of size.
+- Crash recovery. If the daemon restarts, in-memory indexes are gone
+  and must be re-pulled from the backend. With redb, the local
+  database survives restarts. You only re-pull to sync deltas, not
+  to recover full state.
+- No migration. Building on in-memory first means throwing away that
+  code later. redb's API (`insert`, `get`, `range`) is not
+  significantly harder than `HashMap::insert` and `HashMap::get`.
+  The complexity cost of starting with redb is low.
+- redb handles concurrent readers with a single writer, which maps
+  cleanly to the serve workload (many concurrent read requests,
+  occasional writes).
 
-1. Update in-memory indexes
-2. Periodically flush to local disk (encrypted)
-3. Push updated indexes to backend
+**On startup (fresh machine):**
+
+1. Pull all encrypted index files from the backend
+   (`cfg.pull_indexes`)
+2. Decrypt and deserialize (existing `EncryptedSerializable` path)
+3. Load into local redb tables
+
+**On startup (returning machine):**
+
+1. Open existing redb database (milliseconds)
+2. Pull index files from backend, diff against local state, apply
+   deltas
+
+**On writes:**
+
+1. Update local redb
+2. Periodically serialize redb state to encrypted CBOR and push to
+   backend
 
 The indexes live in the same bucket as the data. On a fresh machine,
-you pull everything from one bucket and have full state. The decrypted
-local copy is a cache, not a source of truth.
+you pull everything from one bucket and have full state. The local
+redb file is a cache that survives restarts; the backend is
+authoritative.
 
-### Scaling consideration
+### Scaling
 
-For a personal/small-team vault, the full index fits in memory easily.
 A vault with 1 million files at ~200 bytes per file entry is ~200 MB
-of index data. This is fine. If the index ever outgrows memory, a
-local B-tree (redb is a good Rust-native option) would handle billions
-of entries without changing the backend format.
+of index data. redb handles this without loading it all into resident
+memory (the OS page cache manages hot/cold pages). For vaults with
+tens of millions of entries, redb scales to the size of the local
+disk without changing the backend format or the local API.
 
 ## 4. Read Path: Serving Files from Packed Blobs
 
 When a client requests a file (e.g., `GET /movies/inception.mkv`):
 
-1. **Path lookup**: find the path in the in-memory path index, get
+1. **Path lookup**: find the path in the local redb path index, get
    file_hash
 2. **File metadata**: look up `FileRef` in `PlainIndex`, get ordered
    `Vec<ChunkMeta>` with sizes; compute total file size from sum of
@@ -179,83 +208,132 @@ Poly1305 authentication covers the entire ciphertext. You cannot:
 For archival this is fine (you always restore full files). For
 streaming, it means every cache miss costs a full 64 MiB download.
 
-### What segmented AEAD is
+### Metadata leakage constraint
 
-Instead of encrypting the blob as one unit, split it into fixed-size
-segments, each independently encrypted and authenticated:
+A naive segmented design (per-chunk segments with variable sizes due
+to compression, plus a table of contents listing segment offsets)
+leaks metadata to the storage provider:
+
+- Number of chunks per blob
+- Compressed size of each chunk (which correlates with content type
+  and entropy)
+- Internal structure of the blob
+
+This violates the core guarantee: a blob, as seen by the storage
+provider, must reveal nothing about its internal structure. The blob
+must be indistinguishable from random bytes of a predictable,
+uniform size.
+
+### Fixed-size segments with no table of contents
+
+The solution is to make every encrypted segment the same size, with
+no in-blob metadata:
 
 ```
-Segment 0: nonce(12) || encrypt(plaintext_segment_0) || tag(16)
-Segment 1: nonce(12) || encrypt(plaintext_segment_1) || tag(16)
+plaintext   = chunk1 || chunk2 || ... || chunkN
+compressed  = compress(plaintext)
+padded      = pad(compressed, multiple of SEGMENT_SIZE)
+
+segment_0   = encrypt(padded[0..S])
+segment_1   = encrypt(padded[S..2S])
 ...
-Segment N: nonce(12) || encrypt(plaintext_segment_N) || tag(16)
+segment_K   = encrypt(padded[(K-1)*S..K*S])
 ```
 
-Each segment has its own ChaCha20-Poly1305 nonce and tag. You can:
+Every segment is exactly `SEGMENT_SIZE + 28` bytes on disk (plaintext
+segment + 12-byte nonce + 16-byte tag). An attacker sees a blob of
+size `K * (S + 28)` and learns only K (the segment count), which is
+the same for all ~64 MiB blobs because blob sizes are uniform. There
+is no table of contents, no variable sizes, no internal structure
+visible in the ciphertext.
 
-- Fetch a byte range from S3 covering only the segments you need
-- Authenticate and decrypt each segment independently
-- Never download more data than necessary (within segment granularity)
-
-The segment size is a tuning knob. Larger segments (e.g., 1 MiB) mean
-less overhead but coarser granularity. Smaller segments (e.g., 64 KiB)
-mean more overhead but finer random access. A reasonable default is
-512 KiB (matching chunk size), so each chunk gets its own
-authenticated segment.
-
-### Per-chunk AEAD within blobs
-
-A natural design for blu: instead of
-`compress(all_chunks) -> encrypt`, do:
-
-```
-blob = header || segment_0 || segment_1 || ... || segment_N
-
-where segment_i = encrypt(compress(chunk_i))
-```
-
-Each chunk is independently compressed, then independently encrypted
-with its own AEAD nonce and tag. The blob header contains a table of
-contents: for each segment, its byte offset within the blob and the
-chunk hash it contains.
+**Where the internal mapping lives**: the client-side encrypted index
+(stored in redb locally, pushed to the backend as encrypted CBOR)
+records which compressed-byte range each chunk occupies, and
+therefore which segments must be fetched to recover a given chunk.
+This mapping is never visible to the storage provider.
 
 **What this preserves:**
 
 - Uniform ~64 MiB blob files on the backend (no metadata leakage)
 - Content-addressed blob naming
 - Chunk-level deduplication (unchanged)
-- Same key hierarchy (each segment uses the blob's DEK, just with a
+- Same key hierarchy (each segment uses the blob's DEK, with a
   segment-counter-derived nonce)
+- Blobs are opaque and structureless to the storage provider
 
 **What this enables:**
 
 - Byte-range S3 GET for individual segments
-- Authenticate and decrypt a single chunk without touching the rest
-- Cache miss cost drops from ~64 MiB to ~512 KiB
+- Authenticate and decrypt a subset of the blob without downloading
+  all of it
+- Cache miss cost drops from ~64 MiB to `N * SEGMENT_SIZE` where N
+  is the number of segments spanning the requested chunk
 
 **What this changes:**
 
-- Blob format (v2 -> v3): new header format with segment table of
-  contents
-- Compression ratio: per-chunk compression is slightly worse than
-  whole-blob compression (less context for the compressor), but the
-  difference is small for 512 KiB chunks
-- Slight size overhead: 28 bytes (nonce + tag) per segment instead of
-  per blob; for 128 chunks per blob, that is ~3.5 KiB overhead,
-  negligible
+- Blob format (v2 -> v3): segments replace the single sealed box
+- `BlobIndex` gains a compressed-byte-offset field per chunk, so the
+  client can compute which segments to fetch
+- Compression is still whole-blob (preserving cross-chunk context),
+  but the compressed output is split into fixed-size segments before
+  encryption
+- Slight size overhead: 28 bytes (nonce + tag) per segment instead
+  of per blob, plus padding to align the compressed output to a
+  segment boundary. For 128 segments per blob, overhead is ~3.5 KiB
+  for nonce/tag plus up to one segment of padding, negligible
+  relative to 64 MiB
+
+**Segment size**: a reasonable default is 512 KiB (matching chunk
+size). Larger segments (1 MiB) reduce per-segment overhead but
+increase the minimum fetch granularity. Smaller segments (64 KiB)
+improve random-access granularity at the cost of more nonce/tag
+bytes. The segment size is a configuration knob, not a format
+constant; it can be stored in the v3 header.
 
 **Compatibility**: this would be a new format version (v3). Existing
 v2 blobs remain readable. New blobs can be written in v3. Migration
-is optional (repack via `blu defrag-blobs` with a
-`--upgrade-format` flag).
+is optional (repack via `blu defrag-blobs --upgrade-format`).
+
+### Known limitation: temporal metadata from the object catalog
+
+Individual blob files reveal nothing about their internal structure.
+In both v2 (single sealed AEAD box) and v3 (fixed-size segments,
+no table of contents), the ciphertext is indistinguishable from
+random bytes. An attacker who downloads a blob learns nothing
+without the decryption keys.
+
+However, an attacker with access to the S3 bucket itself (via
+compromise, subpoena, or insider access at the provider) can
+inspect the object catalog. This reveals:
+
+- The number of blob objects in the bucket
+- Object creation timestamps (when each blob was uploaded)
+- Total storage consumed
+
+From this, an attacker can infer the approximate rate of data
+ingestion over time (e.g., "this user stored roughly 5 GiB in
+June and 20 GiB in July"). They learn nothing about what the
+data is, how many source files it represents, file types, or
+content. Just volume over time.
+
+This is inherent to any third-party object store. You cannot hide
+the existence of S3 objects from someone who controls the S3
+account. The blob format cannot address this; mitigation would
+require operational measures (e.g., dummy blob uploads to obscure
+ingestion patterns, or using a storage provider with stronger
+access controls).
 
 ### Recommendation
 
 Segmented AEAD is a future optimization, not a prerequisite for
-`blu serve`. Phase 1 launches with whole-blob fetch and LRU caching.
-Phase 2 introduces segmented AEAD for reduced latency on random
-access. The existing `EncBlobReader` LRU cache makes Phase 1 entirely
-usable for sequential streaming (video playback, file downloads).
+`blu serve`. Phase 1 launches with whole-blob fetch and LRU caching
+(current v2 format, zero metadata leakage, full-blob download on
+cache miss). Phase 3 introduces fixed-size segmented AEAD for
+reduced latency on random access without compromising the metadata
+guarantees. The existing `EncBlobReader` LRU cache makes Phase 1
+entirely usable for sequential streaming (video playback, file
+downloads).
 
 ## 6. Write Path: Ingesting Files Through the Translation Layer
 
@@ -317,7 +395,7 @@ without modification.
 | S3 Operation | Translation |
 |---|---|
 | `ListBuckets` | List configured vaults |
-| `ListObjectsV2` | Query decrypted `PlainIndex` path index; return virtual file listings with pagination |
+| `ListObjectsV2` | Query local redb path index; return virtual file listings with pagination |
 | `GetObject` | Resolve path -> chunks -> blobs -> fetch/cache/decrypt -> serve bytes |
 | `GetObject` with `Range` | Same, but compute chunk overlap with byte range and serve only requested slice |
 | `HeadObject` | Resolve path -> compute size from chunk sizes, return metadata |
@@ -377,7 +455,8 @@ a future design decision, not a prerequisite for `blu serve`.
 ### Phase 1: Read-only `blu serve` with LRU cache
 
 - `blu serve` subcommand: starts local HTTP server
-- Pull and decrypt indexes on startup, hold in memory
+- Local redb index store (pull from backend on first run, open
+  existing on subsequent runs)
 - Implement `GetObject` (with `Range`), `HeadObject`, `ListObjectsV2`
 - LRU blob cache (existing `EncBlobReader` pattern, expanded capacity)
 - Whole-blob fetch (existing v2 format, no changes)
@@ -393,11 +472,14 @@ a future design decision, not a prerequisite for `blu serve`.
 
 ### Phase 3: Segmented AEAD (v3 format)
 
-- Per-chunk AEAD within blobs (as described in section 5)
+- Fixed-size segments with no in-blob metadata (as described in
+  section 5)
+- Compressed-byte-offset field added to `BlobIndex` entries
 - Byte-range S3 GET for individual segments
 - v3 format writer + reader, v2 backward compat
 - `blu defrag-blobs --upgrade-format` for migration
-- Dramatic improvement in random-access latency
+- Dramatic improvement in random-access latency with zero metadata
+  leakage to the storage provider
 
 ### Phase 4: Additional interfaces
 
