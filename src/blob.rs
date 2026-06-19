@@ -174,6 +174,12 @@ pub struct BlobBlockLocation {
 }
 
 impl BlobBlockLocation {
+    /// Create a new BlobBlockLocation with the given blob path and
+    /// position within the decompressed blob.
+    pub fn new(path: PathBuf, position: Position) -> Self {
+        Self { path, position }
+    }
+
     /// Returns the path to the blob file containing this block.
     pub fn blob_path(&self) -> &PathBuf {
         &self.path

@@ -4,10 +4,9 @@ mod chunkmeta;
 mod fileref;
 mod index;
 
-use chunkmeta::ChunkMeta;
-use fileref::FileRef;
-
 pub use chunkerator::Chunkerator;
+pub use chunkmeta::ChunkMeta;
+pub use fileref::FileRef;
 pub use index::PlainIndex;
 pub use index::INDEX_FILENAME;
 
