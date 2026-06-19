@@ -295,35 +295,6 @@ constant; it can be stored in the v3 header.
 v2 blobs remain readable. New blobs can be written in v3. Migration
 is optional (repack via `blu defrag-blobs --upgrade-format`).
 
-### Known limitation: temporal metadata from the object catalog
-
-Individual blob files reveal nothing about their internal structure.
-In both v2 (single sealed AEAD box) and v3 (fixed-size segments,
-no table of contents), the ciphertext is indistinguishable from
-random bytes. An attacker who downloads a blob learns nothing
-without the decryption keys.
-
-However, an attacker with access to the S3 bucket itself (via
-compromise, subpoena, or insider access at the provider) can
-inspect the object catalog. This reveals:
-
-- The number of blob objects in the bucket
-- Object creation timestamps (when each blob was uploaded)
-- Total storage consumed
-
-From this, an attacker can infer the approximate rate of data
-ingestion over time (e.g., "this user stored roughly 5 GiB in
-June and 20 GiB in July"). They learn nothing about what the
-data is, how many source files it represents, file types, or
-content. Just volume over time.
-
-This is inherent to any third-party object store. You cannot hide
-the existence of S3 objects from someone who controls the S3
-account. The blob format cannot address this; mitigation would
-require operational measures (e.g., dummy blob uploads to obscure
-ingestion patterns, or using a storage provider with stronger
-access controls).
-
 ### Recommendation
 
 Segmented AEAD is a future optimization, not a prerequisite for
@@ -450,7 +421,97 @@ Access control at the file level (user A can see these files, user B
 cannot) would require per-file or per-directory KEK scoping. This is
 a future design decision, not a prerequisite for `blu serve`.
 
-## 10. Phased Implementation
+## 10. Traffic Analysis Countermeasures
+
+### What the blob format protects
+
+Individual blob files reveal nothing about their internal structure.
+In both v2 (single sealed AEAD box) and v3 (fixed-size segments,
+no table of contents), the ciphertext is indistinguishable from
+random bytes. An attacker who downloads a blob learns nothing
+without the decryption keys. The blob's contents, chunk count,
+chunk sizes, file boundaries, and file types are all invisible.
+
+### What the blob format does not protect
+
+An attacker with access to the storage backend itself (via
+compromise, subpoena, or insider access at the provider) can
+inspect the object catalog and observe:
+
+- Total number of blob objects in the bucket
+- Object creation and modification timestamps
+- Total storage consumed over time
+
+From this, they can infer the approximate rate of data ingestion
+(e.g., "this user stored roughly 5 GiB in June and 20 GiB in
+July"). They learn nothing about what the data is, how many source
+files it represents, file types, or content. Just volume and timing.
+
+This is inherent to any third-party object store. You cannot hide
+the existence of objects from someone who controls the storage
+account.
+
+### Potential mitigations
+
+Three approaches are worth considering, in order of increasing
+strength:
+
+**Noise writes.** On a regular schedule, upload or rewrite some
+blobs regardless of real user activity. Real writes are mixed with
+dummy writes so the attacker cannot easily distinguish signal from
+noise. Weakness: if real ingestion exceeds the noise budget, spikes
+are still visible.
+
+**Pre-allocated slot pool.** At vault creation, upload a fixed
+number of blobs filled with random bytes. As real data arrives,
+replace dummy slots with real encrypted blobs (both are
+indistinguishable from random bytes). The attacker always sees the
+same number of objects. Weakness: modification timestamps on
+replaced slots still reveal timing of real writes. Also requires
+abandoning content-addressed blob naming in favor of fixed slot
+names, which is a significant architectural change.
+
+**Constant-rate batched flushes.** Buffer writes locally (encrypted
+on local disk). Flush to the backend in fixed-size batches at fixed
+intervals (e.g., exactly N blobs every interval). If fewer than N
+real blobs are ready, pad with dummy blobs. If zero real blobs are
+ready, upload N dummies. The attacker sees a constant write rate
+regardless of actual activity. This is the strongest approach but
+has real costs: write latency (data is not durable on the backend
+until the next flush interval), local storage for the buffer, and
+ongoing storage and bandwidth costs for accumulated dummy blobs.
+
+### The arms race problem
+
+Traffic analysis resistance is fundamentally an arms race. Each
+countermeasure has a counter-observation: noise writes have
+statistical anomalies, pre-allocated slots leak modification
+timestamps, constant-rate flushes leak long-term growth trends,
+and reclaiming dummy blobs to save storage is itself observable.
+Full traffic analysis resistance is an open research problem (the
+same challenge faced by Tor, mixnets, and anonymous remailers).
+
+### Assessment
+
+For most use cases, the temporal metadata leak is low-severity
+relative to the strong guarantees on content confidentiality.
+Knowing "this user stored data in July" is a weak signal when the
+contents, filenames, file types, and file structure are all
+invisible.
+
+For high-security use cases where ingestion timing is itself
+sensitive, constant-rate batched flushes provide the strongest
+practical defense. This can be designed as an optional mode that
+layers on top of the existing write pipeline without changing it:
+the core write path remains the same, with a local buffer and
+scheduled flush loop added around it. The tradeoffs (flush latency,
+local buffer storage, dummy blob costs) should be explicit and
+user-configurable.
+
+This is a future consideration, not a prerequisite for any current
+phase.
+
+## 11. Phased Implementation
 
 ### Phase 1: Read-only `blu serve` with LRU cache
 
