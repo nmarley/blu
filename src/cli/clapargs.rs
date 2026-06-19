@@ -54,6 +54,8 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+    /// Start local HTTP server (S3-compatible API for the vault)
+    Serve(ServeArgs),
 
     /// Unlock the agent (start if needed, cache passphrase)
     Unlock,
@@ -276,6 +278,14 @@ pub struct StatusArgs {
     #[clap(value_enum)]
     #[arg(long = "type")]
     pub status_check_type: Option<StatusCheckType>,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct ServeArgs {
+    /// Bind address for the HTTP server (default: 127.0.0.1:7777)
+    #[arg(long)]
+    pub bind: Option<String>,
 }
 
 /// Type of status check to run. Deep means hash every file, shallow will use

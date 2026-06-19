@@ -155,9 +155,12 @@ When a client requests a file (e.g., `GET /movies/inception.mkv`):
    blob at `[offset..offset+size]`
 6. **Serve**: concatenate chunks in order, write to client
 
-This is exactly what `restore_files` does today, minus writing to
-disk. The `EncBlobReader` with its LRU cache already implements
-steps 4-5.
+This is the same fetch/decrypt/decompress/slice pipeline that
+`restore_files` implements today (via its own `prefetch_blobs` +
+`get_cached_bytes` helpers), minus writing to disk. The
+`EncBlobReader` with its LRU cache implements the same pipeline with a
+lazy, bounded cache and is the closer starting point for the serve
+read path.
 
 ### Byte-range requests
 
@@ -387,11 +390,12 @@ without modification.
 
 ### Implementation
 
-Build on `axum` (already a transitive dependency via tokio). Parse S3
-request XML/headers, translate to index lookups, respond with
-S3-compatible XML/headers. There are existing Rust crates (e.g., `s3s`)
-that provide S3 API scaffolding, though rolling a minimal
-implementation for the subset above is also reasonable.
+Build on `axum` (added as an explicit dependency; it is not a
+transitive dependency of tokio). Parse S3 request XML/headers,
+translate to index lookups, respond with S3-compatible XML/headers.
+There are existing Rust crates (e.g., `s3s`) that provide S3 API
+scaffolding, though rolling a minimal implementation for the subset
+above is also reasonable.
 
 ## 8. FUSE Mount (Future)
 

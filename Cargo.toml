@@ -55,3 +55,5 @@ sha3 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 security-framework = { version = "3", features = ["OSX_10_15"] }
 lru = "0.18.0"
+redb = "4"
+axum = "0.8"

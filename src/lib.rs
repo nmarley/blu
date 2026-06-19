@@ -52,6 +52,8 @@ pub mod io;
 pub mod keys;
 /// search index for filenames
 pub mod search;
+/// `blu serve` local daemon (HTTP server, redb index store, index sync)
+pub mod serve;
 /// storage backends and hash to path translation methods
 pub mod storage;
 /// tag index, probably should rename this

@@ -50,7 +50,7 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 
 ### Storage backends (`src/storage/`)
 
-`Backend` trait with `Local` and `AmazonS3` implementations. Blobs are content-addressed by multihash, stored in a sharded directory tree (e.g., `d/dd4/dd4ce/dd4ce38e...`).
+`BackendKind` enum (concrete dispatch, not a trait, because native async fn in traits is not object-safe) with `Local` and `AmazonS3` variants. Blobs are content-addressed by multihash, stored in a sharded directory tree (e.g., `d/dd4/dd4ce/dd4ce38e...`).
 
 ## Code layout
 
@@ -64,8 +64,9 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 - `src/block/` -- chunking, block index, file references (deduplication layer)
 - `src/blob.rs` -- blob packing (multiple chunks into one encrypted blob)
 - `src/v2format.rs` -- envelope-encrypted file format (header parsing, read/write)
+- `src/serve/` -- `blu serve` local daemon (HTTP server, redb index store, index sync)
 - `src/config.rs` -- vault config from `.blu/config.toml`
-- `src/storage/` -- `Backend` trait, `Local`, `AmazonS3`
+- `src/storage/` -- `BackendKind` enum, `Local`, `AmazonS3`
 - `src/io.rs` -- `EncryptedSerializable` trait (serialize + compress + encrypt for indexes)
 
 ## Style and lint
@@ -88,6 +89,7 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 ## Design docs
 
 - `ENVELOPE_ENCRYPTION_DESIGN.md` -- canonical KEK/DEK design reference
+- `BLU_SERVE_DESIGN.md` -- `blu serve` local daemon design (S3-compatible API, redb index, segmented AEAD)
 - `TODO.md` -- consolidated backlog
 
 ## Platform
