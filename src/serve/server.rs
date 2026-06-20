@@ -2,15 +2,17 @@
 //! layer that presents decrypted files to any S3 client while the real
 //! backend holds only opaque encrypted blobs.
 //!
-//! Stage 3 adds `ListObjectsV2` and `ListBuckets` (read-only listing).
-//! `GetObject`, `HeadObject`, and byte-range support are added in
-//! Stage 4.
+//! Stage 3 added `ListObjectsV2` and `ListBuckets` (read-only listing).
+//! Stage 4 adds `GetObject` (with byte-range support), `HeadObject`,
+//! and the `EncBlobReader` LRU cache for serving chunk data from
+//! decrypted blobs. Internal endpoints live under `/_` prefix
+//! (e.g., `/_health`) to avoid collision with S3 bucket names.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
 use axum::extract::{Path, Query};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
@@ -18,6 +20,8 @@ use chrono::NaiveDateTime;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 
+use crate::blob::EncBlobReader;
+use crate::block::FileRef;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::serve::index_sync;
@@ -40,6 +44,9 @@ pub struct ServeState {
     /// individual object `LastModified` values. The current index
     /// format does not track per-file modification times.
     index_updated_at: NaiveDateTime,
+    /// Blob reader for fetching, decrypting, and caching blob data.
+    /// Shared across concurrent handlers via `Arc`.
+    blob_reader: Arc<EncBlobReader>,
 }
 
 impl std::fmt::Debug for ServeState {
@@ -65,7 +72,7 @@ async fn shutdown_signal() {
 
 /// Entry point for `blu serve`. Loads the vault config and keys,
 /// binds the TCP listener, starts serving HTTP immediately, and runs
-/// index sync as a background task. Until sync completes, `/health`
+/// index sync as a background task. Until sync completes, `/_health`
 /// and all S3 endpoints return 503. This gives process supervisors a
 /// real readiness signal instead of the port being closed until sync
 /// finishes.
@@ -86,9 +93,13 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let ready: Arc<OnceLock<ServeState>> = Arc::new(OnceLock::new());
 
     let app = Router::new()
-        .route("/health", get(health_handler))
+        .route("/_health", get(health_handler))
         .route("/", get(list_buckets_handler))
         .route("/{bucket}", get(list_objects_handler))
+        .route(
+            "/{bucket}/{*key}",
+            get(get_object_handler).head(head_object_handler),
+        )
         .with_state(ready.clone());
 
     let listener = TcpListener::bind(addr).await?;
@@ -102,8 +113,8 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let sync_ready = ready.clone();
     tokio::spawn(async move {
         info!("syncing indexes from backend into local redb store");
-        match index_sync::sync_from_backend(&cfg, &keys, &backend).await {
-            Ok((store, index_updated_at)) => {
+        match index_sync::sync_from_backend(&cfg, keys, backend).await {
+            Ok((store, index_updated_at, blob_reader)) => {
                 let bucket_name = cfg
                     .basedir()
                     .file_name()
@@ -114,6 +125,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
                     redb: Arc::new(store),
                     bucket_name,
                     index_updated_at,
+                    blob_reader: Arc::new(blob_reader),
                 };
 
                 if sync_ready.set(state).is_err() {
@@ -302,6 +314,368 @@ async fn list_objects_handler(
     )
 }
 
+/// Resolve a virtual path to its `FileRef` via the redb index.
+///
+/// Returns `Ok(Some(fileref, file_hash))` if the path exists, or
+/// `Ok(None)` if no file matches. Errors are returned for index
+/// corruption or redb failures.
+fn resolve_path(
+    redb: &RedbStore,
+    path: &str,
+) -> Result<Option<(FileRef, crate::hash::Hash)>, BluError> {
+    let file_hash = match redb.get_file_hash_by_path(path)? {
+        Some(h) => h,
+        None => return Ok(None),
+    };
+    let fileref = match redb.get_fileref(&file_hash)? {
+        Some(f) => f,
+        None => return Ok(None),
+    };
+    Ok(Some((fileref, file_hash)))
+}
+
+/// Fetch all chunk data for a `FileRef`, in chunk order, and
+/// concatenate into a single `Vec<u8>`.
+///
+/// This is the serve read path: path -> FileRef -> chunks ->
+/// BlobBlockLocation -> EncBlobReader::get_bytes -> concatenate.
+/// The `EncBlobReader` LRU cache makes sequential reads efficient
+/// (chunks from the same blob share a cache entry).
+async fn fetch_file_bytes(
+    fileref: &FileRef,
+    redb: &RedbStore,
+    blob_reader: &EncBlobReader,
+) -> Result<Vec<u8>, BluError> {
+    let total = fileref.total_size() as usize;
+    let mut buf = Vec::with_capacity(total);
+    for chunkmeta in &fileref.chunkmetas {
+        let location =
+            redb.get_blob_location(&chunkmeta.hash)?
+                .ok_or_else(|| BluError::BlockNotFound {
+                    hash: chunkmeta.hash.to_string(),
+                })?;
+        let chunk = blob_reader.get_bytes(&location).await?;
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// Fetch only the byte range `[start, end)` (0-indexed, end exclusive)
+/// from a file, fetching only the chunks that overlap the range.
+///
+/// Computes cumulative chunk offsets to find overlapping chunks via
+/// binary search, fetches each, and slices the requested bytes from
+/// the reassembled data.
+async fn fetch_range_bytes(
+    fileref: &FileRef,
+    redb: &RedbStore,
+    blob_reader: &EncBlobReader,
+    start: u64,
+    end: u64,
+) -> Result<Vec<u8>, BluError> {
+    let mut buf = Vec::with_capacity((end - start) as usize);
+    let mut offset: u64 = 0;
+    for chunkmeta in &fileref.chunkmetas {
+        let chunk_start = offset;
+        let chunk_end = offset + chunkmeta.size as u64;
+        offset = chunk_end;
+
+        // Skip chunks entirely before the requested range.
+        if chunk_end <= start {
+            continue;
+        }
+        // Stop once we're past the requested range.
+        if chunk_start >= end {
+            break;
+        }
+
+        let location =
+            redb.get_blob_location(&chunkmeta.hash)?
+                .ok_or_else(|| BluError::BlockNotFound {
+                    hash: chunkmeta.hash.to_string(),
+                })?;
+        let chunk = blob_reader.get_bytes(&location).await?;
+
+        // Slice the overlapping portion.
+        let slice_start = start.saturating_sub(chunk_start) as usize;
+        let slice_end = (end - chunk_start) as usize;
+        let slice_end = slice_end.min(chunk.len());
+        buf.extend_from_slice(&chunk[slice_start..slice_end]);
+    }
+    Ok(buf)
+}
+
+/// Parsed byte range from an HTTP `Range` header.
+struct ByteRange {
+    /// Inclusive start offset (0-indexed).
+    start: u64,
+    /// Exclusive end offset (0-indexed, i.e., one past the last byte).
+    end: u64,
+}
+
+/// Parse an HTTP `Range: bytes=...` header.
+///
+/// Supports three forms:
+/// - `bytes=start-end` (inclusive end)
+/// - `bytes=start-` (to end of file)
+/// - `bytes=-suffix` (last N bytes)
+///
+/// Returns `Ok(None)` if no Range header is present. Returns `Err` if
+/// the header is present but malformed.
+fn parse_range_header(headers: &HeaderMap, total_size: u64) -> Result<Option<ByteRange>, String> {
+    let raw = match headers.get(header::RANGE) {
+        Some(v) => v
+            .to_str()
+            .map_err(|e| format!("invalid Range header: {}", e))?,
+        None => return Ok(None),
+    };
+
+    let rest = raw
+        .strip_prefix("bytes=")
+        .ok_or_else(|| "Range header must start with 'bytes='".to_string())?;
+
+    let (start_s, end_s) = rest
+        .split_once('-')
+        .ok_or_else(|| "Range header missing '-' separator".to_string())?;
+
+    if start_s.is_empty() {
+        // Suffix range: bytes=-N (last N bytes)
+        let suffix: u64 = end_s
+            .parse()
+            .map_err(|_| "invalid suffix length in Range header".to_string())?;
+        if suffix == 0 {
+            return Err("suffix range of 0 bytes is unsatisfiable".to_string());
+        }
+        let start = total_size.saturating_sub(suffix);
+        return Ok(Some(ByteRange {
+            start,
+            end: total_size,
+        }));
+    }
+
+    let start: u64 = start_s
+        .parse()
+        .map_err(|_| "invalid start offset in Range header".to_string())?;
+
+    if end_s.is_empty() {
+        // Open-ended range: bytes=start-
+        if start >= total_size {
+            return Err("range start beyond file size".to_string());
+        }
+        return Ok(Some(ByteRange {
+            start,
+            end: total_size,
+        }));
+    }
+
+    // Closed range: bytes=start-end (end is inclusive in HTTP)
+    let end_inclusive: u64 = end_s
+        .parse()
+        .map_err(|_| "invalid end offset in Range header".to_string())?;
+    if start > end_inclusive {
+        return Err("range start is greater than end".to_string());
+    }
+    let end = end_inclusive + 1; // Convert to exclusive
+    if start >= total_size {
+        return Err("range start beyond file size".to_string());
+    }
+    // Clamp end to file size (S3 allows end >= file size, returns up to EOF)
+    let end = end.min(total_size);
+
+    Ok(Some(ByteRange { start, end }))
+}
+
+/// `HEAD /{bucket}/{*key}` -- HeadObject. Returns metadata headers
+/// (Content-Length, Last-Modified, ETag) with no body. 404 if the
+/// key does not exist.
+async fn head_object_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> axum::response::Response {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+            .into_response();
+        }
+    };
+
+    if bucket != s.bucket_name {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    let (fileref, file_hash) = match resolve_path(&s.redb, &key) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => {
+            return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchKey", &key).into_response();
+        }
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            )
+            .into_response();
+        }
+    };
+
+    let total = fileref.total_size();
+    let last_modified = s
+        .index_updated_at
+        .format("%Y-%m-%dT%H:%M:%S.000Z")
+        .to_string();
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_LENGTH, total.to_string().parse().unwrap());
+    headers.insert(header::LAST_MODIFIED, last_modified.parse().unwrap());
+    headers.insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream".parse().unwrap(),
+    );
+    headers.insert(
+        header::ETAG,
+        format!("\"{}\"", file_hash.dbg_short(16)).parse().unwrap(),
+    );
+
+    (StatusCode::OK, headers, String::new()).into_response()
+}
+
+/// `GET /{bucket}/{*key}` -- GetObject, with optional `Range` support.
+/// Returns the full file (200) or a byte range (206 Partial Content).
+/// 404 if the key does not exist, 416 if the range is unsatisfiable.
+async fn get_object_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+    Path((bucket, key)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+            .into_response();
+        }
+    };
+
+    if bucket != s.bucket_name {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    let (fileref, file_hash) = match resolve_path(&s.redb, &key) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => {
+            return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchKey", &key).into_response();
+        }
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            )
+            .into_response();
+        }
+    };
+
+    let total = fileref.total_size();
+
+    // Parse Range header if present.
+    let range = match parse_range_header(&headers, total) {
+        Ok(r) => r,
+        Err(msg) => {
+            return s3xml::error_response(StatusCode::RANGE_NOT_SATISFIABLE, "InvalidRange", &msg)
+                .into_response();
+        }
+    };
+
+    let last_modified = s
+        .index_updated_at
+        .format("%Y-%m-%dT%H:%M:%S.000Z")
+        .to_string();
+    let etag = format!("\"{}\"", file_hash.dbg_short(16));
+
+    match range {
+        None => {
+            // Full file.
+            let data = match fetch_file_bytes(&fileref, &s.redb, &s.blob_reader).await {
+                Ok(d) => d,
+                Err(e) => {
+                    return s3xml::error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
+                    .into_response();
+                }
+            };
+
+            let mut response_headers = HeaderMap::new();
+            response_headers.insert(
+                header::CONTENT_LENGTH,
+                data.len().to_string().parse().unwrap(),
+            );
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                "application/octet-stream".parse().unwrap(),
+            );
+            response_headers.insert(header::LAST_MODIFIED, last_modified.parse().unwrap());
+            response_headers.insert(header::ETAG, etag.parse().unwrap());
+
+            (
+                StatusCode::OK,
+                response_headers,
+                axum::body::Body::from(data),
+            )
+                .into_response()
+        }
+
+        Some(r) => {
+            let data =
+                match fetch_range_bytes(&fileref, &s.redb, &s.blob_reader, r.start, r.end).await {
+                    Ok(d) => d,
+                    Err(e) => {
+                        return s3xml::error_response(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "InternalError",
+                            &e.to_string(),
+                        )
+                        .into_response();
+                    }
+                };
+
+            let content_range = format!("bytes {}-{}/{}", r.start, r.end - 1, total);
+
+            let mut response_headers = HeaderMap::new();
+            response_headers.insert(
+                header::CONTENT_LENGTH,
+                data.len().to_string().parse().unwrap(),
+            );
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                "application/octet-stream".parse().unwrap(),
+            );
+            response_headers.insert(header::LAST_MODIFIED, last_modified.parse().unwrap());
+            response_headers.insert(header::ETAG, etag.parse().unwrap());
+            response_headers.insert(header::CONTENT_RANGE, content_range.parse().unwrap());
+
+            (
+                StatusCode::PARTIAL_CONTENT,
+                response_headers,
+                axum::body::Body::from(data),
+            )
+                .into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashSet;
@@ -315,10 +689,31 @@ mod test {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::blob::BlobIndex;
+    use crate::blob::{BlobIndex, EncBlobReader};
     use crate::block::{ChunkMeta, FileRef, PlainIndex};
+    use crate::dek_provider::DekProvider;
+    use crate::hash;
     use crate::hash::Hash;
+    use crate::storage::{BackendKind, Local};
     use crate::tag::TagIndex;
+
+    /// Build a test `EncBlobReader` with a fresh KEK and an empty
+    /// local backend. The blob reader is not exercised by Stage 3
+    /// listing tests; it is only needed so `ServeState` is fully
+    /// populated.
+    fn test_blob_reader() -> EncBlobReader {
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(tmp.path()));
+        // Leak the tempdir so the backend path survives for the
+        // reader's lifetime. The OS cleans up on process exit.
+        std::mem::forget(tmp);
+        EncBlobReader::new(keys, backend)
+    }
 
     fn test_state(paths: &[&str]) -> ServeState {
         let tmp = tempfile::tempdir().unwrap();
@@ -354,6 +749,7 @@ mod test {
                 .timestamp_opt(1718774400, 0)
                 .unwrap()
                 .naive_utc(),
+            blob_reader: Arc::new(test_blob_reader()),
         }
     }
 
@@ -362,9 +758,13 @@ mod test {
         let lock = Arc::new(OnceLock::new());
         lock.set(state).unwrap();
         Router::new()
-            .route("/health", get(health_handler))
+            .route("/_health", get(health_handler))
             .route("/", get(list_buckets_handler))
             .route("/{bucket}", get(list_objects_handler))
+            .route(
+                "/{bucket}/{*key}",
+                get(get_object_handler).head(head_object_handler),
+            )
             .with_state(lock)
     }
 
@@ -372,9 +772,13 @@ mod test {
     fn not_ready_router() -> Router {
         let lock: Arc<OnceLock<ServeState>> = Arc::new(OnceLock::new());
         Router::new()
-            .route("/health", get(health_handler))
+            .route("/_health", get(health_handler))
             .route("/", get(list_buckets_handler))
             .route("/{bucket}", get(list_objects_handler))
+            .route(
+                "/{bucket}/{*key}",
+                get(get_object_handler).head(head_object_handler),
+            )
             .with_state(lock)
     }
 
@@ -385,6 +789,83 @@ mod test {
             .expect("failed to read body")
             .to_bytes();
         String::from_utf8(bytes.to_vec()).expect("body is not UTF-8")
+    }
+
+    /// Read response body as raw bytes (for binary content tests).
+    async fn body_bytes(body: Body) -> Vec<u8> {
+        body.collect()
+            .await
+            .expect("failed to read body")
+            .to_bytes()
+            .to_vec()
+    }
+
+    /// Build a `ServeState` with real blob data. Writes `file_data`
+    /// through `BlobBuffer` (chunking, encrypting, uploading to a
+    /// local backend), then populates redb from the resulting
+    /// indexes. The file is accessible at `path` in the virtual
+    /// namespace.
+    ///
+    /// Returns the state and the original file data for assertions.
+    async fn data_state(path: &str, file_data: &[u8]) -> (ServeState, Vec<u8>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+
+        // Write file_data as a single chunk through BlobBuffer.
+        let mut blob_idx = BlobIndex::new();
+        let mut blob_buf = crate::blob::BlobBuffer::new(&backend, keys.clone());
+        let mut chunk_data = file_data.to_vec();
+        blob_buf
+            .add_chunk(&mut chunk_data, &mut blob_idx)
+            .await
+            .unwrap();
+        blob_buf.finalize(&mut blob_idx).await.unwrap();
+
+        // Build a PlainIndex with a FileRef pointing at the chunk.
+        let chunk_hash = crate::hash::multihash(file_data);
+        let chunk_hash = Hash::from(chunk_hash.to_bytes());
+        let chunk_meta = ChunkMeta {
+            hash: chunk_hash.clone(),
+            size: file_data.len(),
+        };
+        let fileref = FileRef {
+            chunkmetas: vec![chunk_meta],
+            paths: HashSet::from([PathBuf::from(path)]),
+        };
+        let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(file_hash, fileref);
+
+        // Populate redb from both indexes.
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
+            .unwrap();
+
+        // Build the blob reader with the same keys and backend.
+        let blob_reader = EncBlobReader::new(keys, backend);
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+        };
+
+        // Leak the tempdir so the backend and redb files survive.
+        std::mem::forget(tmp);
+
+        (state, file_data.to_vec())
     }
 
     #[tokio::test]
@@ -643,7 +1124,7 @@ mod test {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/health")
+                    .uri("/_health")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -696,7 +1177,7 @@ mod test {
         let response = app
             .oneshot(
                 Request::builder()
-                    .uri("/health")
+                    .uri("/_health")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -706,5 +1187,314 @@ mod test {
         assert_eq!(response.status(), StatusCode::OK);
         let body = body_string(response.into_body()).await;
         assert!(body.starts_with("ok ("));
+    }
+
+    #[tokio::test]
+    async fn get_object_returns_full_file() {
+        let file_data: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+        let (state, original) = data_state("report.pdf", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/report.pdf")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "1024"
+        );
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        assert!(response.headers().get(header::LAST_MODIFIED).is_some());
+        assert!(response.headers().get(header::ETAG).is_some());
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, original);
+    }
+
+    #[tokio::test]
+    async fn head_object_returns_metadata_no_body() {
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+        let (state, _) = data_state("doc.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/testvault/doc.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "512"
+        );
+        assert!(response.headers().get(header::LAST_MODIFIED).is_some());
+        assert!(response.headers().get(header::ETAG).is_some());
+
+        let body = body_bytes(response.into_body()).await;
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_object_with_range_closed() {
+        let file_data: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+        let (state, _) = data_state("data.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/data.bin")
+                    .header("Range", "bytes=100-199")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "100"
+        );
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 100-199/1024"
+        );
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), 100);
+        assert_eq!(body, &file_data[100..200]);
+    }
+
+    #[tokio::test]
+    async fn get_object_with_range_open_ended() {
+        let file_data: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+        let (state, _) = data_state("data.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/data.bin")
+                    .header("Range", "bytes=900-")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 900-1023/1024"
+        );
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), 124);
+        assert_eq!(body, &file_data[900..]);
+    }
+
+    #[tokio::test]
+    async fn get_object_with_range_suffix() {
+        let file_data: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+        let (state, _) = data_state("data.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/data.bin")
+                    .header("Range", "bytes=-50")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 974-1023/1024"
+        );
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), 50);
+        assert_eq!(body, &file_data[974..]);
+    }
+
+    #[tokio::test]
+    async fn get_object_range_beyond_eof_416() {
+        let file_data: Vec<u8> = vec![0xAB; 100];
+        let (state, _) = data_state("small.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/small.bin")
+                    .header("Range", "bytes=200-300")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("InvalidRange"));
+    }
+
+    #[tokio::test]
+    async fn get_object_nonexistent_key_404() {
+        let file_data: Vec<u8> = vec![0x01, 0x02, 0x03];
+        let (state, _) = data_state("exists.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/nope.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NoSuchKey"));
+    }
+
+    #[tokio::test]
+    async fn head_object_nonexistent_key_404() {
+        let file_data: Vec<u8> = vec![0x01, 0x02, 0x03];
+        let (state, _) = data_state("exists.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/testvault/nope.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn get_object_wrong_bucket_404() {
+        let file_data: Vec<u8> = vec![0x01, 0x02, 0x03];
+        let (state, _) = data_state("file.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/wrongbucket/file.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NoSuchBucket"));
+    }
+
+    #[tokio::test]
+    async fn get_object_returns_503_when_not_ready() {
+        let app = not_ready_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/anything.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NotReady"));
+    }
+
+    #[tokio::test]
+    async fn get_object_range_start_at_zero() {
+        let file_data: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        let (state, _) = data_state("range.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/range.bin")
+                    .header("Range", "bytes=0-9")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 0-9/256"
+        );
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), 10);
+        assert_eq!(body, &file_data[0..10]);
+    }
+
+    #[tokio::test]
+    async fn get_object_range_clamps_end_past_eof() {
+        let file_data: Vec<u8> = vec![0xAB; 100];
+        let (state, _) = data_state("clamp.bin", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/clamp.bin")
+                    .header("Range", "bytes=50-999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // S3 clamps end to EOF rather than returning 416
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 50-99/100"
+        );
+
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), 50);
+        assert_eq!(body, &file_data[50..]);
     }
 }

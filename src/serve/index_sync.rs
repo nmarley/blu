@@ -15,6 +15,7 @@
 
 use chrono::NaiveDateTime;
 
+use crate::blob::EncBlobReader;
 use crate::config::Config;
 use crate::dek_provider::DekProvider;
 use crate::error::BluError;
@@ -33,24 +34,25 @@ use crate::storage::BackendKind;
 /// machine, the existing database is overwritten with fresh state from
 /// the backend.
 ///
-/// Returns the redb store and the `PlainIndex::updated_at` timestamp,
-/// which the server uses as a proxy for object `LastModified` values
-/// (individual file modification times are not tracked in the current
-/// index format).
+/// Returns the redb store, the `PlainIndex::updated_at` timestamp
+/// (used as a proxy for object `LastModified` values, since individual
+/// file modification times are not tracked in the current index
+/// format), and an `EncBlobReader` owning the keys and backend for
+/// serving chunk data.
 pub async fn sync_from_backend(
     cfg: &Config,
-    keys: &DekProvider,
-    backend: &BackendKind,
-) -> Result<(RedbStore, NaiveDateTime), BluError> {
+    keys: DekProvider,
+    backend: BackendKind,
+) -> Result<(RedbStore, NaiveDateTime, EncBlobReader), BluError> {
     let redb_path = cfg.bludir().join("serve.redb");
 
     info!("pulling indexes from backend");
-    cfg.pull_indexes(backend).await?;
+    cfg.pull_indexes(&backend).await?;
 
-    let plain = cfg.load_plain_index(keys)?;
+    let plain = cfg.load_plain_index(&keys)?;
     let updated_at = plain.updated_at();
-    let blob = cfg.load_blob_index_or_default(keys);
-    let tag = cfg.load_tag_index_or_default(keys);
+    let blob = cfg.load_blob_index_or_default(&keys);
+    let tag = cfg.load_tag_index_or_default(&keys);
 
     info!("opening redb store at {}", redb_path.display());
     let store = RedbStore::open(&redb_path)?;
@@ -66,5 +68,7 @@ pub async fn sync_from_backend(
         store.tag_count()?,
     );
 
-    Ok((store, updated_at))
+    let blob_reader = EncBlobReader::new(keys, backend);
+
+    Ok((store, updated_at, blob_reader))
 }

@@ -21,7 +21,7 @@ by mutating this file.
     `redb_store.rs`, `index_sync.rs`)
 1d. Add `blu serve` subcommand to `clapargs.rs` and dispatch in
     `src/bin/blu.rs` (foreground, listens on localhost:7777)
-1e. `GET /health` returns OK; verify `cargo build` + `cargo clippy`
+1e. `GET /_health` returns OK; verify `cargo build` + `cargo clippy`
     clean
 
 ## Stage 2: redb index store and startup sync

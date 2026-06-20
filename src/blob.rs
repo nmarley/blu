@@ -200,48 +200,79 @@ impl BlobBlockLocation {
 /// so 10 entries caps memory at ~640 MiB worst case.
 const BLOB_CACHE_CAPACITY: usize = 10;
 
-/// EncBlobReader reads encrypted blobs from storage.
-pub struct EncBlobReader<'a, 'b> {
-    cache: LruCache<Hash, Vec<u8>>,
-    keys: &'a DekProvider,
-    backend: &'b BackendKind,
+/// EncBlobReader reads encrypted blobs from storage, decrypts and
+/// decompresses them, and caches the result in an LRU cache.
+///
+/// The cache is guarded by a `std::sync::Mutex` so the reader can be
+/// shared across concurrent handlers (e.g., multiple `blu serve`
+/// streaming requests). The mutex is held only briefly for cache
+/// lookup and insertion; backend fetch, decryption, and decompression
+/// all happen lock-free. This means two concurrent requests for the
+/// same uncached blob may both fetch it (last insert wins), which is
+/// wasteful but harmless. Single-flight deduplication is a future
+/// optimization.
+pub struct EncBlobReader {
+    cache: std::sync::Mutex<LruCache<Hash, Vec<u8>>>,
+    keys: DekProvider,
+    backend: BackendKind,
 }
-impl<'a, 'b> EncBlobReader<'a, 'b> {
-    /// Create a new EncBlobReader.
-    pub fn new(keys: &'a DekProvider, backend: &'b BackendKind) -> Self {
+
+impl EncBlobReader {
+    /// Create a new EncBlobReader with the default cache capacity.
+    pub fn new(keys: DekProvider, backend: BackendKind) -> Self {
+        Self::with_capacity(keys, backend, BLOB_CACHE_CAPACITY)
+    }
+
+    /// Create a new EncBlobReader with a custom cache capacity (number
+    /// of decrypted blobs to keep in the LRU cache).
+    pub fn with_capacity(keys: DekProvider, backend: BackendKind, capacity: usize) -> Self {
+        let cap = NonZeroUsize::new(capacity.max(1)).expect("max(1) guarantees nonzero");
         Self {
-            cache: LruCache::new(NonZeroUsize::new(BLOB_CACHE_CAPACITY).unwrap()),
+            cache: std::sync::Mutex::new(LruCache::new(cap)),
             keys,
             backend,
         }
     }
 
-    /// Get the bytes from the blob file at the specified position.
+    /// Get the bytes for the chunk at the specified position within its
+    /// blob.
     ///
-    /// Returns a borrowed slice into the cached decompressed blob, avoiding a
-    /// per-chunk heap allocation.
-    pub async fn get_bytes(&mut self, location_ref: &BlobBlockLocation) -> Result<&[u8], BluError> {
+    /// On a cache hit, the slice is cloned under the mutex and returned
+    /// as an owned `Vec<u8>`, so the lock is never held across an await
+    /// point or returned to the caller. On a miss, the blob is fetched,
+    /// decrypted, and decompressed lock-free, then inserted into the
+    /// cache.
+    pub async fn get_bytes(&self, location_ref: &BlobBlockLocation) -> Result<Vec<u8>, BluError> {
         let hash = storage::hash_from_path(&location_ref.path)?;
+        let pos = &location_ref.position;
 
-        if !self.cache.contains(&hash) {
-            debug!(
-                "Reading blob file from backend: {}",
-                location_ref.path.display()
-            );
-            let raw = self.backend.read_data(&location_ref.path).await?;
-            let decrypted = decrypt_envelope(&raw, self.keys)?;
-            let decompressed = decompress(&decrypted)?;
-            self.cache.put(hash.clone(), decompressed);
-        } else {
-            trace!("Blob cache hit: {}", location_ref.path.display());
+        // Fast path: cache hit. Clone the slice under the lock, release.
+        {
+            let mut cache = self.cache.lock().expect("blob cache mutex poisoned");
+            if let Some(full_data) = cache.get(&hash) {
+                trace!("Blob cache hit: {}", location_ref.path.display());
+                return Ok(full_data[pos.offset..pos.offset + pos.size].to_vec());
+            }
         }
 
-        let full_data = self
-            .cache
-            .get(&hash)
-            .ok_or_else(|| BluError::Internal("blob cache miss immediately after insert".into()))?;
-        let pos = &location_ref.position;
-        Ok(&full_data[pos.offset..pos.offset + pos.size])
+        // Slow path: cache miss. Fetch, decrypt, decompress lock-free.
+        debug!(
+            "Reading blob file from backend: {}",
+            location_ref.path.display()
+        );
+        let raw = self.backend.read_data(&location_ref.path).await?;
+        let decrypted = decrypt_envelope(&raw, &self.keys)?;
+        let decompressed = decompress(&decrypted)?;
+
+        // Extract the chunk slice before moving decompressed into cache.
+        let chunk = decompressed[pos.offset..pos.offset + pos.size].to_vec();
+
+        {
+            let mut cache = self.cache.lock().expect("blob cache mutex poisoned");
+            cache.put(hash, decompressed);
+        }
+
+        Ok(chunk)
     }
 }
 
@@ -293,11 +324,11 @@ pub async fn repack_blobs(
     }
 
     // Read all live chunk data from the old blobs.
-    let mut reader = EncBlobReader::new(keys, backend);
+    let reader = EncBlobReader::new(keys.clone(), backend.clone());
     let mut chunk_data: Vec<Vec<u8>> = Vec::with_capacity(chunks_to_move.len());
     for (_hash, location) in &chunks_to_move {
         let data = reader.get_bytes(location).await?;
-        chunk_data.push(data.to_vec());
+        chunk_data.push(data);
     }
     drop(reader);
 
@@ -856,7 +887,7 @@ mod test {
         repack_blobs(&mut idx, &backend, &keys).await.unwrap();
 
         // Read back surviving chunks through EncBlobReader
-        let mut reader = EncBlobReader::new(&keys, &backend);
+        let reader = EncBlobReader::new(keys.clone(), backend.clone());
         let loc2 = idx.get_block_location_ref(&Hash::from(CHUNK2)).unwrap();
         let read2 = reader.get_bytes(&loc2).await.unwrap();
         assert_eq!(read2, chunk2_data.as_slice());
