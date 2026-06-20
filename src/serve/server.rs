@@ -7,7 +7,7 @@
 //! Stage 4.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::extract::{Path, Query};
 use axum::http::{header, StatusCode};
@@ -28,8 +28,9 @@ use crate::serve::s3xml;
 /// agent daemon is the trust boundary, not the HTTP server.
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:7777";
 
-/// State shared across all axum handlers.
-#[derive(Clone)]
+/// State shared across all axum handlers. Stored in an `OnceLock`
+/// behind an `Arc`; handlers access it via `OnceLock::get()` which
+/// returns `None` until the background index sync completes.
 pub struct ServeState {
     /// Local redb index store for path/file/blob/tag lookups.
     redb: Arc<RedbStore>,
@@ -39,6 +40,15 @@ pub struct ServeState {
     /// individual object `LastModified` values. The current index
     /// format does not track per-file modification times.
     index_updated_at: NaiveDateTime,
+}
+
+impl std::fmt::Debug for ServeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServeState")
+            .field("bucket_name", &self.bucket_name)
+            .field("index_updated_at", &self.index_updated_at)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Wait for SIGTERM or SIGINT, then return. Used as the graceful
@@ -54,8 +64,11 @@ async fn shutdown_signal() {
 }
 
 /// Entry point for `blu serve`. Loads the vault config and keys,
-/// syncs indexes from the backend into the local redb store, then
-/// binds a TCP listener and serves the HTTP API until interrupted.
+/// binds the TCP listener, starts serving HTTP immediately, and runs
+/// index sync as a background task. Until sync completes, `/health`
+/// and all S3 endpoints return 503. This gives process supervisors a
+/// real readiness signal instead of the port being closed until sync
+/// finishes.
 pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let addr: SocketAddr = bind_addr
         .as_deref()
@@ -69,29 +82,50 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     info!("initializing storage backend");
     let backend = cfg.init_storage_backend().await?;
 
-    info!("syncing indexes from backend into local redb store");
-    let (store, index_updated_at) = index_sync::sync_from_backend(&cfg, &keys, &backend).await?;
-
-    let bucket_name = cfg
-        .basedir()
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "blu".to_string());
-
-    let state = ServeState {
-        redb: Arc::new(store),
-        bucket_name,
-        index_updated_at,
-    };
+    // Shared readiness slot: None until sync completes, then Some.
+    let ready: Arc<OnceLock<ServeState>> = Arc::new(OnceLock::new());
 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/", get(list_buckets_handler))
         .route("/{bucket}", get(list_objects_handler))
-        .with_state(state);
+        .with_state(ready.clone());
 
     let listener = TcpListener::bind(addr).await?;
     info!("blu serve listening on http://{}", addr);
+
+    // Run index sync in the background so the HTTP server is
+    // immediately available for health checks. The ready slot is
+    // populated on success; on failure the error is logged and the
+    // slot stays empty, leaving the server in a 503 "not ready"
+    // state until SIGTERM/SIGINT.
+    let sync_ready = ready.clone();
+    tokio::spawn(async move {
+        info!("syncing indexes from backend into local redb store");
+        match index_sync::sync_from_backend(&cfg, &keys, &backend).await {
+            Ok((store, index_updated_at)) => {
+                let bucket_name = cfg
+                    .basedir()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "blu".to_string());
+
+                let state = ServeState {
+                    redb: Arc::new(store),
+                    bucket_name,
+                    index_updated_at,
+                };
+
+                if sync_ready.set(state).is_err() {
+                    warn!("serve state already set, sync result discarded");
+                }
+                info!("index sync complete, server ready");
+            }
+            Err(e) => {
+                error!("index sync failed, server remains not-ready: {}", e);
+            }
+        }
+    });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -101,27 +135,55 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     Ok(())
 }
 
-/// Health check handler. Returns 200 OK with a simple body. Used to
-/// verify the daemon is running and the index store is loaded.
-async fn health_handler(state: axum::extract::State<ServeState>) -> String {
-    let paths = state.redb.path_count().unwrap_or(0);
-    let files = state.redb.file_count().unwrap_or(0);
-    let chunks = state.redb.blob_count().unwrap_or(0);
-    let tags = state.redb.tag_count().unwrap_or(0);
-    format!(
-        "ok ({} paths, {} files, {} chunks, {} tags)",
-        paths, files, chunks, tags
-    )
+/// Health check handler. Returns 503 while the index sync is in
+/// progress (the `OnceLock` is empty), and 200 with index stats once
+/// the store is loaded and the server is ready to serve traffic.
+async fn health_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+) -> impl IntoResponse {
+    match state.0.get() {
+        Some(s) => {
+            let paths = s.redb.path_count().unwrap_or(0);
+            let files = s.redb.file_count().unwrap_or(0);
+            let chunks = s.redb.blob_count().unwrap_or(0);
+            let tags = s.redb.tag_count().unwrap_or(0);
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/plain")],
+                format!(
+                    "ok ({} paths, {} files, {} chunks, {} tags)",
+                    paths, files, chunks, tags
+                ),
+            )
+        }
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "starting".to_string(),
+        ),
+    }
 }
 
 /// `GET /` -- ListBuckets. Returns a single bucket named after the
 /// vault directory. This is what `aws s3 ls` (without a bucket name)
-/// calls.
-async fn list_buckets_handler(state: axum::extract::State<ServeState>) -> impl IntoResponse {
+/// calls. Returns 503 if the index sync has not completed yet.
+async fn list_buckets_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+) -> impl IntoResponse {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+        }
+    };
+
     let xml = s3xml::list_all_my_buckets(
-        &state.bucket_name,
-        &state
-            .index_updated_at
+        &s.bucket_name,
+        &s.index_updated_at
             .format("%Y-%m-%dT%H:%M:%S.000Z")
             .to_string(),
     );
@@ -134,13 +196,25 @@ async fn list_buckets_handler(state: axum::extract::State<ServeState>) -> impl I
 
 /// `GET /{bucket}` -- ListObjectsV2 (or ListObjects V1). Dispatches
 /// based on the `list-type` query parameter. This is what `aws s3 ls
-/// s3://bucket/` calls.
+/// s3://bucket/` calls. Returns 503 if the index sync has not
+/// completed yet.
 async fn list_objects_handler(
-    state: axum::extract::State<ServeState>,
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
     Path(bucket): Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    if bucket != state.bucket_name {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+        }
+    };
+
+    if bucket != s.bucket_name {
         return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket);
     }
 
@@ -173,7 +247,7 @@ async fn list_objects_handler(
 
     // Fetch one extra row beyond max_keys to determine IsTruncated.
     let fetch_count = max_keys.saturating_add(1);
-    let results = match state
+    let results = match s
         .redb
         .list_paths(&prefix, start_after_key.as_deref(), fetch_count)
     {
@@ -206,7 +280,7 @@ async fn list_objects_handler(
     };
 
     let xml = s3xml::list_bucket_result(
-        &state.bucket_name,
+        &s.bucket_name,
         &prefix,
         delimiter.as_deref(),
         max_keys,
@@ -217,8 +291,8 @@ async fn list_objects_handler(
         next_continuation_token.as_deref(),
         &contents,
         &common_prefixes,
-        &state.index_updated_at,
-        &state.redb,
+        &s.index_updated_at,
+        &s.redb,
     );
 
     (
@@ -232,7 +306,7 @@ async fn list_objects_handler(
 mod test {
     use std::collections::HashSet;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
@@ -269,7 +343,7 @@ mod test {
             .populate_from_indexes(&plain, &BlobIndex::default(), &TagIndex::new())
             .unwrap();
 
-        // Leak the tempdir so the redb file survives for the test.
+        // Leak the tempdir so the redb file survives for test.
         // The OS cleans up temp files on process exit.
         std::mem::forget(tmp);
 
@@ -283,12 +357,25 @@ mod test {
         }
     }
 
+    /// Build a router with a ready (populated) state.
     fn test_router(state: ServeState) -> Router {
+        let lock = Arc::new(OnceLock::new());
+        lock.set(state).unwrap();
         Router::new()
             .route("/health", get(health_handler))
             .route("/", get(list_buckets_handler))
             .route("/{bucket}", get(list_objects_handler))
-            .with_state(state)
+            .with_state(lock)
+    }
+
+    /// Build a router with an empty (not-yet-ready) state slot.
+    fn not_ready_router() -> Router {
+        let lock: Arc<OnceLock<ServeState>> = Arc::new(OnceLock::new());
+        Router::new()
+            .route("/health", get(health_handler))
+            .route("/", get(list_buckets_handler))
+            .route("/{bucket}", get(list_objects_handler))
+            .with_state(lock)
     }
 
     async fn body_string(body: Body) -> String {
@@ -547,5 +634,77 @@ mod test {
             }
         }
         out
+    }
+
+    #[tokio::test]
+    async fn health_returns_503_when_not_ready() {
+        let app = not_ready_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert_eq!(body, "starting");
+    }
+
+    #[tokio::test]
+    async fn list_buckets_returns_503_when_not_ready() {
+        let app = not_ready_router();
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NotReady"));
+    }
+
+    #[tokio::test]
+    async fn list_objects_returns_503_when_not_ready() {
+        let app = not_ready_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault?list-type=2")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NotReady"));
+    }
+
+    #[tokio::test]
+    async fn health_returns_200_when_ready() {
+        let state = test_state(&["a.txt"]);
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_string(response.into_body()).await;
+        assert!(body.starts_with("ok ("));
     }
 }
