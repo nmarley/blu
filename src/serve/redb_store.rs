@@ -19,14 +19,16 @@
 //! / `deserialize_bytes()`. Keys use raw bytes (hash) or UTF-8 strings
 //! (paths, tags) for efficient range scans and prefix queries.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
 use std::path::Path;
 
-use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
+use chrono::Timelike;
+use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::blob::BlobBlockLocation;
 use crate::blob::BlobIndex;
+use crate::block::BlockRef;
 use crate::block::FileRef;
 use crate::block::PlainIndex;
 use crate::error::BluError;
@@ -44,6 +46,13 @@ const BLOB_INDEX: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("blob
 
 /// tag -> file_hashes CBOR. Keys are sanitized tag strings (UTF-8).
 const TAG_INDEX: TableDefinition<'_, &str, &[u8]> = TableDefinition::new("tag_index");
+
+/// chunk_hash -> BlockRef CBOR. Keys are raw multihash bytes.
+///
+/// Maps onto `PlainIndex::blocks` (chunk_hash -> file_hash ->
+/// Position). Used by the delete cascade to find which files
+/// reference a given chunk without scanning all FileRefs.
+const BLOCK_INDEX: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("block_index");
 
 /// redb database handle held by the serve daemon for the lifetime of
 /// the process.
@@ -66,17 +75,20 @@ impl RedbStore {
             let _ = txn.open_table(FILE_INDEX)?;
             let _ = txn.open_table(BLOB_INDEX)?;
             let _ = txn.open_table(TAG_INDEX)?;
+            let _ = txn.open_table(BLOCK_INDEX)?;
         }
         txn.commit()?;
 
         Ok(Self { db })
     }
 
-    /// Bulk-insert all entries from the three deserialized indexes into
+    /// Bulk-insert all entries from the deserialized indexes into
     /// redb. This is the "fresh machine" path: pull encrypted indexes
     /// from backend, decrypt+deserialize, load into redb.
     ///
-    /// Any existing entries in redb are replaced.
+    /// Populates all five tables: path_index, file_index, blob_index,
+    /// tag_index, and block_index. Any existing entries in redb are
+    /// replaced.
     pub fn populate_from_indexes(
         &self,
         plain: &PlainIndex,
@@ -105,6 +117,14 @@ impl RedbStore {
                 let key = chunk_hash.to_bytes();
                 let value = serialize_cbor(location)?;
                 blob_table.insert(key.as_slice(), value.as_slice())?;
+            }
+        }
+        {
+            let mut block_table = txn.open_table(BLOCK_INDEX)?;
+            for (chunk_hash, blockref) in plain.blocks_map_ref() {
+                let key = chunk_hash.to_bytes();
+                let value = serialize_cbor(blockref)?;
+                block_table.insert(key.as_slice(), value.as_slice())?;
             }
         }
         {
@@ -166,6 +186,163 @@ impl RedbStore {
             }
             None => Ok(None),
         }
+    }
+
+    /// Look up a `BlockRef` by chunk hash. Returns `None` if the
+    /// chunk is not in the block index.
+    ///
+    /// The block index maps chunk_hash -> BlockRef, where BlockRef
+    /// contains a set of file_hash -> Position references. This is
+    /// the reverse mapping of `FileRef::chunkmetas`, used by the
+    /// delete cascade to find which files reference a given chunk.
+    pub fn get_blockref(&self, chunk_hash: &Hash) -> Result<Option<BlockRef>, BluError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(BLOCK_INDEX)?;
+        let key = chunk_hash.to_bytes();
+        match table.get(key.as_slice())? {
+            Some(guard) => {
+                let blockref = deserialize_cbor(guard.value())?;
+                Ok(Some(blockref))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Insert or replace a `BlockRef` for the given chunk hash.
+    pub fn put_blockref(&self, chunk_hash: &Hash, blockref: &BlockRef) -> Result<(), BluError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(BLOCK_INDEX)?;
+            let key = chunk_hash.to_bytes();
+            let value = serialize_cbor(blockref)?;
+            table.insert(key.as_slice(), value.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Delete the `BlockRef` for the given chunk hash. Returns `true`
+    /// if an entry was removed, `false` if it did not exist.
+    pub fn delete_blockref(&self, chunk_hash: &Hash) -> Result<bool, BluError> {
+        let txn = self.db.begin_write()?;
+        let removed = {
+            let mut table = txn.open_table(BLOCK_INDEX)?;
+            let key = chunk_hash.to_bytes();
+            let guard = table.remove(key.as_slice())?;
+            guard.is_some()
+        };
+        txn.commit()?;
+        Ok(removed)
+    }
+
+    /// Insert or replace a `BlobBlockLocation` for the given chunk
+    /// hash in the blob index.
+    pub fn put_blob_location(
+        &self,
+        chunk_hash: &Hash,
+        location: &BlobBlockLocation,
+    ) -> Result<(), BluError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(BLOB_INDEX)?;
+            let key = chunk_hash.to_bytes();
+            let value = serialize_cbor(location)?;
+            table.insert(key.as_slice(), value.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Delete the `BlobBlockLocation` for the given chunk hash.
+    /// Returns `true` if an entry was removed, `false` if it did not
+    /// exist.
+    pub fn delete_blob_location(&self, chunk_hash: &Hash) -> Result<bool, BluError> {
+        let txn = self.db.begin_write()?;
+        let removed = {
+            let mut table = txn.open_table(BLOB_INDEX)?;
+            let key = chunk_hash.to_bytes();
+            let guard = table.remove(key.as_slice())?;
+            guard.is_some()
+        };
+        txn.commit()?;
+        Ok(removed)
+    }
+
+    /// Insert or replace a `FileRef` for the given file hash, and
+    /// update the path index for all paths in the `FileRef`.
+    ///
+    /// This is the write-path counterpart to `get_fileref`. It
+    /// updates both the file_index and path_index tables in a single
+    /// transaction.
+    pub fn put_fileref(&self, file_hash: &Hash, fileref: &FileRef) -> Result<(), BluError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut file_table = txn.open_table(FILE_INDEX)?;
+            let mut path_table = txn.open_table(PATH_INDEX)?;
+            let key = file_hash.to_bytes();
+            let value = serialize_cbor(fileref)?;
+            file_table.insert(key.as_slice(), value.as_slice())?;
+            for path in &fileref.paths {
+                let path_str = path.to_string_lossy();
+                path_table.insert(path_str.as_ref(), key.as_slice())?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Remove a file from both the file_index and path_index tables.
+    ///
+    /// Removes all path entries that map to the given file_hash, and
+    /// the file_hash entry itself. Does not touch block_index or
+    /// blob_index; the caller is responsible for the delete cascade.
+    pub fn delete_file(&self, file_hash: &Hash) -> Result<(), BluError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut file_table = txn.open_table(FILE_INDEX)?;
+            let mut path_table = txn.open_table(PATH_INDEX)?;
+            let key = file_hash.to_bytes();
+
+            // Remove all path entries pointing to this file_hash.
+            // We need to scan for them since path_index maps path ->
+            // file_hash, and we don't have a reverse index.
+            // Collect paths to remove first to avoid holding a read
+            // iterator while mutating.
+            let paths_to_remove: Vec<String> = {
+                let paths_to_remove: Vec<String> = path_table
+                    .iter()?
+                    .filter_map(|item| {
+                        let (k, v) = item.ok()?;
+                        if v.value() == key.as_slice() {
+                            Some(k.value().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                paths_to_remove
+            };
+            for path in paths_to_remove {
+                path_table.remove(path.as_str())?;
+            }
+
+            file_table.remove(key.as_slice())?;
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Remove a path from the path_index table. Returns `true` if an
+    /// entry was removed.
+    pub fn delete_path(&self, path: &str) -> Result<bool, BluError> {
+        let txn = self.db.begin_write()?;
+        let removed = {
+            let mut table = txn.open_table(PATH_INDEX)?;
+            let guard = table.remove(path)?;
+            guard.is_some()
+        };
+        txn.commit()?;
+        Ok(removed)
     }
 
     /// Look up the set of file hashes for a given tag. Returns an empty
@@ -252,6 +429,88 @@ impl RedbStore {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(TAG_INDEX)?;
         Ok(table.len()?)
+    }
+
+    /// Count the number of entries in the block index.
+    pub fn block_count(&self) -> Result<u64, BluError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(BLOCK_INDEX)?;
+        Ok(table.len()?)
+    }
+
+    /// Dump all redb tables back into in-memory index structs.
+    ///
+    /// This is the reverse of [`populate_from_indexes`]. It reads
+    /// every entry from all five tables and reconstructs
+    /// `PlainIndex`, `BlobIndex`, and `TagIndex`. Used by the index
+    /// flush strategy to serialize redb state to encrypted CBOR and
+    /// push to the backend.
+    ///
+    /// The returned `PlainIndex` has `updated_at` set to the current
+    /// time, and `created_at` copied from the existing index if
+    /// available (otherwise also set to now).
+    pub fn dump_to_indexes(&self) -> Result<(PlainIndex, BlobIndex, TagIndex), BluError> {
+        let txn = self.db.begin_read()?;
+
+        // Dump file_index -> PlainIndex.files
+        let mut files: HashMap<Hash, FileRef> = HashMap::new();
+        {
+            let file_table = txn.open_table(FILE_INDEX)?;
+            for item in file_table.iter()? {
+                let (key_guard, value_guard) = item?;
+                let file_hash = Hash::from(key_guard.value());
+                let fileref: FileRef = deserialize_cbor(value_guard.value())?;
+                files.insert(file_hash, fileref);
+            }
+        }
+
+        // Dump block_index -> PlainIndex.blocks
+        let mut blocks: HashMap<Hash, BlockRef> = HashMap::new();
+        {
+            let block_table = txn.open_table(BLOCK_INDEX)?;
+            for item in block_table.iter()? {
+                let (key_guard, value_guard) = item?;
+                let chunk_hash = Hash::from(key_guard.value());
+                let blockref: BlockRef = deserialize_cbor(value_guard.value())?;
+                blocks.insert(chunk_hash, blockref);
+            }
+        }
+
+        // Dump blob_index -> BlobIndex
+        let mut blob_index = BlobIndex::new();
+        {
+            let blob_table = txn.open_table(BLOB_INDEX)?;
+            for item in blob_table.iter()? {
+                let (key_guard, value_guard) = item?;
+                let chunk_hash = Hash::from(key_guard.value());
+                let location: BlobBlockLocation = deserialize_cbor(value_guard.value())?;
+                blob_index.add_chunk_location(&chunk_hash, &location);
+            }
+        }
+
+        // Dump tag_index -> TagIndex
+        let mut tag_index = TagIndex::new();
+        {
+            let tag_table = txn.open_table(TAG_INDEX)?;
+            for item in tag_table.iter()? {
+                let (key_guard, value_guard) = item?;
+                let tag_name = key_guard.value().to_string();
+                let file_hashes = deserialize_tag_value(value_guard.value())?;
+                for fh in &file_hashes {
+                    tag_index.add_tag(fh, &tag_name);
+                }
+            }
+        }
+
+        // Build PlainIndex starting from new_empty() (which sets
+        // version, created_at, updated_at), then overwrite files and
+        // blocks with the dumped data and refresh updated_at.
+        let mut plain = PlainIndex::new_empty();
+        plain.files = files;
+        plain.blocks = blocks;
+        plain.updated_at = chrono::Utc::now().naive_utc().with_nanosecond(0).unwrap();
+
+        Ok((plain, blob_index, tag_index))
     }
 }
 

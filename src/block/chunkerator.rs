@@ -50,9 +50,24 @@ impl std::iter::Iterator for Chunkerator {
     }
 }
 
+/// Split an in-memory byte slice into chunks of `chunk_size` bytes.
+///
+/// The last chunk may be smaller than `chunk_size` if the input is
+/// not evenly divisible. Returns an empty `Vec` if `data` is empty.
+///
+/// This is the in-memory counterpart to [`Chunkerator`], used by the
+/// `blu serve` write path where bytes arrive over HTTP rather than
+/// from a file.
+pub fn chunk_bytes(data: &[u8], chunk_size: usize) -> Vec<Vec<u8>> {
+    if data.is_empty() || chunk_size == 0 {
+        return Vec::new();
+    }
+    data.chunks(chunk_size).map(|c| c.to_vec()).collect()
+}
+
 #[cfg(test)]
 mod test {
-    use super::Chunkerator;
+    use super::{chunk_bytes, Chunkerator};
     use std::path::Path;
 
     const TEST_BLOCKS_DIR_T1: &str = "test/blocks/t1/";
@@ -64,5 +79,53 @@ mod test {
         let chunk = chunker.next();
         assert!(chunk.is_some());
         assert_eq!(chunk.unwrap().len(), 512);
+    }
+
+    #[test]
+    fn chunk_bytes_even_split() {
+        let data = vec![0xAB; 1024];
+        let chunks = chunk_bytes(&data, 256);
+        assert_eq!(chunks.len(), 4);
+        for chunk in &chunks {
+            assert_eq!(chunk.len(), 256);
+        }
+        // Verify reassembly
+        let reassembled: Vec<u8> = chunks.concat();
+        assert_eq!(reassembled, data);
+    }
+
+    #[test]
+    fn chunk_bytes_uneven_split() {
+        let data = vec![0xCD; 1000];
+        let chunks = chunk_bytes(&data, 256);
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0].len(), 256);
+        assert_eq!(chunks[1].len(), 256);
+        assert_eq!(chunks[2].len(), 256);
+        assert_eq!(chunks[3].len(), 232);
+        let reassembled: Vec<u8> = chunks.concat();
+        assert_eq!(reassembled, data);
+    }
+
+    #[test]
+    fn chunk_bytes_single_chunk() {
+        let data = vec![0x01, 0x02, 0x03];
+        let chunks = chunk_bytes(&data, 4096);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], data);
+    }
+
+    #[test]
+    fn chunk_bytes_empty_input() {
+        let data: Vec<u8> = vec![];
+        let chunks = chunk_bytes(&data, 4096);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_bytes_zero_chunk_size() {
+        let data = vec![0x01, 0x02];
+        let chunks = chunk_bytes(&data, 0);
+        assert!(chunks.is_empty());
     }
 }

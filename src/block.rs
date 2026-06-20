@@ -4,6 +4,8 @@ mod chunkmeta;
 mod fileref;
 mod index;
 
+pub(crate) use blockref::BlockRef;
+pub use chunkerator::chunk_bytes;
 pub use chunkerator::Chunkerator;
 pub use chunkmeta::ChunkMeta;
 pub use fileref::FileRef;

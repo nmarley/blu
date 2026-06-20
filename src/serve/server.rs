@@ -158,13 +158,14 @@ async fn health_handler(
             let paths = s.redb.path_count().unwrap_or(0);
             let files = s.redb.file_count().unwrap_or(0);
             let chunks = s.redb.blob_count().unwrap_or(0);
+            let blocks = s.redb.block_count().unwrap_or(0);
             let tags = s.redb.tag_count().unwrap_or(0);
             (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, "text/plain")],
                 format!(
-                    "ok ({} paths, {} files, {} chunks, {} tags)",
-                    paths, files, chunks, tags
+                    "ok ({} paths, {} files, {} chunks, {} blocks, {} tags)",
+                    paths, files, chunks, blocks, tags
                 ),
             )
         }
