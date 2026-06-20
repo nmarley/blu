@@ -11,6 +11,7 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -19,14 +20,20 @@ use axum::Router;
 use chrono::NaiveDateTime;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::Mutex;
 
-use crate::blob::EncBlobReader;
-use crate::block::FileRef;
+use crate::blob::{BlobBuffer, BlobIndex, EncBlobReader};
+use crate::block::{chunk_bytes, ChunkMeta, FileRef, DEFAULT_CHUNK_SIZE};
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::config::Config;
+use crate::dek_provider::DekProvider;
 use crate::error::BluError;
+use crate::hash::{self, Hash};
+use crate::io::Position;
 use crate::serve::index_sync;
 use crate::serve::redb_store::RedbStore;
 use crate::serve::s3xml;
+use crate::storage::BackendKind;
 
 /// Default listen address for the serve daemon. Localhost only; the
 /// agent daemon is the trust boundary, not the HTTP server.
@@ -47,6 +54,22 @@ pub struct ServeState {
     /// Blob reader for fetching, decrypting, and caching blob data.
     /// Shared across concurrent handlers via `Arc`.
     blob_reader: Arc<EncBlobReader>,
+    /// Vault config. Read by the index flush to resolve local index
+    /// directory paths and to push encrypted indexes to the backend.
+    #[allow(dead_code)]
+    cfg: Config,
+    /// DEK provider. Used by the write path for envelope encryption
+    /// of new blobs and (eventually) by the index flush.
+    keys: DekProvider,
+    /// Storage backend. Used by the write path for uploading new
+    /// blobs and (eventually) by the index flush.
+    backend: BackendKind,
+    /// Serializes all write-path mutations so redb state stays
+    /// consistent and no two writes overlap. PutObject, DeleteObject,
+    /// and the index flush all acquire this lock. Read-path handlers
+    /// do not need it; they only read redb and the
+    /// `EncBlobReader` cache.
+    write_mutex: Mutex<()>,
 }
 
 impl std::fmt::Debug for ServeState {
@@ -98,7 +121,9 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
         .route("/{bucket}", get(list_objects_handler))
         .route(
             "/{bucket}/{*key}",
-            get(get_object_handler).head(head_object_handler),
+            get(get_object_handler)
+                .head(head_object_handler)
+                .put(put_object_handler),
         )
         .with_state(ready.clone());
 
@@ -113,8 +138,8 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let sync_ready = ready.clone();
     tokio::spawn(async move {
         info!("syncing indexes from backend into local redb store");
-        match index_sync::sync_from_backend(&cfg, keys, backend).await {
-            Ok((store, index_updated_at, blob_reader)) => {
+        match index_sync::sync_from_backend(cfg, keys, backend).await {
+            Ok((cfg, keys, backend, store, index_updated_at, blob_reader)) => {
                 let bucket_name = cfg
                     .basedir()
                     .file_name()
@@ -126,6 +151,10 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
                     bucket_name,
                     index_updated_at,
                     blob_reader: Arc::new(blob_reader),
+                    cfg,
+                    keys,
+                    backend,
+                    write_mutex: Mutex::new(()),
                 };
 
                 if sync_ready.set(state).is_err() {
@@ -333,6 +362,30 @@ fn resolve_path(
         None => return Ok(None),
     };
     Ok(Some((fileref, file_hash)))
+}
+
+/// Run the delete cascade for the given `file_hash` against the redb
+/// index. This is the index-only half: it removes the FileRef, its
+/// path entries, decrements BlockRef references (removing chunks that
+/// become unreferenced from the blob index), and strips the file from
+/// any tag_index entries. Blob file deletion from the backend is
+/// deferred to the index flush, which serializes redb
+/// state via `RedbStore::dump_to_indexes` and drains dead blob
+/// paths via `BlobIndex::drain_paths_to_delete`.
+///
+/// `PutObject` calls this when overwriting an existing path so the
+/// old file's chunks are reclaimed before the new FileRef is written.
+/// `DeleteObject` will call this directly.
+///
+/// Caller must already hold `ServeState::write_mutex`. Returns the
+/// [`DeleteStats`] produced by [`RedbStore::delete_object_index`]. A
+/// `None` return indicates the file_hash was not present, which is
+/// treated as a success with zero stats.
+async fn delete_file_cascade(
+    state: &ServeState,
+    file_hash: &crate::hash::Hash,
+) -> Result<crate::serve::redb_store::DeleteStats, BluError> {
+    state.redb.delete_object_index(file_hash)
 }
 
 /// Fetch all chunk data for a `FileRef`, in chunk order, and
@@ -677,6 +730,180 @@ async fn get_object_handler(
     }
 }
 
+/// `PUT /{bucket}/{*key}` -- PutObject. Stores the request body as a
+/// new object at the given virtual path, chunking, deduplicating,
+/// encrypting, and uploading new chunks to the storage backend, then
+/// updating redb index state atomically.
+///
+/// Returns 200 with an `ETag` header containing the file's multihash
+/// in double quotes (the S3 ETag convention). If the path already
+/// exists, the old file is cascade-deleted from redb first; the old
+/// blob files themselves are reclaimed lazily by the index flush.
+/// Returns 503 if the index sync has not completed, 404
+/// `NoSuchBucket` if the bucket does not match, 500 `InternalError`
+/// on any index or backend failure.
+async fn put_object_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+    Path((bucket, key)): Path<(String, String)>,
+    body: Bytes,
+) -> axum::response::Response {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+            .into_response();
+        }
+    };
+
+    if bucket != s.bucket_name {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    // All write-path work happens under the write mutex so redb state
+    // stays consistent and no two PutObjects overlap. The lock is
+    // held for the full chunk/pack/encrypt/upload/index-update cycle.
+    let _guard = state
+        .0
+        .get()
+        .expect("checked Some above")
+        .write_mutex
+        .lock()
+        .await;
+
+    // Overwrite: if the path already exists, cascade-delete the old
+    // FileRef before writing the new one. The old file's chunks are
+    // decremented in block_index and removed from blob_index when
+    // unreferenced; the blob files themselves are reclaimed later by
+    // the index flush.
+    if let Some(old_file_hash) = match s.redb.get_file_hash_by_path(&key) {
+        Ok(Some(h)) => Some(h),
+        Ok(None) => None,
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &format!("path lookup failed: {e}"),
+            )
+            .into_response();
+        }
+    } {
+        if let Err(e) = delete_file_cascade(s, &old_file_hash).await {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &format!("overwrite cascade failed: {e}"),
+            )
+            .into_response();
+        }
+    }
+
+    match put_object_inner(s, &key, &body).await {
+        Ok(file_hash) => {
+            let etag = format!("\"{}\"", file_hash.dbg_short(16));
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ETAG, etag.parse().unwrap());
+            (StatusCode::OK, headers, String::new()).into_response()
+        }
+        Err(e) => s3xml::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// Inner PutObject pipeline: chunk, dedup, pack, encrypt, upload, then
+/// update redb in a single write transaction via
+/// [`RedbStore::put_object`]. Returns the file hash (used as the ETag)
+/// on success.
+///
+/// The caller must already hold `ServeState::write_mutex` and must
+/// have already run the overwrite cascade if the path previously
+/// existed.
+async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
+    // Chunk and hash. chunk_bytes returns at least one (possibly
+    // empty) chunk for any input, matching S3's acceptance of
+    // zero-byte objects.
+    let chunks = chunk_bytes(body, DEFAULT_CHUNK_SIZE);
+    let chunkmetas: Vec<ChunkMeta> = chunks.iter().map(|c| ChunkMeta::new(c)).collect();
+
+    // Whole-file hash is the multihash of the original bytes -- used
+    // as the FileRef identity and the ETag.
+    let file_hash = Hash::from(hash::multihash(body).to_bytes());
+
+    // Build a FileRef and record this path on it. The path entry is
+    // also written to path_index inside put_object below.
+    let mut fileref = FileRef::new(chunkmetas.clone());
+    fileref.paths.insert(std::path::PathBuf::from(key));
+
+    // Dedup: for each chunk, check if it already lives in a blob. New
+    // chunks go into a fresh BlobBuffer; dedup hits skip the blob
+    // pipeline entirely. Track new vs dedup locations so put_object
+    // only inserts new entries into blob_index.
+    let mut new_blob_locations: Vec<(Hash, crate::blob::BlobBlockLocation)> = Vec::new();
+    let mut blob_buf = BlobBuffer::new(&state.backend, state.keys.clone());
+    let mut req_blob_index = BlobIndex::new();
+
+    for (chunk_bytes_vec, cm) in chunks.iter().zip(chunkmetas.iter()) {
+        if state.redb.get_blob_location(&cm.hash)?.is_some() {
+            continue;
+        }
+        let mut chunk_bytes_mut = chunk_bytes_vec.clone();
+        blob_buf
+            .add_chunk(&mut chunk_bytes_mut, &mut req_blob_index)
+            .await?;
+    }
+    blob_buf.finalize(&mut req_blob_index).await?;
+
+    // After finalize, the per-request BlobIndex has a location for
+    // every freshly-packed chunk. Walk it into the new_blob_locations
+    // list. Dedup hits are intentionally skipped here -- their
+    // blob_index entries already exist in redb.
+    for (chunk_hash, location) in &req_blob_index.map {
+        new_blob_locations.push((chunk_hash.clone(), location.clone()));
+    }
+
+    // Build the blockref update list: (chunk_hash, file_hash, position)
+    // for every chunk in this file. Dedup hits need their existing
+    // BlockRef merged with this file_hash -> position; put_object
+    // fetches and merges internally so the caller only supplies the
+    // new (file_hash, position) pair for each chunk. The position
+    // comes from the freshly-written blob for new chunks, or from the
+    // existing BlobBlockLocation for dedup hits.
+    let mut blockref_updates: Vec<(Hash, Hash, Position)> = Vec::with_capacity(chunkmetas.len());
+    for cm in &chunkmetas {
+        let location = match req_blob_index.map.get(&cm.hash) {
+            Some(loc) => loc.clone(),
+            None => match state.redb.get_blob_location(&cm.hash)? {
+                Some(loc) => loc,
+                None => {
+                    return Err(BluError::Internal(format!(
+                        "chunk {} has no blob location after put_object_inner",
+                        cm.hash.dbg_short(12)
+                    )));
+                }
+            },
+        };
+        blockref_updates.push((cm.hash.clone(), file_hash.clone(), location.position));
+    }
+
+    state.redb.put_object(
+        &file_hash,
+        &fileref,
+        key,
+        &new_blob_locations,
+        &blockref_updates,
+    )?;
+
+    Ok(file_hash)
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashSet;
@@ -698,22 +925,34 @@ mod test {
     use crate::storage::{BackendKind, Local};
     use crate::tag::TagIndex;
 
+    /// Build a test `DekProvider` holding a freshly generated KEK.
+    /// Caller is responsible for leaking any tempdir backing the KEK
+    /// if it needs to persist; this helper just generates an
+    /// in-memory KEK and wraps it in `DekProvider::Local`.
+    fn test_keys() -> DekProvider {
+        let kek = crate::keys::kek::Kek::generate();
+        DekProvider::Local {
+            kek,
+            kek_version: 0,
+        }
+    }
+
+    /// Build a test `BackendKind::Local` backed by a leaked tempdir.
+    /// The tempdir is leaked so the path survives for the test's
+    /// lifetime; the OS cleans up temp files on process exit.
+    fn test_backend() -> BackendKind {
+        let tmp = tempfile::tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(tmp.path()));
+        std::mem::forget(tmp);
+        backend
+    }
+
     /// Build a test `EncBlobReader` with a fresh KEK and an empty
-    /// local backend. The blob reader is not exercised by Stage 3
+    /// local backend. The blob reader is not exercised by read-only
     /// listing tests; it is only needed so `ServeState` is fully
     /// populated.
     fn test_blob_reader() -> EncBlobReader {
-        let kek = crate::keys::kek::Kek::generate();
-        let keys = DekProvider::Local {
-            kek,
-            kek_version: 0,
-        };
-        let tmp = tempfile::tempdir().unwrap();
-        let backend = BackendKind::Local(Local::new(tmp.path()));
-        // Leak the tempdir so the backend path survives for the
-        // reader's lifetime. The OS cleans up on process exit.
-        std::mem::forget(tmp);
-        EncBlobReader::new(keys, backend)
+        EncBlobReader::new(test_keys(), test_backend())
     }
 
     fn test_state(paths: &[&str]) -> ServeState {
@@ -751,6 +990,10 @@ mod test {
                 .unwrap()
                 .naive_utc(),
             blob_reader: Arc::new(test_blob_reader()),
+            cfg: Config::default(),
+            keys: test_keys(),
+            backend: test_backend(),
+            write_mutex: Mutex::new(()),
         }
     }
 
@@ -764,7 +1007,9 @@ mod test {
             .route("/{bucket}", get(list_objects_handler))
             .route(
                 "/{bucket}/{*key}",
-                get(get_object_handler).head(head_object_handler),
+                get(get_object_handler)
+                    .head(head_object_handler)
+                    .put(put_object_handler),
             )
             .with_state(lock)
     }
@@ -778,7 +1023,9 @@ mod test {
             .route("/{bucket}", get(list_objects_handler))
             .route(
                 "/{bucket}/{*key}",
-                get(get_object_handler).head(head_object_handler),
+                get(get_object_handler)
+                    .head(head_object_handler)
+                    .put(put_object_handler),
             )
             .with_state(lock)
     }
@@ -850,8 +1097,10 @@ mod test {
             .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
             .unwrap();
 
-        // Build the blob reader with the same keys and backend.
-        let blob_reader = EncBlobReader::new(keys, backend);
+        // Build the blob reader with the same keys and backend; the
+        // state fields take clones so the write path has its own
+        // handles.
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
 
         let state = ServeState {
             redb: Arc::new(store),
@@ -861,6 +1110,10 @@ mod test {
                 .unwrap()
                 .naive_utc(),
             blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
         };
 
         // Leak the tempdir so the backend and redb files survive.

@@ -11,7 +11,8 @@
 //! optimization).
 //!
 //! On writes: update local redb, then periodically serialize redb
-//! state to encrypted CBOR and push to the backend (Stage 5).
+//! state to encrypted CBOR and push to the backend (the debounced
+//! index flush).
 
 use chrono::NaiveDateTime;
 
@@ -34,16 +35,28 @@ use crate::storage::BackendKind;
 /// machine, the existing database is overwritten with fresh state from
 /// the backend.
 ///
-/// Returns the redb store, the `PlainIndex::updated_at` timestamp
-/// (used as a proxy for object `LastModified` values, since individual
-/// file modification times are not tracked in the current index
-/// format), and an `EncBlobReader` owning the keys and backend for
-/// serving chunk data.
+/// Takes ownership of `cfg`, `keys`, and `backend` so the caller can
+/// thread them back into `ServeState` without re-cloning. Returns
+/// them alongside the redb store, the `PlainIndex::updated_at`
+/// timestamp (used as a proxy for object `LastModified` values, since
+/// individual file modification times are not tracked in the current
+/// index format), and an `EncBlobReader` owning its own cloned keys
+/// and backend for serving chunk data.
 pub async fn sync_from_backend(
-    cfg: &Config,
+    cfg: Config,
     keys: DekProvider,
     backend: BackendKind,
-) -> Result<(RedbStore, NaiveDateTime, EncBlobReader), BluError> {
+) -> Result<
+    (
+        Config,
+        DekProvider,
+        BackendKind,
+        RedbStore,
+        NaiveDateTime,
+        EncBlobReader,
+    ),
+    BluError,
+> {
     let redb_path = cfg.bludir().join("serve.redb");
 
     info!("pulling indexes from backend");
@@ -68,7 +81,9 @@ pub async fn sync_from_backend(
         store.tag_count()?,
     );
 
-    let blob_reader = EncBlobReader::new(keys, backend);
+    // The blob reader needs its own key/backend handles for the read
+    // path. Clone before moving the originals back out to the caller.
+    let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
 
-    Ok((store, updated_at, blob_reader))
+    Ok((cfg, keys, backend, store, updated_at, blob_reader))
 }

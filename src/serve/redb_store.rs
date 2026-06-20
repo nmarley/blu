@@ -33,6 +33,7 @@ use crate::block::FileRef;
 use crate::block::PlainIndex;
 use crate::error::BluError;
 use crate::hash::Hash;
+use crate::io::Position;
 use crate::tag::TagIndex;
 
 /// path -> file_hash. Keys are relative user paths (UTF-8).
@@ -58,6 +59,21 @@ const BLOCK_INDEX: TableDefinition<'_, &[u8], &[u8]> = TableDefinition::new("blo
 /// the process.
 pub struct RedbStore {
     db: Database,
+}
+
+/// Statistics returned by [`RedbStore::delete_object_index`]. Useful
+/// for logging and for the eventual `DeleteObject` response body.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DeleteStats {
+    /// Number of BlockRef entries deleted because the file was their
+    /// last remaining reference.
+    pub blocks_removed: usize,
+    /// Number of blob_index entries (chunk -> BlobBlockLocation)
+    /// removed because their BlockRef became unreferenced.
+    pub chunks_removed: usize,
+    /// Number of tag_index entries updated to drop this file_hash,
+    /// including entries that became empty and were deleted.
+    pub tags_touched: usize,
 }
 
 impl RedbStore {
@@ -330,6 +346,195 @@ impl RedbStore {
         }
         txn.commit()?;
         Ok(())
+    }
+
+    /// Atomically write all index updates for one `PutObject` request
+    /// under a single redb write transaction.
+    ///
+    /// Inserts the `FileRef` into `file_index`, the `path -> file_hash`
+    /// mapping into `path_index`, new chunk locations into `blob_index`
+    /// (dedup-skipped chunks are left untouched), and merges `file_hash
+    /// -> position` entries into existing `BlockRef`s in `block_index`,
+    /// creating new BlockRefs for chunks not yet present.
+    ///
+    /// The `new_blob_locations` slice contains only chunks that were
+    /// freshly packed into a blob this request; chunks already in the
+    /// blob index (dedup hits) must not be re-inserted, so the caller
+    /// filters them out before calling.
+    ///
+    /// The `blockref_updates` slice carries `(chunk_hash, file_hash,
+    /// position)` triples for every chunk in the new file, deduped or
+    /// not. Each triple is merged into the existing BlockRef for that
+    /// chunk_hash (or a fresh `BlockRef` if none exists), then written
+    /// back. This keeps the BlockRef's `references` map in lockstep
+    /// with the FileRef's chunk list so the delete cascade can find
+    /// every file that references a chunk via a single point lookup.
+    pub fn put_object(
+        &self,
+        file_hash: &Hash,
+        fileref: &FileRef,
+        path: &str,
+        new_blob_locations: &[(Hash, BlobBlockLocation)],
+        blockref_updates: &[(Hash, Hash, Position)],
+    ) -> Result<(), BluError> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut file_table = txn.open_table(FILE_INDEX)?;
+            let mut path_table = txn.open_table(PATH_INDEX)?;
+            let mut blob_table = txn.open_table(BLOB_INDEX)?;
+            let mut block_table = txn.open_table(BLOCK_INDEX)?;
+
+            let file_key = file_hash.to_bytes();
+            let file_value = serialize_cbor(fileref)?;
+            file_table.insert(file_key.as_slice(), file_value.as_slice())?;
+            path_table.insert(path, file_key.as_slice())?;
+
+            for (chunk_hash, location) in new_blob_locations {
+                let key = chunk_hash.to_bytes();
+                let value = serialize_cbor(location)?;
+                blob_table.insert(key.as_slice(), value.as_slice())?;
+            }
+
+            // Build a per-chunk_hash accumulator so multiple chunk
+            // references in the same file (dedup hits within the file)
+            // collapse to a single BlockRef write.
+            let mut by_chunk: HashMap<Hash, BlockRef> = HashMap::new();
+            for (chunk_hash, file_hash, position) in blockref_updates {
+                let blockref = by_chunk.entry(chunk_hash.clone()).or_insert_with(|| {
+                    match block_table
+                        .get(chunk_hash.to_bytes().as_slice())
+                        .ok()
+                        .and_then(|g| g)
+                    {
+                        Some(g) => deserialize_cbor(g.value()).unwrap_or_else(|_| BlockRef::new()),
+                        None => BlockRef::new(),
+                    }
+                });
+                blockref
+                    .references
+                    .insert(file_hash.clone(), position.clone());
+            }
+            for (chunk_hash, blockref) in &by_chunk {
+                let key = chunk_hash.to_bytes();
+                let value = serialize_cbor(blockref)?;
+                block_table.insert(key.as_slice(), value.as_slice())?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Atomically remove a file and cascade through the block, blob,
+    /// and tag indexes, all under a single redb write transaction.
+    ///
+    /// This is the index-only half of the delete cascade. It does NOT
+    /// delete the underlying blob files from the storage backend; that
+    /// is deferred to the index flush which serializes redb
+    /// state via [`dump_to_indexes`] and drains any now-dead blob
+    /// paths from the resulting `BlobIndex::paths_to_delete`.
+    ///
+    /// Returns [`DeleteStats`] so the caller can log or surface the
+    /// work performed. Returns `Ok(DeleteStats::default())` if the
+    /// file_hash is not present.
+    ///
+    /// [`DeleteStats`]: crate::serve::redb_store::DeleteStats
+    pub fn delete_object_index(&self, file_hash: &Hash) -> Result<DeleteStats, BluError> {
+        let txn = self.db.begin_write()?;
+        let stats = {
+            let mut file_table = txn.open_table(FILE_INDEX)?;
+            let mut path_table = txn.open_table(PATH_INDEX)?;
+            let mut blob_table = txn.open_table(BLOB_INDEX)?;
+            let mut block_table = txn.open_table(BLOCK_INDEX)?;
+            let mut tag_table = txn.open_table(TAG_INDEX)?;
+
+            let file_key = file_hash.to_bytes();
+
+            // Fetch the FileRef so we know which chunks to cascade.
+            // If missing, the file was already deleted; treat as a
+            // no-op success.
+            let fileref: Option<FileRef> = match file_table.get(file_key.as_slice())? {
+                Some(g) => deserialize_cbor(g.value()).ok(),
+                None => None,
+            };
+            let fileref = match fileref {
+                Some(f) => f,
+                None => {
+                    return Ok(DeleteStats::default());
+                }
+            };
+
+            let chunk_hashes: Vec<Hash> = fileref
+                .chunkmetas
+                .iter()
+                .map(|cm| cm.hash.clone())
+                .collect();
+
+            // Remove the file and its path entries.
+            for path in &fileref.paths {
+                let path_str = path.to_string_lossy();
+                path_table.remove(path_str.as_ref())?;
+            }
+            file_table.remove(file_key.as_slice())?;
+
+            let mut stats = DeleteStats::default();
+
+            // Cascade through block_index. For each chunk, remove this
+            // file_hash from the BlockRef's references. If empty, the
+            // chunk is unreferenced: drop BlockRef and blob_index.
+            for chunk_hash in &chunk_hashes {
+                let key = chunk_hash.to_bytes();
+                let existing: Option<BlockRef> = match block_table.get(key.as_slice())? {
+                    Some(g) => deserialize_cbor(g.value()).ok(),
+                    None => None,
+                };
+                let mut blockref = match existing {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let was_present = blockref.references.remove(file_hash).is_some();
+                let _ = was_present;
+                if blockref.references.is_empty() {
+                    block_table.remove(key.as_slice())?;
+                    blob_table.remove(key.as_slice())?;
+                    stats.blocks_removed += 1;
+                    stats.chunks_removed += 1;
+                } else {
+                    let value = serialize_cbor(&blockref)?;
+                    block_table.insert(key.as_slice(), value.as_slice())?;
+                }
+            }
+
+            // Cascade through tag_index. Remove this file_hash from
+            // every tag whose value contains it; drop tags that become
+            // empty.
+            let tags_to_update: Vec<(String, Vec<Hash>)> = {
+                let mut hits = Vec::new();
+                for item in tag_table.iter()? {
+                    let (k, v) = item?;
+                    let tag_name = k.value().to_string();
+                    let hashes_set: HashSet<Hash> = deserialize_tag_value(v.value())?;
+                    if hashes_set.iter().any(|h| h == file_hash) {
+                        let mut hashes: Vec<Hash> = hashes_set.into_iter().collect();
+                        hashes.retain(|h| h != file_hash);
+                        hits.push((tag_name, hashes));
+                    }
+                }
+                hits
+            };
+            for (tag_name, remaining) in tags_to_update {
+                if remaining.is_empty() {
+                    tag_table.remove(tag_name.as_str())?;
+                } else {
+                    let value = serialize_tag_value(&remaining)?;
+                    tag_table.insert(tag_name.as_str(), value.as_slice())?;
+                }
+                stats.tags_touched += 1;
+            }
+
+            stats
+        };
+        txn.commit()?;
+        Ok(stats)
     }
 
     /// Remove a path from the path_index table. Returns `true` if an
