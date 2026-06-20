@@ -13,6 +13,8 @@
 //! On writes: update local redb, then periodically serialize redb
 //! state to encrypted CBOR and push to the backend (Stage 5).
 
+use chrono::NaiveDateTime;
+
 use crate::config::Config;
 use crate::dek_provider::DekProvider;
 use crate::error::BluError;
@@ -30,17 +32,23 @@ use crate::storage::BackendKind;
 /// the database is created and populated from scratch. On a returning
 /// machine, the existing database is overwritten with fresh state from
 /// the backend.
+///
+/// Returns the redb store and the `PlainIndex::updated_at` timestamp,
+/// which the server uses as a proxy for object `LastModified` values
+/// (individual file modification times are not tracked in the current
+/// index format).
 pub async fn sync_from_backend(
     cfg: &Config,
     keys: &DekProvider,
     backend: &BackendKind,
-) -> Result<RedbStore, BluError> {
+) -> Result<(RedbStore, NaiveDateTime), BluError> {
     let redb_path = cfg.bludir().join("serve.redb");
 
     info!("pulling indexes from backend");
     cfg.pull_indexes(backend).await?;
 
     let plain = cfg.load_plain_index(keys)?;
+    let updated_at = plain.updated_at();
     let blob = cfg.load_blob_index_or_default(keys);
     let tag = cfg.load_tag_index_or_default(keys);
 
@@ -58,5 +66,5 @@ pub async fn sync_from_backend(
         store.tag_count()?,
     );
 
-    Ok(store)
+    Ok((store, updated_at))
 }

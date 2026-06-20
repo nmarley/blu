@@ -6,6 +6,7 @@
 
 pub mod index_sync;
 pub mod redb_store;
+pub mod s3xml;
 pub mod server;
 
 pub use server::serve;

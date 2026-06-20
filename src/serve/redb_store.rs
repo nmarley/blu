@@ -20,6 +20,7 @@
 //! (paths, tags) for efficient range scans and prefix queries.
 
 use std::collections::HashSet;
+use std::ops::Bound;
 use std::path::Path;
 
 use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
@@ -181,6 +182,50 @@ impl RedbStore {
         }
     }
 
+    /// List paths under a prefix, in lexicographic (UTF-8 byte) order.
+    ///
+    /// Returns up to `limit` `(path, file_hash)` pairs whose keys start
+    /// with `prefix`. If `start_after` is provided, listing begins after
+    /// that key (exclusive); otherwise it begins at the prefix itself
+    /// (inclusive). This is the core primitive for `ListObjectsV2`.
+    ///
+    /// redb's btree returns keys in lexicographic byte order, which
+    /// matches S3's required sort order for object listings.
+    pub fn list_paths(
+        &self,
+        prefix: &str,
+        start_after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(String, Hash)>, BluError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(PATH_INDEX)?;
+
+        let start_bound = match start_after {
+            Some(key) => Bound::Excluded(key),
+            None => Bound::Included(prefix),
+        };
+        let next = next_prefix(prefix);
+        let end_bound = match &next {
+            Some(s) => Bound::Excluded(s.as_str()),
+            None => Bound::Unbounded,
+        };
+
+        let mut results = Vec::with_capacity(limit);
+        if limit == 0 {
+            return Ok(results);
+        }
+        for item in table.range::<&str>((start_bound, end_bound))? {
+            let (key_guard, value_guard) = item?;
+            let path = key_guard.value().to_string();
+            let hash = Hash::from(value_guard.value());
+            results.push((path, hash));
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
+    }
+
     /// Count the number of entries in the path index.
     pub fn path_count(&self) -> Result<u64, BluError> {
         let txn = self.db.begin_read()?;
@@ -232,6 +277,41 @@ fn serialize_cbor<T: serde::Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Bl
 /// Deserialize any `Deserialize` type from CBOR bytes.
 fn deserialize_cbor<T: for<'de> serde::Deserialize<'de>>(data: &[u8]) -> Result<T, BluError> {
     ciborium::from_reader(data).map_err(|e| BluError::DeserializationError(e.to_string()))
+}
+
+/// Compute the next lexicographic prefix for a UTF-8 string.
+///
+/// Returns `Some(next)` where `next` is the smallest string that is
+/// lexicographically greater than all strings starting with `prefix`.
+/// This is used as the exclusive upper bound for a prefix scan: all keys
+/// in the range `[prefix, next)` share the given prefix.
+///
+/// Returns `None` when there is no lexicographic successor (every byte
+/// either is `0xFF` or would produce invalid UTF-8 when incremented),
+/// meaning the caller should use an unbounded upper bound instead.
+///
+/// The algorithm increments the last byte of the UTF-8 representation.
+/// If the result is not valid UTF-8 (e.g., incrementing a single-byte
+/// char's `0x7F` to `0x80`, or a continuation byte past `0xBF`), that
+/// byte is removed and the process recurses on the remaining prefix.
+/// This is the standard lexicographic-prefix-termination trick, adapted
+/// for UTF-8 validity.
+fn next_prefix(prefix: &str) -> Option<String> {
+    let mut bytes = prefix.as_bytes().to_vec();
+    while let Some(last) = bytes.last_mut() {
+        if *last == 0xFF {
+            bytes.pop();
+            continue;
+        }
+        *last += 1;
+        if std::str::from_utf8(&bytes).is_ok() {
+            return Some(
+                String::from_utf8(bytes).expect("checked valid UTF-8 before constructing String"),
+            );
+        }
+        bytes.pop();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -445,5 +525,167 @@ mod test {
         assert_eq!(store.tag_count().unwrap(), 0);
 
         assert!(store.get_file_hash_by_path("anything").unwrap().is_none());
+    }
+
+    fn prefix_store() -> RedbStore {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = RedbStore::open(&tmp.path().join("prefix.redb")).unwrap();
+
+        let mut plain = PlainIndex::new_empty();
+        let paths = [
+            "docs/readme.txt",
+            "docs/api/intro.md",
+            "docs/api/v2.md",
+            "docs/changelog.txt",
+            "photos/img.jpg",
+            "photos/2024/jan/heavy.raw",
+            "photos/2024/feb/sunset.raw",
+            "photos/copy.jpg",
+            "videos/clip.mp4",
+            "videos/trailer.mp4",
+        ];
+
+        let dummy_chunk = ChunkMeta {
+            hash: Hash::from("1340aaaa"),
+            size: 100,
+        };
+
+        for (i, path) in paths.iter().enumerate() {
+            let fileref = FileRef {
+                chunkmetas: vec![dummy_chunk.clone()],
+                paths: HashSet::from([PathBuf::from(path)]),
+            };
+            let file_hash = Hash::from(format!("1340{:030x}", i).as_str());
+            plain.files.insert(file_hash, fileref);
+        }
+
+        let blob = BlobIndex::default();
+        let tag = TagIndex::new();
+        store.populate_from_indexes(&plain, &blob, &tag).unwrap();
+        store
+    }
+
+    #[test]
+    fn list_paths_full_scan() {
+        let store = prefix_store();
+        let results = store.list_paths("", None, 100).unwrap();
+        assert_eq!(results.len(), 10);
+        assert_eq!(results[0].0, "docs/api/intro.md");
+        assert_eq!(results[9].0, "videos/trailer.mp4");
+    }
+
+    #[test]
+    fn list_paths_prefix_filter() {
+        let store = prefix_store();
+        let results = store.list_paths("docs/", None, 100).unwrap();
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0].0, "docs/api/intro.md");
+        assert_eq!(results[1].0, "docs/api/v2.md");
+        assert_eq!(results[2].0, "docs/changelog.txt");
+        assert_eq!(results[3].0, "docs/readme.txt");
+    }
+
+    #[test]
+    fn list_paths_nested_prefix() {
+        let store = prefix_store();
+        let results = store.list_paths("docs/api/", None, 100).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "docs/api/intro.md");
+        assert_eq!(results[1].0, "docs/api/v2.md");
+    }
+
+    #[test]
+    fn list_paths_start_after() {
+        let store = prefix_store();
+        let results = store
+            .list_paths("docs/", Some("docs/api/v2.md"), 100)
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "docs/changelog.txt");
+        assert_eq!(results[1].0, "docs/readme.txt");
+    }
+
+    #[test]
+    fn list_paths_limit_truncation() {
+        let store = prefix_store();
+        let results = store.list_paths("docs/", None, 2).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "docs/api/intro.md");
+        assert_eq!(results[1].0, "docs/api/v2.md");
+    }
+
+    #[test]
+    fn list_paths_prefix_no_match() {
+        let store = prefix_store();
+        let results = store.list_paths("nonexistent/", None, 100).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn list_paths_empty_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = RedbStore::open(&tmp.path().join("empty.redb")).unwrap();
+        let plain = PlainIndex::new_empty();
+        let blob = BlobIndex::default();
+        let tag = TagIndex::new();
+        store.populate_from_indexes(&plain, &blob, &tag).unwrap();
+
+        let results = store.list_paths("", None, 100).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn list_paths_limit_zero() {
+        let store = prefix_store();
+        let results = store.list_paths("", None, 0).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn next_prefix_simple() {
+        assert_eq!(next_prefix("abc"), Some("abd".to_string()));
+        assert_eq!(next_prefix("a"), Some("b".to_string()));
+        assert_eq!(next_prefix("docs/"), Some("docs0".to_string()));
+    }
+
+    #[test]
+    fn next_prefix_carry() {
+        // "ab~" has last byte 0x7E (~), incrementing gives 0x7F (DEL)
+        assert_eq!(next_prefix("ab~"), Some("ab\u{7F}".to_string()));
+        // Incrementing 0x7F (DEL) to 0x80 would produce invalid UTF-8
+        // (0x80 is a continuation byte), so the byte is popped and the
+        // algorithm recurses on "ab", incrementing 'b' to 'c'.
+        assert_eq!(next_prefix("ab\u{7F}"), Some("ac".to_string()));
+    }
+
+    #[test]
+    fn next_prefix_all_ff() {
+        // 0xFF is not valid in UTF-8, so use a string whose bytes all
+        // either are 0xFF or increment to invalid UTF-8. The string "\xFF"
+        // is itself invalid UTF-8 so we cannot construct it as &str.
+        // Instead, test with a valid UTF-8 string that has no successor:
+        // a string ending in U+10FFFF (the max Unicode scalar value),
+        // encoded as 0xF4 0x8F 0xBF 0xBF. Incrementing any byte produces
+        // invalid UTF-8, so the whole string is consumed and None is
+        // returned.
+        let max_char = "\u{10FFFF}";
+        assert_eq!(next_prefix(max_char), None);
+    }
+
+    #[test]
+    fn next_prefix_empty() {
+        assert_eq!(next_prefix(""), None);
+    }
+
+    #[test]
+    fn next_prefix_multibyte_utf8() {
+        // The byte-increment operates on the raw UTF-8 bytes. For a
+        // multi-byte char like "é" (0xC3 0xA9), incrementing the last
+        // byte gives 0xC3 0xAA which is "ê". The result is still valid
+        // UTF-8 because we only incremented a non-continuation byte
+        // position... actually 0xA9 is a continuation byte. Incrementing
+        // it to 0xAA is still a valid continuation byte range (0x80-0xBF),
+        // so the result is valid UTF-8: "ê".
+        assert_eq!(next_prefix("é"), Some("ê".to_string()));
     }
 }

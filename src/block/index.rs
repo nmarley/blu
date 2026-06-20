@@ -206,6 +206,11 @@ impl PlainIndex {
         &self.files
     }
 
+    /// Get the index's last-updated timestamp.
+    pub fn updated_at(&self) -> NaiveDateTime {
+        self.updated_at
+    }
+
     /// Get a shared reference to the blocks map.
     pub fn blocks_map_ref(&self) -> &HashMap<Hash, BlockRef> {
         &self.blocks

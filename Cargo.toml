@@ -57,3 +57,7 @@ security-framework = { version = "3", features = ["OSX_10_15"] }
 lru = "0.18.0"
 redb = "4"
 axum = "0.8"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
