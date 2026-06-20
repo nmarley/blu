@@ -16,6 +16,7 @@ use axum::routing::get;
 use axum::Router;
 use chrono::NaiveDateTime;
 use tokio::net::TcpListener;
+use tokio::signal::unix::{signal, SignalKind};
 
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
@@ -38,6 +39,18 @@ pub struct ServeState {
     /// individual object `LastModified` values. The current index
     /// format does not track per-file modification times.
     index_updated_at: NaiveDateTime,
+}
+
+/// Wait for SIGTERM or SIGINT, then return. Used as the graceful
+/// shutdown signal for `axum::serve`.
+async fn shutdown_signal() {
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+
+    tokio::select! {
+        _ = sigterm.recv() => info!("received SIGTERM, shutting down"),
+        _ = sigint.recv() => info!("received SIGINT, shutting down"),
+    }
 }
 
 /// Entry point for `blu serve`. Loads the vault config and keys,
@@ -80,8 +93,11 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let listener = TcpListener::bind(addr).await?;
     info!("blu serve listening on http://{}", addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
+    info!("blu serve stopped");
     Ok(())
 }
 
