@@ -251,6 +251,52 @@ pub(crate) fn list_all_my_buckets(bucket_name: &str, creation_date: &str) -> Str
     xml
 }
 
+/// Build the `InitiateMultipartUploadResult` XML response for
+/// `CreateMultipartUpload`.
+pub(crate) fn initiate_multipart_upload(bucket: &str, key: &str, upload_id: &str) -> String {
+    let mut xml = String::new();
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str(&format!(
+        "<InitiateMultipartUploadResult xmlns=\"{}\">\n",
+        S3_NS
+    ));
+    xml.push_str(&format!("  <Bucket>{}</Bucket>\n", xml_escape(bucket)));
+    xml.push_str(&format!("  <Key>{}</Key>\n", xml_escape(key)));
+    xml.push_str(&format!(
+        "  <UploadId>{}</UploadId>\n",
+        xml_escape(upload_id)
+    ));
+    xml.push_str("</InitiateMultipartUploadResult>\n");
+    xml
+}
+
+/// Build the `CompleteMultipartUploadResult` XML response for
+/// `CompleteMultipartUpload`. `location` is the canonical object URI
+/// (e.g., `http://127.0.0.1:7777/bucket/key`); `etag` is the final
+/// object ETag (file hash wrapped in double quotes).
+pub(crate) fn complete_multipart_upload(
+    location: &str,
+    bucket: &str,
+    key: &str,
+    etag: &str,
+) -> String {
+    let mut xml = String::new();
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str(&format!(
+        "<CompleteMultipartUploadResult xmlns=\"{}\">\n",
+        S3_NS
+    ));
+    xml.push_str(&format!(
+        "  <Location>{}</Location>\n",
+        xml_escape(location)
+    ));
+    xml.push_str(&format!("  <Bucket>{}</Bucket>\n", xml_escape(bucket)));
+    xml.push_str(&format!("  <Key>{}</Key>\n", xml_escape(key)));
+    xml.push_str(&format!("  <ETag>{}</ETag>\n", xml_escape(etag)));
+    xml.push_str("</CompleteMultipartUploadResult>\n");
+    xml
+}
+
 /// Build an S3 XML error response.
 pub(crate) fn error_response(
     status: StatusCode,

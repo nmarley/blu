@@ -8,6 +8,7 @@
 //! decrypted blobs. Internal endpoints live under `/_` prefix
 //! (e.g., `/_health`) to avoid collision with S3 bucket names.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, OnceLock};
 
@@ -18,6 +19,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use chrono::NaiveDateTime;
+use rand::RngCore;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
@@ -46,6 +48,21 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:7777";
 /// the backend. Replacing the pending timer on each write coalesces
 /// bursts of writes into a single flush.
 const FLUSH_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// In-progress multipart upload. Stored in
+/// `ServeState::multipart_uploads` keyed by `upload_id`. Parts are
+/// buffered in memory; on `CompleteMultipartUpload` they are
+/// concatenated and run through the standard PutObject pipeline.
+pub(crate) struct MultipartState {
+    /// Object key (path) the upload targets.
+    path: String,
+    /// Buffered part bytes, 0-indexed. S3 part numbers are 1-indexed;
+    /// we store parts[N-1] at index N-1.
+    parts: Vec<Vec<u8>>,
+    /// Creation timestamp, used for staleness reaping if we ever add
+    /// a GC pass. Currently informational only.
+    created_at: NaiveDateTime,
+}
 
 /// State shared across all axum handlers. Stored in an `OnceLock`
 /// behind an `Arc`; handlers access it via `OnceLock::get()` which
@@ -84,6 +101,10 @@ pub struct ServeState {
     /// on-disk indexes and the backend. Aborted on graceful shutdown
     /// in favor of a final inline flush.
     flush_timer: Mutex<Option<JoinHandle<()>>>,
+    /// In-progress multipart uploads keyed by `upload_id`. Separate
+    /// from `write_mutex` because part uploads do not touch redb or
+    /// the blob pipeline until completion.
+    multipart_uploads: Mutex<HashMap<String, MultipartState>>,
 }
 
 impl std::fmt::Debug for ServeState {
@@ -138,6 +159,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
             get(get_object_handler)
                 .head(head_object_handler)
                 .put(put_object_handler)
+                .post(multipart_post_handler)
                 .delete(delete_object_handler),
         )
         .with_state(ready.clone());
@@ -171,6 +193,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
                     backend,
                     write_mutex: Mutex::new(()),
                     flush_timer: Mutex::new(None),
+                    multipart_uploads: Mutex::new(HashMap::new()),
                 };
 
                 if sync_ready.set(state).is_err() {
@@ -777,10 +800,11 @@ async fn get_object_handler(
     }
 }
 
-/// `PUT /{bucket}/{*key}` -- PutObject. Stores the request body as a
-/// new object at the given virtual path, chunking, deduplicating,
-/// encrypting, and uploading new chunks to the storage backend, then
-/// updating redb index state atomically.
+/// `PUT /{bucket}/{*key}` -- PutObject (or UploadPart when the query
+/// string contains `partNumber` and `uploadId`). Stores the request
+/// body as a new object at the given virtual path, chunking,
+/// deduplicating, encrypting, and uploading new chunks to the storage
+/// backend, then updating redb index state atomically.
 ///
 /// Returns 200 with an `ETag` header containing the file's multihash
 /// in double quotes (the S3 ETag convention). If the path already
@@ -792,6 +816,7 @@ async fn get_object_handler(
 async fn put_object_handler(
     state: axum::extract::State<Arc<OnceLock<ServeState>>>,
     Path((bucket, key)): Path<(String, String)>,
+    params: Query<HashMap<String, String>>,
     body: Bytes,
 ) -> axum::response::Response {
     let s = match state.0.get() {
@@ -811,45 +836,26 @@ async fn put_object_handler(
             .into_response();
     }
 
+    // Dispatch multipart part upload when the query string carries
+    // `partNumber` and `uploadId`. The plain PutObject path holds
+    // below.
+    if let (Some(part_number), Some(upload_id)) = (params.get("partNumber"), params.get("uploadId"))
+    {
+        return upload_part(
+            state.0.clone(),
+            upload_id.clone(),
+            part_number.clone(),
+            body,
+        )
+        .await
+        .into_response();
+    }
+
     // All write-path work happens under the write mutex so redb state
     // stays consistent and no two PutObjects overlap. The lock is
     // held for the full chunk/pack/encrypt/upload/index-update cycle.
-    let _guard = state
-        .0
-        .get()
-        .expect("checked Some above")
-        .write_mutex
-        .lock()
-        .await;
-
-    // Overwrite: if the path already exists, cascade-delete the old
-    // FileRef before writing the new one. The old file's chunks are
-    // decremented in block_index and removed from blob_index when
-    // unreferenced; the blob files themselves are reclaimed later by
-    // the index flush.
-    if let Some(old_file_hash) = match s.redb.get_file_hash_by_path(&key) {
-        Ok(Some(h)) => Some(h),
-        Ok(None) => None,
-        Err(e) => {
-            return s3xml::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &format!("path lookup failed: {e}"),
-            )
-            .into_response();
-        }
-    } {
-        if let Err(e) = delete_file_cascade(s, &old_file_hash).await {
-            return s3xml::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &format!("overwrite cascade failed: {e}"),
-            )
-            .into_response();
-        }
-    }
-
-    match put_object_inner(s, &key, &body).await {
+    let _guard = s.write_mutex.lock().await;
+    match put_object_full(s, &key, &body).await {
         Ok(file_hash) => {
             let etag = format!("\"{}\"", file_hash.dbg_short(16));
             let mut headers = HeaderMap::new();
@@ -864,6 +870,24 @@ async fn put_object_handler(
         )
         .into_response(),
     }
+}
+
+/// Full PutObject pipeline: run the overwrite cascade if the path
+/// already exists, then chunk, dedup, pack, encrypt, upload, and
+/// update redb. Shared by the plain PutObject handler and
+/// CompleteMultipartUpload.
+///
+/// The caller must already hold `ServeState::write_mutex`.
+async fn put_object_full(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
+    // Overwrite: if the path already exists, cascade-delete the old
+    // FileRef before writing the new one. The old file's chunks are
+    // decremented in block_index and removed from blob_index when
+    // unreferenced; the blob files themselves are reclaimed later by
+    // the index flush.
+    if let Some(old_file_hash) = state.redb.get_file_hash_by_path(key)? {
+        delete_file_cascade(state, &old_file_hash).await?;
+    }
+    put_object_inner(state, key, body).await
 }
 
 /// Inner PutObject pipeline: chunk, dedup, pack, encrypt, upload, then
@@ -964,6 +988,7 @@ async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<
 async fn delete_object_handler(
     state: axum::extract::State<Arc<OnceLock<ServeState>>>,
     Path((bucket, key)): Path<(String, String)>,
+    params: Query<HashMap<String, String>>,
 ) -> axum::response::Response {
     let s = match state.0.get() {
         Some(s) => s,
@@ -979,6 +1004,14 @@ async fn delete_object_handler(
 
     if bucket != s.bucket_name {
         return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    // Dispatch multipart abort when the query string carries
+    // `uploadId`. The plain DeleteObject path holds below.
+    if let Some(upload_id) = params.get("uploadId") {
+        return abort_multipart(state.0.clone(), upload_id.clone())
+            .await
             .into_response();
     }
 
@@ -1067,6 +1100,237 @@ async fn schedule_flush(ready: Arc<OnceLock<ServeState>>) {
         }
     }));
     drop(guard);
+}
+
+/// `POST /{bucket}/{*key}` -- CreateMultipartUpload (when the query
+/// string contains `uploads`) or CompleteMultipartUpload (when the
+/// query string contains `uploadId`). The single POST handler
+/// dispatches on query params, matching S3's routing conventions.
+///
+/// CreateMultipartUpload generates a random 16-byte hex `upload_id`,
+/// stores a fresh `MultipartState` in `ServeState::multipart_uploads`,
+/// and returns `InitiateMultipartUploadResult` XML.
+///
+/// CompleteMultipartUpload acquires `write_mutex`, removes the
+/// `MultipartState`, concatenates all parts in order into a single
+/// byte vector, and runs the full PutObject pipeline
+/// ([`put_object_full`]). Returns `CompleteMultipartUploadResult`
+/// XML with the final ETag.
+async fn multipart_post_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+    Path((bucket, key)): Path<(String, String)>,
+    params: Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+            .into_response();
+        }
+    };
+
+    if bucket != s.bucket_name {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    // CompleteMultipartUpload takes precedence: S3 routes on the
+    // presence of `uploadId` first.
+    if let Some(upload_id) = params.get("uploadId") {
+        return complete_multipart(state.0.clone(), upload_id.clone(), &bucket, &key)
+            .await
+            .into_response();
+    }
+
+    // CreateMultipartUpload: query string contains `uploads`.
+    if params.contains_key("uploads") {
+        return create_multipart(s, &bucket, &key).await.into_response();
+    }
+
+    // No recognized query param: bail with a generic error.
+    s3xml::error_response(
+        StatusCode::BAD_REQUEST,
+        "InvalidRequest",
+        "POST without `uploads` or `uploadId` is not supported",
+    )
+    .into_response()
+}
+
+/// CreateMultipartUpload: generate a random `upload_id`, insert a
+/// fresh `MultipartState` into the uploads map, and return the S3
+/// `InitiateMultipartUploadResult` XML response.
+async fn create_multipart(state: &ServeState, bucket: &str, key: &str) -> axum::response::Response {
+    let upload_id = generate_upload_id();
+    let now = chrono::Utc::now().naive_utc();
+    let mpu = MultipartState {
+        path: key.to_string(),
+        parts: Vec::new(),
+        created_at: now,
+    };
+    state
+        .multipart_uploads
+        .lock()
+        .await
+        .insert(upload_id.clone(), mpu);
+    let xml = s3xml::initiate_multipart_upload(bucket, key, &upload_id);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/xml")],
+        xml,
+    )
+        .into_response()
+}
+
+/// Generate a random 16-byte hex upload_id (32 ASCII chars).
+fn generate_upload_id() -> String {
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// UploadPart: append the request body to the multipart upload named
+/// by `upload_id` at slot `part_number - 1`. Part numbers are
+/// 1-indexed in S3; we store 0-indexed. If the upload_id is not
+/// found, returns 404 `NoSuchUpload`. On success returns 200 with an
+/// `ETag` header containing the hex hash of the part bytes (quoted).
+async fn upload_part(
+    ready: Arc<OnceLock<ServeState>>,
+    upload_id: String,
+    part_number: String,
+    body: Bytes,
+) -> axum::response::Response {
+    let Some(state) = ready.get() else {
+        return s3xml::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NotReady",
+            "index sync in progress",
+        )
+        .into_response();
+    };
+    let part_idx: usize = match part_number.parse::<usize>() {
+        Ok(n) if n >= 1 => n - 1,
+        _ => {
+            return s3xml::error_response(
+                StatusCode::BAD_REQUEST,
+                "InvalidArgument",
+                "partNumber must be a positive integer",
+            )
+            .into_response();
+        }
+    };
+    let mut uploads = state.multipart_uploads.lock().await;
+    let Some(mpu) = uploads.get_mut(&upload_id) else {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchUpload", &upload_id)
+            .into_response();
+    };
+    // Extend or insert at part_idx. Parts may arrive out of order;
+    // fill any gap with empty Vecs so parts[part_idx] is valid.
+    while mpu.parts.len() <= part_idx {
+        mpu.parts.push(Vec::new());
+    }
+    mpu.parts[part_idx] = body.to_vec();
+    let etag = format!("\"{}\"", hex::encode(hash::sha512(&body)));
+    drop(uploads);
+    let mut headers = HeaderMap::new();
+    headers.insert(header::ETAG, etag.parse().unwrap());
+    (StatusCode::OK, headers, String::new()).into_response()
+}
+
+/// CompleteMultipartUpload: remove the multipart state, concatenate
+/// all parts in order, and run the full PutObject pipeline. Requires
+/// the `write_mutex`; part uploads have not touched redb yet, so the
+/// flush does not race with in-flight UploadPart calls (the state is
+/// already removed before we take the lock).
+async fn complete_multipart(
+    ready: Arc<OnceLock<ServeState>>,
+    upload_id: String,
+    bucket: &str,
+    key: &str,
+) -> axum::response::Response {
+    let Some(state) = ready.get() else {
+        return s3xml::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NotReady",
+            "index sync in progress",
+        )
+        .into_response();
+    };
+    // Remove the upload state before taking write_mutex. Parts must
+    // already be buffered; no more UploadPart calls can arrive.
+    let mpu = {
+        let mut uploads = state.multipart_uploads.lock().await;
+        match uploads.remove(&upload_id) {
+            Some(m) => m,
+            None => {
+                return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchUpload", &upload_id)
+                    .into_response();
+            }
+        }
+    };
+    // The path recorded at CreateMultipartUpload time is the
+    // authoritative key; the URL key should match but we trust the
+    // original.
+    let write_key = mpu.path.clone();
+    debug!(
+        "completing multipart upload {} for key {} (created at {})",
+        upload_id, write_key, mpu.created_at
+    );
+    // Concatenate all parts in order. Any empty slots contribute no
+    // bytes, matching S3's "ignore missing parts" behavior for
+    // out-of-range gaps (real S3 rejects gaps; we tolerate them).
+    let mut body = Vec::with_capacity(mpu.parts.iter().map(|p| p.len()).sum());
+    for part in &mpu.parts {
+        body.extend_from_slice(part);
+    }
+
+    let _guard = state.write_mutex.lock().await;
+    match put_object_full(state, &write_key, &body).await {
+        Ok(file_hash) => {
+            schedule_flush(ready.clone()).await;
+            let etag = format!("\"{}\"", file_hash.dbg_short(16));
+            let location = format!("http://{}/{}", bucket, key);
+            let xml = s3xml::complete_multipart_upload(&location, bucket, key, &etag);
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/xml")],
+                xml,
+            )
+                .into_response()
+        }
+        Err(e) => s3xml::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// AbortMultipartUpload: remove the multipart state and return 204.
+/// Discards all buffered part data. If the upload_id is not found,
+/// returns 404 `NoSuchUpload`.
+async fn abort_multipart(
+    ready: Arc<OnceLock<ServeState>>,
+    upload_id: String,
+) -> axum::response::Response {
+    let Some(state) = ready.get() else {
+        return s3xml::error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "NotReady",
+            "index sync in progress",
+        )
+        .into_response();
+    };
+    let mut uploads = state.multipart_uploads.lock().await;
+    if uploads.remove(&upload_id).is_some() {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchUpload", &upload_id).into_response()
+    }
 }
 
 #[cfg(test)]
@@ -1160,6 +1424,7 @@ mod test {
             backend: test_backend(),
             write_mutex: Mutex::new(()),
             flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1176,6 +1441,7 @@ mod test {
                 get(get_object_handler)
                     .head(head_object_handler)
                     .put(put_object_handler)
+                    .post(multipart_post_handler)
                     .delete(delete_object_handler),
             )
             .with_state(lock)
@@ -1193,6 +1459,7 @@ mod test {
                 get(get_object_handler)
                     .head(head_object_handler)
                     .put(put_object_handler)
+                    .post(multipart_post_handler)
                     .delete(delete_object_handler),
             )
             .with_state(lock)
@@ -1283,6 +1550,7 @@ mod test {
             backend,
             write_mutex: Mutex::new(()),
             flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
         };
 
         // Leak the tempdir so the backend and redb files survive.
@@ -2008,6 +2276,7 @@ mod test {
             backend,
             write_mutex: Mutex::new(()),
             flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
         };
 
         // Leak the tempdir so the backend and redb files survive.
@@ -2103,6 +2372,7 @@ mod test {
             backend,
             write_mutex: Mutex::new(()),
             flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
         };
 
         std::mem::forget(tmp);
@@ -2472,6 +2742,7 @@ mod test {
             backend: backend.clone(),
             write_mutex: Mutex::new(()),
             flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
         };
 
         // Run the flush inline. No debounce timer wait.
@@ -2514,5 +2785,243 @@ mod test {
             .await
             .unwrap();
         assert_eq!(remote_tag, tag_bytes, "pushed tag index mismatch");
+    }
+
+    /// Stage 5f.5a: End-to-end multipart upload. CreateMultipartUpload
+    /// -> UploadPart x3 -> CompleteMultipartUpload, then GET the
+    /// object and verify byte-for-byte equality with the
+    /// concatenation of all parts.
+    #[tokio::test]
+    async fn multipart_upload_round_trip() {
+        // Use an empty state so the multipart upload is the only
+        // write. Build the state from scratch so the same backend
+        // wires into both `state.backend` and `state.blob_reader`.
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(
+                &PlainIndex::new_empty(),
+                &BlobIndex::new(),
+                &TagIndex::new(),
+            )
+            .unwrap();
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
+        };
+        std::mem::forget(tmp);
+        let app = test_router(state);
+
+        // Step 1: CreateMultipartUpload via POST with `?uploads`.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/testvault/multipart.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let xml = body_string(response.into_body()).await;
+        assert!(xml.contains("InitiateMultipartUploadResult"), "got: {xml}");
+        // Extract the UploadId from the XML.
+        let upload_id = extract_xml_value(&xml, "UploadId").expect("UploadId not found in XML");
+        assert!(!upload_id.is_empty());
+
+        // Step 2: UploadPart x3 via PUT with `?partNumber=N&uploadId=X`.
+        let parts: [Vec<u8>; 3] = [
+            b"hello ".to_vec(),
+            b"brave new ".to_vec(),
+            b"world\n".to_vec(),
+        ];
+        for (i, part) in parts.iter().enumerate() {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri(format!(
+                            "/testvault/multipart.bin?partNumber={}&uploadId={}",
+                            i + 1,
+                            upload_id
+                        ))
+                        .body(Body::from(part.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "part {} failed", i + 1);
+            assert!(response.headers().get(header::ETAG).is_some());
+        }
+
+        // Step 3: CompleteMultipartUpload via POST with `?uploadId=X`.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/testvault/multipart.bin?uploadId={}", upload_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let xml = body_string(response.into_body()).await;
+        assert!(xml.contains("CompleteMultipartUploadResult"), "got: {xml}");
+        assert!(xml.contains("<Bucket>testvault</Bucket>"));
+        assert!(xml.contains("<Key>multipart.bin</Key>"));
+
+        // Step 4: GET the object and verify the concatenation.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/multipart.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        let mut expected = Vec::new();
+        for part in &parts {
+            expected.extend_from_slice(part);
+        }
+        assert_eq!(body, expected, "multipart round-trip mismatch");
+    }
+
+    /// Stage 5f.5b: AbortMultipartUpload cleans up state. After
+    /// abort, a subsequent UploadPart for the same upload_id returns
+    /// 404 NoSuchUpload. The uploads map is empty after abort.
+    #[tokio::test]
+    async fn multipart_abort_cleans_up_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(
+                &PlainIndex::new_empty(),
+                &BlobIndex::new(),
+                &TagIndex::new(),
+            )
+            .unwrap();
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
+        };
+        std::mem::forget(tmp);
+
+        let app = test_router(state);
+
+        // CreateMultipartUpload to get an upload_id.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/testvault/abort.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let xml = body_string(response.into_body()).await;
+        let upload_id = extract_xml_value(&xml, "UploadId").expect("UploadId not found in XML");
+
+        // AbortMultipartUpload via DELETE with `?uploadId=X`.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/testvault/abort.bin?uploadId={}", upload_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // UploadPart with the aborted upload_id should now 404.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!(
+                        "/testvault/abort.bin?partNumber=1&uploadId={}",
+                        upload_id
+                    ))
+                    .body(Body::from(b"test".to_vec()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let xml = body_string(response.into_body()).await;
+        assert!(xml.contains("NoSuchUpload"), "got: {xml}");
+    }
+
+    /// Extract the first inner text of a tag from an XML string.
+    /// Used in multipart tests to pull `UploadId` out of S3 XML
+    /// responses. Returns `None` if the tag is missing or empty.
+    fn extract_xml_value(xml: &str, tag: &str) -> Option<String> {
+        let open = format!("<{tag}>");
+        let close = format!("</{tag}>");
+        let start = xml.find(&open)? + open.len();
+        let end = xml[start..].find(&close)? + start;
+        let value = xml[start..end].to_string();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value)
+        }
     }
 }
