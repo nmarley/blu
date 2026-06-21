@@ -212,6 +212,13 @@ impl Config {
         &self.basedir
     }
 
+    /// Set the base directory for the vault. Normally set by
+    /// [`read_config`] during vault discovery; exposed for tests
+    /// and tooling that construct a `Config` without a TOML file.
+    pub fn set_basedir(&mut self, basedir: PathBuf) {
+        self.basedir = basedir;
+    }
+
     /// Write the config back to `.blu/config.toml`.
     pub fn save(&self) -> Result<(), BluError> {
         let config_path = self.bludir().join("config.toml");

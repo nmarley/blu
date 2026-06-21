@@ -21,6 +21,7 @@ use chrono::NaiveDateTime;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 use crate::blob::{BlobBuffer, BlobIndex, EncBlobReader};
 use crate::block::{chunk_bytes, ChunkMeta, FileRef, DEFAULT_CHUNK_SIZE};
@@ -39,6 +40,13 @@ use crate::storage::BackendKind;
 /// agent daemon is the trust boundary, not the HTTP server.
 const DEFAULT_BIND_ADDR: &str = "127.0.0.1:7777";
 
+/// Index flush debounce interval. After each successful write
+/// (PutObject or DeleteObject) a debounce timer is scheduled; when it
+/// fires, redb state is dumped to the on-disk indexes and pushed to
+/// the backend. Replacing the pending timer on each write coalesces
+/// bursts of writes into a single flush.
+const FLUSH_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// State shared across all axum handlers. Stored in an `OnceLock`
 /// behind an `Arc`; handlers access it via `OnceLock::get()` which
 /// returns `None` until the background index sync completes.
@@ -56,13 +64,13 @@ pub struct ServeState {
     blob_reader: Arc<EncBlobReader>,
     /// Vault config. Read by the index flush to resolve local index
     /// directory paths and to push encrypted indexes to the backend.
-    #[allow(dead_code)]
     cfg: Config,
     /// DEK provider. Used by the write path for envelope encryption
-    /// of new blobs and (eventually) by the index flush.
+    /// of new blobs and by the index flush for encrypting index
+    /// updates.
     keys: DekProvider,
     /// Storage backend. Used by the write path for uploading new
-    /// blobs and (eventually) by the index flush.
+    /// blobs and by the index flush to push encrypted indexes.
     backend: BackendKind,
     /// Serializes all write-path mutations so redb state stays
     /// consistent and no two writes overlap. PutObject, DeleteObject,
@@ -70,6 +78,12 @@ pub struct ServeState {
     /// do not need it; they only read redb and the
     /// `EncBlobReader` cache.
     write_mutex: Mutex<()>,
+    /// Debounce handle for the index flush. After each successful
+    /// write, [`schedule_flush`] resets this timer; when it fires the
+    /// flush task acquires `write_mutex` and dumps redb state to the
+    /// on-disk indexes and the backend. Aborted on graceful shutdown
+    /// in favor of a final inline flush.
+    flush_timer: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for ServeState {
@@ -156,6 +170,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
                     keys,
                     backend,
                     write_mutex: Mutex::new(()),
+                    flush_timer: Mutex::new(None),
                 };
 
                 if sync_ready.set(state).is_err() {
@@ -172,6 +187,18 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    // Final best-effort flush so no writes are lost on shutdown.
+    // Abort the debounce timer (if any) and run the flush inline.
+    if let Some(state) = ready.get() {
+        if let Some(handle) = state.flush_timer.lock().await.take() {
+            handle.abort();
+        }
+        match flush_indexes(state).await {
+            Ok(()) => info!("final index flush complete"),
+            Err(e) => error!("final index flush failed: {}", e),
+        }
+    }
 
     info!("blu serve stopped");
     Ok(())
@@ -827,6 +854,7 @@ async fn put_object_handler(
             let etag = format!("\"{}\"", file_hash.dbg_short(16));
             let mut headers = HeaderMap::new();
             headers.insert(header::ETAG, etag.parse().unwrap());
+            schedule_flush(state.0.clone()).await;
             (StatusCode::OK, headers, String::new()).into_response()
         }
         Err(e) => s3xml::error_response(
@@ -975,7 +1003,10 @@ async fn delete_object_handler(
     };
 
     match delete_file_cascade(s, &file_hash).await {
-        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => {
+            schedule_flush(state.0.clone()).await;
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => s3xml::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "InternalError",
@@ -983,6 +1014,59 @@ async fn delete_object_handler(
         )
         .into_response(),
     }
+}
+
+/// Dump redb state to the on-disk indexes and push them to the
+/// backend. Acquires `write_mutex` so it does not race with in-flight
+/// writes. Shared by the debounce task ([`schedule_flush`]) and the
+/// graceful-shutdown final flush.
+///
+/// Reads redb (no write transaction needed), constructs
+/// `(PlainIndex, BlobIndex, TagIndex)` via
+/// [`RedbStore::dump_to_indexes`], writes each to `cfg.idxdir()`, then
+/// calls [`Config::push_indexes`] to upload the encrypted files.
+async fn flush_indexes(state: &ServeState) -> Result<(), BluError> {
+    let _guard = state.write_mutex.lock().await;
+    let (plain, blob, tag) = state.redb.dump_to_indexes()?;
+    state.cfg.write_plain_index(&plain, &state.keys)?;
+    state.cfg.write_blob_index(&blob, &state.keys)?;
+    state.cfg.write_tag_index(&tag, &state.keys)?;
+    state.cfg.push_indexes(&state.backend).await?;
+    Ok(())
+}
+
+/// Schedule a debounced index flush. Aborts any pending flush timer
+/// and spawns a new task that sleeps for [`FLUSH_DEBOUNCE`] then runs
+/// [`flush_indexes`]. Coalesces bursts of writes into a single flush.
+///
+/// The caller typically still holds `write_mutex` (the handler's
+/// `_guard`); that is fine because this helper only locks
+/// `flush_timer`, not `write_mutex`. The spawned task takes
+/// `write_mutex` only after it sleeps, by which point the handler has
+/// returned and dropped its guard.
+async fn schedule_flush(ready: Arc<OnceLock<ServeState>>) {
+    // Lock the timer slot, abort any pending flush, and install the
+    // new handle. If the OnceLock is still empty (sync not complete)
+    // there is nothing to schedule.
+    let Some(state) = ready.get() else {
+        return;
+    };
+    let mut guard = state.flush_timer.lock().await;
+    if let Some(prev) = guard.take() {
+        prev.abort();
+    }
+    let ready_for_task = ready.clone();
+    *guard = Some(tokio::spawn(async move {
+        tokio::time::sleep(FLUSH_DEBOUNCE).await;
+        let Some(s) = ready_for_task.get() else {
+            return;
+        };
+        match flush_indexes(s).await {
+            Ok(()) => info!("debounced index flush complete"),
+            Err(e) => warn!("debounced index flush failed: {}", e),
+        }
+    }));
+    drop(guard);
 }
 
 #[cfg(test)]
@@ -1075,6 +1159,7 @@ mod test {
             keys: test_keys(),
             backend: test_backend(),
             write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
         }
     }
 
@@ -1197,6 +1282,7 @@ mod test {
             keys,
             backend,
             write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
         };
 
         // Leak the tempdir so the backend and redb files survive.
@@ -1921,6 +2007,7 @@ mod test {
             keys,
             backend,
             write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
         };
 
         // Leak the tempdir so the backend and redb files survive.
@@ -2015,6 +2102,7 @@ mod test {
             keys,
             backend,
             write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
         };
 
         std::mem::forget(tmp);
@@ -2315,5 +2403,116 @@ mod test {
             !backend.exists(&blob_path).await.unwrap(),
             "old blob should be gone after overwrite"
         );
+    }
+
+    /// Stage 5f.6: After a write, calling `flush_indexes` directly
+    /// (skipping the debounce timer for determinism) must produce
+    /// the three encrypted index files in `cfg.idxdir()` and push
+    /// them to the backend so a subsequent `sync_from_backend` can
+    /// recover them.
+    #[tokio::test]
+    async fn flush_indexes_writes_local_files_and_pushes_to_backend() {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+
+        // Write one chunk through BlobBuffer so redb has something to dump.
+        let file_data = b"flush me to disk and backend\n".to_vec();
+        let mut blob_idx = BlobIndex::new();
+        let mut blob_buf = crate::blob::BlobBuffer::new(&backend, keys.clone());
+        let mut chunk_data = file_data.clone();
+        blob_buf
+            .add_chunk(&mut chunk_data, &mut blob_idx)
+            .await
+            .unwrap();
+        blob_buf.finalize(&mut blob_idx).await.unwrap();
+
+        let chunk_hash = crate::hash::multihash(&file_data);
+        let chunk_hash = Hash::from(chunk_hash.to_bytes());
+        let chunk_meta = ChunkMeta {
+            hash: chunk_hash,
+            size: file_data.len(),
+        };
+        let fileref = FileRef {
+            chunkmetas: vec![chunk_meta],
+            paths: HashSet::from([PathBuf::from("flush.bin")]),
+        };
+        let file_hash = Hash::from(hash::multihash(b"flush_file_hash").to_bytes());
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(file_hash, fileref);
+
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
+            .unwrap();
+
+        // Build a Config whose basedir is the tempdir so idxdir()
+        // resolves to tmp/.blu/indexes/ and does not pollute the
+        // repo working directory.
+        let mut cfg = Config::default();
+        cfg.set_basedir(tmp.path().to_path_buf());
+        std::fs::create_dir_all(cfg.idxdir()).unwrap();
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(EncBlobReader::new(keys.clone(), backend.clone())),
+            cfg,
+            keys: keys.clone(),
+            backend: backend.clone(),
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+        };
+
+        // Run the flush inline. No debounce timer wait.
+        flush_indexes(&state).await.unwrap();
+
+        // All three index files must exist in the local idxdir.
+        let idxdir = state.cfg.idxdir();
+        let plain_path = idxdir.join("index.dat");
+        let blob_path = idxdir.join("blob_index.dat");
+        let tag_path = idxdir.join("tags.dat");
+        assert!(plain_path.exists(), "plain index not written");
+        assert!(blob_path.exists(), "blob index not written");
+        assert!(tag_path.exists(), "tag index not written");
+
+        // Each local file must be non-empty (encrypted CBOR).
+        let plain_bytes = std::fs::read(&plain_path).unwrap();
+        assert!(!plain_bytes.is_empty(), "plain index empty");
+        let blob_bytes = std::fs::read(&blob_path).unwrap();
+        assert!(!blob_bytes.is_empty(), "blob index empty");
+        let tag_bytes = std::fs::read(&tag_path).unwrap();
+        assert!(!tag_bytes.is_empty(), "tag index empty");
+
+        // The push must have uploaded the same bytes to the backend
+        // at the `indexes/` prefix. Verify via read_from_path.
+        let remote_plain = state
+            .backend
+            .read_from_path(&std::path::Path::new("indexes").join("index.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_plain, plain_bytes, "pushed plain index mismatch");
+        let remote_blob = state
+            .backend
+            .read_from_path(&std::path::Path::new("indexes").join("blob_index.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_blob, blob_bytes, "pushed blob index mismatch");
+        let remote_tag = state
+            .backend
+            .read_from_path(&std::path::Path::new("indexes").join("tags.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_tag, tag_bytes, "pushed tag index mismatch");
     }
 }
