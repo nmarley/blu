@@ -123,7 +123,8 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
             "/{bucket}/{*key}",
             get(get_object_handler)
                 .head(head_object_handler)
-                .put(put_object_handler),
+                .put(put_object_handler)
+                .delete(delete_object_handler),
         )
         .with_state(ready.clone());
 
@@ -365,27 +366,46 @@ fn resolve_path(
 }
 
 /// Run the delete cascade for the given `file_hash` against the redb
-/// index. This is the index-only half: it removes the FileRef, its
-/// path entries, decrements BlockRef references (removing chunks that
-/// become unreferenced from the blob index), and strips the file from
-/// any tag_index entries. Blob file deletion from the backend is
-/// deferred to the index flush, which serializes redb
-/// state via `RedbStore::dump_to_indexes` and drains dead blob
-/// paths via `BlobIndex::drain_paths_to_delete`.
+/// index and the storage backend.
+///
+/// Removes the FileRef, its path entries, decrements BlockRef
+/// references (removing chunks that become unreferenced from the blob
+/// index), strips the file from any tag_index entries, then deletes
+/// any fully-dead blob files from the storage backend.
 ///
 /// `PutObject` calls this when overwriting an existing path so the
 /// old file's chunks are reclaimed before the new FileRef is written.
-/// `DeleteObject` will call this directly.
+/// `DeleteObject` calls this directly.
+///
+/// Backend blob deletion is best-effort: if a blob file cannot be
+/// deleted (e.g., transient S3 error), a warning is logged and the
+/// cascade continues. The redb index is already consistent; an
+/// orphaned blob is non-fatal and can be reclaimed by a future
+/// defrag pass.
 ///
 /// Caller must already hold `ServeState::write_mutex`. Returns the
-/// [`DeleteStats`] produced by [`RedbStore::delete_object_index`]. A
-/// `None` return indicates the file_hash was not present, which is
-/// treated as a success with zero stats.
+/// [`DeleteStats`] produced by [`RedbStore::delete_object_index`].
 async fn delete_file_cascade(
     state: &ServeState,
     file_hash: &crate::hash::Hash,
 ) -> Result<crate::serve::redb_store::DeleteStats, BluError> {
-    state.redb.delete_object_index(file_hash)
+    let stats = state.redb.delete_object_index(file_hash)?;
+
+    // Delete fully-dead blob files from the backend. The redb
+    // transaction has already committed, so the index is consistent
+    // even if a backend delete fails.
+    for blob_path in &stats.blobs_dead {
+        if let Err(e) = state.backend.delete(blob_path).await {
+            warn!(
+                "failed to delete dead blob {} from backend: {} \
+                 (orphaned blob, will be reclaimed by defrag)",
+                blob_path.display(),
+                e,
+            );
+        }
+    }
+
+    Ok(stats)
 }
 
 /// Fetch all chunk data for a `FileRef`, in chunk order, and
@@ -904,6 +924,67 @@ async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<
     Ok(file_hash)
 }
 
+/// `DELETE /{bucket}/{*key}` -- DeleteObject. Removes the object at
+/// the given virtual path from the index and deletes any fully-dead
+/// blob files from the storage backend.
+///
+/// Returns 204 No Content on success (the S3 convention for
+/// DeleteObject). Returns 404 `NoSuchKey` if the key does not exist,
+/// 404 `NoSuchBucket` if the bucket does not match, 503 if the index
+/// sync has not completed, 500 `InternalError` on any index or
+/// backend failure.
+async fn delete_object_handler(
+    state: axum::extract::State<Arc<OnceLock<ServeState>>>,
+    Path((bucket, key)): Path<(String, String)>,
+) -> axum::response::Response {
+    let s = match state.0.get() {
+        Some(s) => s,
+        None => {
+            return s3xml::error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "NotReady",
+                "index sync in progress",
+            )
+            .into_response();
+        }
+    };
+
+    if bucket != s.bucket_name {
+        return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchBucket", &bucket)
+            .into_response();
+    }
+
+    // All write-path work happens under the write mutex so redb state
+    // stays consistent and no two writes overlap.
+    let _guard = s.write_mutex.lock().await;
+
+    // Resolve path -> file_hash. 404 if the path does not exist.
+    let file_hash = match s.redb.get_file_hash_by_path(&key) {
+        Ok(Some(h)) => h,
+        Ok(None) => {
+            return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchKey", &key).into_response();
+        }
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &format!("path lookup failed: {e}"),
+            )
+            .into_response();
+        }
+    };
+
+    match delete_file_cascade(s, &file_hash).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => s3xml::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashSet;
@@ -918,7 +999,7 @@ mod test {
 
     use super::*;
     use crate::blob::{BlobIndex, EncBlobReader};
-    use crate::block::{ChunkMeta, FileRef, PlainIndex};
+    use crate::block::{BlockRef, ChunkMeta, FileRef, PlainIndex};
     use crate::dek_provider::DekProvider;
     use crate::hash;
     use crate::hash::Hash;
@@ -1009,7 +1090,8 @@ mod test {
                 "/{bucket}/{*key}",
                 get(get_object_handler)
                     .head(head_object_handler)
-                    .put(put_object_handler),
+                    .put(put_object_handler)
+                    .delete(delete_object_handler),
             )
             .with_state(lock)
     }
@@ -1025,7 +1107,8 @@ mod test {
                 "/{bucket}/{*key}",
                 get(get_object_handler)
                     .head(head_object_handler)
-                    .put(put_object_handler),
+                    .put(put_object_handler)
+                    .delete(delete_object_handler),
             )
             .with_state(lock)
     }
@@ -1750,5 +1833,487 @@ mod test {
         let body = body_bytes(response.into_body()).await;
         assert_eq!(body.len(), 50);
         assert_eq!(body, &file_data[50..]);
+    }
+
+    /// Build a `ServeState` with real blob data and proper BlockRef
+    /// entries in redb. Unlike `data_state`, this populates
+    /// `plain.blocks` so the delete cascade can find and decrement
+    /// BlockRef references.
+    ///
+    /// Writes `file_data` as a single chunk through `BlobBuffer`, then
+    /// builds a PlainIndex with a FileRef and a BlockRef pointing at
+    /// the chunk. The file is accessible at `path` in the virtual
+    /// namespace.
+    ///
+    /// Returns the state, the original file data, and the blob path
+    /// (so tests can assert on backend deletion).
+    async fn data_state_with_blocks(
+        path: &str,
+        file_data: &[u8],
+    ) -> (ServeState, Vec<u8>, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+
+        // Write file_data as a single chunk through BlobBuffer.
+        let mut blob_idx = BlobIndex::new();
+        let mut blob_buf = crate::blob::BlobBuffer::new(&backend, keys.clone());
+        let mut chunk_data = file_data.to_vec();
+        blob_buf
+            .add_chunk(&mut chunk_data, &mut blob_idx)
+            .await
+            .unwrap();
+        blob_buf.finalize(&mut blob_idx).await.unwrap();
+
+        // Extract the blob path from the blob index.
+        let chunk_hash = crate::hash::multihash(file_data);
+        let chunk_hash = Hash::from(chunk_hash.to_bytes());
+        let blob_path = blob_idx
+            .map
+            .get(&chunk_hash)
+            .map(|loc| loc.blob_path().clone())
+            .unwrap();
+
+        // Build a PlainIndex with FileRef and BlockRef.
+        let chunk_meta = ChunkMeta {
+            hash: chunk_hash.clone(),
+            size: file_data.len(),
+        };
+        let fileref = FileRef {
+            chunkmetas: vec![chunk_meta],
+            paths: HashSet::from([PathBuf::from(path)]),
+        };
+        let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
+
+        let mut blockref = BlockRef::new();
+        blockref.references.insert(
+            file_hash.clone(),
+            blob_idx.map.get(&chunk_hash).unwrap().position.clone(),
+        );
+
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(file_hash.clone(), fileref);
+        plain.blocks.insert(chunk_hash, blockref);
+
+        // Populate redb from both indexes.
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
+            .unwrap();
+
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+        };
+
+        // Leak the tempdir so the backend and redb files survive.
+        std::mem::forget(tmp);
+
+        (state, file_data.to_vec(), blob_path)
+    }
+
+    /// Build a `ServeState` with two files that share a single chunk
+    /// (same content, different paths). Both files reference the same
+    /// blob, so deleting one file must NOT delete the blob.
+    ///
+    /// Returns the state and the blob path.
+    async fn shared_chunk_state(
+        path1: &str,
+        path2: &str,
+        file_data: &[u8],
+    ) -> (ServeState, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+
+        // Write file_data as a single chunk through BlobBuffer.
+        let mut blob_idx = BlobIndex::new();
+        let mut blob_buf = crate::blob::BlobBuffer::new(&backend, keys.clone());
+        let mut chunk_data = file_data.to_vec();
+        blob_buf
+            .add_chunk(&mut chunk_data, &mut blob_idx)
+            .await
+            .unwrap();
+        blob_buf.finalize(&mut blob_idx).await.unwrap();
+
+        let chunk_hash = crate::hash::multihash(file_data);
+        let chunk_hash = Hash::from(chunk_hash.to_bytes());
+        let blob_path = blob_idx
+            .map
+            .get(&chunk_hash)
+            .map(|loc| loc.blob_path().clone())
+            .unwrap();
+        let position = blob_idx.map.get(&chunk_hash).unwrap().position.clone();
+
+        // Two distinct file hashes, both referencing the same chunk.
+        let file_hash_1 = Hash::from(hash::multihash(b"file_hash_1").to_bytes());
+        let file_hash_2 = Hash::from(hash::multihash(b"file_hash_2").to_bytes());
+
+        let chunk_meta = ChunkMeta {
+            hash: chunk_hash.clone(),
+            size: file_data.len(),
+        };
+        let fileref_1 = FileRef {
+            chunkmetas: vec![chunk_meta.clone()],
+            paths: HashSet::from([PathBuf::from(path1)]),
+        };
+        let fileref_2 = FileRef {
+            chunkmetas: vec![chunk_meta],
+            paths: HashSet::from([PathBuf::from(path2)]),
+        };
+
+        let mut blockref = BlockRef::new();
+        blockref
+            .references
+            .insert(file_hash_1.clone(), position.clone());
+        blockref.references.insert(file_hash_2.clone(), position);
+
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(file_hash_1, fileref_1);
+        plain.files.insert(file_hash_2, fileref_2);
+        plain.blocks.insert(chunk_hash, blockref);
+
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
+            .unwrap();
+
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+        };
+
+        std::mem::forget(tmp);
+
+        (state, blob_path)
+    }
+
+    #[tokio::test]
+    async fn delete_object_returns_204() {
+        let file_data: Vec<u8> = (0..256u32).map(|i| i as u8).collect();
+        let (state, _) = data_state("delme.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/delme.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let body = body_bytes(response.into_body()).await;
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_object_then_get_404() {
+        let file_data: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04];
+        let (state, _) = data_state("temp.txt", &file_data).await;
+        let app = test_router(state);
+
+        // DELETE the file.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/temp.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // GET returns 404.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/temp.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NoSuchKey"));
+
+        // HEAD returns 404.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/testvault/temp.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn delete_object_nonexistent_404() {
+        let file_data: Vec<u8> = vec![0x01];
+        let (state, _) = data_state("exists.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/nope.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NoSuchKey"));
+    }
+
+    #[tokio::test]
+    async fn delete_object_wrong_bucket_404() {
+        let file_data: Vec<u8> = vec![0x01];
+        let (state, _) = data_state("exists.txt", &file_data).await;
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/wrongbucket/exists.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NoSuchBucket"));
+    }
+
+    #[tokio::test]
+    async fn delete_object_returns_503_when_not_ready() {
+        let app = not_ready_router();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/anything.txt")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("NotReady"));
+    }
+
+    #[tokio::test]
+    async fn delete_object_removes_blob_from_backend() {
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+        let (state, _, blob_path) = data_state_with_blocks("unique.bin", &file_data).await;
+
+        // The blob should exist before deletion.
+        assert!(
+            state.backend.exists(&blob_path).await.unwrap(),
+            "blob should exist before delete"
+        );
+
+        // Clone the backend before the state is moved into the router.
+        let backend = state.backend.clone();
+        let app = test_router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/unique.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // The blob should be gone from the backend after deletion,
+        // because the file was the only consumer of its chunk.
+        assert!(
+            !backend.exists(&blob_path).await.unwrap(),
+            "blob should be gone from backend after delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_object_preserves_shared_blob() {
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+        let (state, blob_path) = shared_chunk_state("file_a.bin", "file_b.bin", &file_data).await;
+
+        // The blob should exist before deletion.
+        assert!(
+            state.backend.exists(&blob_path).await.unwrap(),
+            "blob should exist before delete"
+        );
+
+        // We need the backend handle after the router consumes state.
+        let backend = state.backend.clone();
+        let app = test_router(state);
+
+        // Delete file_a.bin.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/file_a.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // file_b.bin should still be accessible.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/file_b.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // The blob should still exist because file_b.bin still
+        // references the shared chunk.
+        assert!(
+            backend.exists(&blob_path).await.unwrap(),
+            "blob should still exist after deleting one of two sharing files"
+        );
+
+        // Now delete file_b.bin too.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/file_b.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // Now the blob should be gone, as no files reference it.
+        assert!(
+            !backend.exists(&blob_path).await.unwrap(),
+            "blob should be gone after deleting both sharing files"
+        );
+    }
+
+    #[tokio::test]
+    async fn put_object_overwrite_deletes_old_blob() {
+        let original_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+        let (state, _, blob_path) = data_state_with_blocks("overwrite.bin", &original_data).await;
+
+        // The blob should exist before overwrite.
+        assert!(
+            state.backend.exists(&blob_path).await.unwrap(),
+            "blob should exist before overwrite"
+        );
+
+        // We need the backend and blob_path after the router consumes
+        // state.
+        let backend = state.backend.clone();
+        let app = test_router(state);
+
+        // PUT different content to the same path.
+        let new_data: Vec<u8> = vec![0xFF; 300];
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/overwrite.bin")
+                    .body(Body::from(new_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET should return the new content.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/overwrite.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, new_data);
+
+        // The old blob should be deleted from the backend because
+        // the old file was the only consumer of its chunk and the
+        // overwrite cascade should have cleaned it up.
+        assert!(
+            !backend.exists(&blob_path).await.unwrap(),
+            "old blob should be gone after overwrite"
+        );
     }
 }

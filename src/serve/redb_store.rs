@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Bound;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Timelike;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
@@ -63,7 +63,7 @@ pub struct RedbStore {
 
 /// Statistics returned by [`RedbStore::delete_object_index`]. Useful
 /// for logging and for the eventual `DeleteObject` response body.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DeleteStats {
     /// Number of BlockRef entries deleted because the file was their
     /// last remaining reference.
@@ -74,6 +74,10 @@ pub struct DeleteStats {
     /// Number of tag_index entries updated to drop this file_hash,
     /// including entries that became empty and were deleted.
     pub tags_touched: usize,
+    /// Blob file paths that became fully dead (no surviving chunks)
+    /// as a result of this delete cascade. The caller should delete
+    /// these from the storage backend after the transaction commits.
+    pub blobs_dead: Vec<std::path::PathBuf>,
 }
 
 impl RedbStore {
@@ -427,11 +431,17 @@ impl RedbStore {
     /// Atomically remove a file and cascade through the block, blob,
     /// and tag indexes, all under a single redb write transaction.
     ///
-    /// This is the index-only half of the delete cascade. It does NOT
-    /// delete the underlying blob files from the storage backend; that
-    /// is deferred to the index flush which serializes redb
-    /// state via [`dump_to_indexes`] and drains any now-dead blob
-    /// paths from the resulting `BlobIndex::paths_to_delete`.
+    /// Removes the FileRef, its path entries, decrements BlockRef
+    /// references (dropping chunks that become unreferenced from
+    /// blob_index and block_index), and strips the file from any
+    /// tag_index entries.
+    ///
+    /// Dead blob detection: when a chunk is removed from blob_index,
+    /// its blob path is recorded. After all chunk removals, the method
+    /// scans the surviving blob_index entries for each touched path. A
+    /// path with no surviving entries is fully dead and returned in
+    /// `DeleteStats::blobs_dead` so the caller can delete the blob file
+    /// from the storage backend after the transaction commits.
     ///
     /// Returns [`DeleteStats`] so the caller can log or surface the
     /// work performed. Returns `Ok(DeleteStats::default())` if the
@@ -481,6 +491,9 @@ impl RedbStore {
             // Cascade through block_index. For each chunk, remove this
             // file_hash from the BlockRef's references. If empty, the
             // chunk is unreferenced: drop BlockRef and blob_index.
+            // Capture the blob path of each removed chunk so we can
+            // detect fully-dead blobs after all removals.
+            let mut touched_blob_paths: HashSet<PathBuf> = HashSet::new();
             for chunk_hash in &chunk_hashes {
                 let key = chunk_hash.to_bytes();
                 let existing: Option<BlockRef> = match block_table.get(key.as_slice())? {
@@ -495,12 +508,39 @@ impl RedbStore {
                 let _ = was_present;
                 if blockref.references.is_empty() {
                     block_table.remove(key.as_slice())?;
+
+                    // Capture the blob path before removing the entry
+                    // so we can check for dead blobs afterwards.
+                    if let Some(blob_guard) = blob_table.get(key.as_slice())? {
+                        let location: BlobBlockLocation = deserialize_cbor(blob_guard.value())?;
+                        touched_blob_paths.insert(location.blob_path().clone());
+                    }
                     blob_table.remove(key.as_slice())?;
                     stats.blocks_removed += 1;
                     stats.chunks_removed += 1;
                 } else {
                     let value = serialize_cbor(&blockref)?;
                     block_table.insert(key.as_slice(), value.as_slice())?;
+                }
+            }
+
+            // Detect fully-dead blobs. For each touched blob path, scan
+            // the surviving blob_index for any entry whose location
+            // references that path. If none survive, the blob is dead
+            // and the caller should delete it from the backend.
+            if !touched_blob_paths.is_empty() {
+                // Build the set of blob paths that still have at least
+                // one surviving chunk in blob_index.
+                let mut live_blob_paths: HashSet<PathBuf> = HashSet::new();
+                for item in blob_table.iter()? {
+                    let (_k, v) = item?;
+                    let location: BlobBlockLocation = deserialize_cbor(v.value())?;
+                    live_blob_paths.insert(location.blob_path().clone());
+                }
+                for path in &touched_blob_paths {
+                    if !live_blob_paths.contains(path) {
+                        stats.blobs_dead.push(path.clone());
+                    }
                 }
             }
 
