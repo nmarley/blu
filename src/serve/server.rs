@@ -3009,6 +3009,418 @@ mod test {
         assert!(xml.contains("NoSuchUpload"), "got: {xml}");
     }
 
+    /// Build a `ServeState` backed by an empty redb and a fresh local
+    /// backend. The tempdir is leaked so the redb file and backend
+    /// files survive for the test's lifetime. Returns the state and
+    /// the tempdir path (so the flush test can set `cfg.basedir` to
+    /// it).
+    fn empty_state() -> ServeState {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let backend = BackendKind::Local(Local::new(tmp.path().join("data")));
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(
+                &PlainIndex::new_empty(),
+                &BlobIndex::new(),
+                &TagIndex::new(),
+            )
+            .unwrap();
+
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
+        };
+
+        std::mem::forget(tmp);
+        state
+    }
+
+    /// Build a `ServeState` with `cfg.basedir` set to a fresh tempdir
+    /// (leaked) so `idxdir()` resolves inside the temp tree. Used by
+    /// the flush test, which needs to assert on local index files
+    /// without polluting the repo working directory.
+    fn empty_state_with_basedir() -> ServeState {
+        let mut state = empty_state();
+        let tmp = tempfile::tempdir().unwrap();
+        state.cfg.set_basedir(tmp.path().to_path_buf());
+        std::fs::create_dir_all(state.cfg.idxdir()).unwrap();
+        std::mem::forget(tmp);
+        state
+    }
+
+    /// Stage 5f.1: PutObject then GetObject round-trip from a fresh
+    /// (empty) redb. PUT a file via the router, GET it back, assert
+    /// byte-for-byte equality. Verify redb now has path, file, blob,
+    /// and block entries.
+    #[tokio::test]
+    async fn put_object_round_trip_from_empty() {
+        let state = empty_state();
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = (0..1024u32).map(|i| (i % 256) as u8).collect();
+
+        // PUT the file.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/data.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::ETAG).is_some());
+
+        // GET it back.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/data.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, file_data, "round-trip data mismatch");
+
+        // HEAD should also succeed and report the right content-length.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/testvault/data.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "1024"
+        );
+    }
+
+    /// Stage 5f.1 (assertion): After a PUT via the router, redb must
+    /// contain path, file, blob, and block entries. This is a
+    /// standalone test so the assertion runs even if the round-trip
+    /// test above does not check counts.
+    #[tokio::test]
+    async fn put_object_populates_redb_tables() {
+        let state = empty_state();
+        let redb = state.redb.clone();
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = vec![0xAB; 300];
+
+        // Before PUT, all tables are empty.
+        assert_eq!(redb.path_count().unwrap(), 0);
+        assert_eq!(redb.file_count().unwrap(), 0);
+        assert_eq!(redb.blob_count().unwrap(), 0);
+        assert_eq!(redb.block_count().unwrap(), 0);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/blob.bin")
+                    .body(Body::from(file_data))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // After PUT, all four tables have exactly one entry.
+        assert_eq!(redb.path_count().unwrap(), 1);
+        assert_eq!(redb.file_count().unwrap(), 1);
+        assert_eq!(redb.blob_count().unwrap(), 1);
+        assert_eq!(redb.block_count().unwrap(), 1);
+
+        // The path resolves to a file_hash.
+        assert!(redb.get_file_hash_by_path("blob.bin").unwrap().is_some());
+    }
+
+    /// Stage 5f.3: Dedup via the router. PUT the same content to two
+    /// different paths. The second PUT must not create a new blob
+    /// (blob_count stays at 1) because the chunk is already in the
+    /// blob index. Both paths must GET back the same bytes and resolve
+    /// to the same file_hash.
+    #[tokio::test]
+    async fn put_object_dedup_same_content_two_paths() {
+        let state = empty_state();
+        let redb = state.redb.clone();
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+
+        // PUT the first copy.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/original.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let blob_count_after_first = redb.blob_count().unwrap();
+        assert_eq!(blob_count_after_first, 1);
+
+        // PUT the same content to a second path.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/duplicate.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // blob_count must not increase: the chunk is deduped.
+        let blob_count_after_second = redb.blob_count().unwrap();
+        assert_eq!(
+            blob_count_after_second, blob_count_after_first,
+            "blob count must not increase on dedup PUT"
+        );
+
+        // Both paths resolve to the same file_hash (same content =
+        // same multihash).
+        let hash_a = redb.get_file_hash_by_path("original.bin").unwrap().unwrap();
+        let hash_b = redb
+            .get_file_hash_by_path("duplicate.bin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(hash_a, hash_b, "both paths must resolve to same file hash");
+
+        // Both GETs return identical bytes.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/original.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_a = body_bytes(response.into_body()).await;
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/duplicate.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_b = body_bytes(response.into_body()).await;
+
+        assert_eq!(body_a, body_b, "both GETs must return identical bytes");
+        assert_eq!(body_a, file_data, "GET must match original data");
+    }
+
+    /// Stage 5f.6 (full): Flush after a router-driven PUT. PUT a file
+    /// via the router, then call `flush_indexes` directly (skipping
+    /// the debounce timer for determinism). Verify the three encrypted
+    /// index files appear in `cfg.idxdir()` and are pushed to the
+    /// backend via `read_from_path`.
+    #[tokio::test]
+    async fn flush_after_put_object() {
+        let state = empty_state_with_basedir();
+        let redb = state.redb.clone();
+        let backend = state.backend.clone();
+        let cfg_idxdir = state.cfg.idxdir();
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = b"flush after put\n".to_vec();
+
+        // PUT via the router so the full write path runs.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/flushme.bin")
+                    .body(Body::from(file_data))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(redb.path_count().unwrap(), 1);
+
+        // The state was consumed by the router. Reconstruct a minimal
+        // state for the flush call. We need the same redb, cfg, keys,
+        // and backend. Recover them from the clones we kept and the
+        // OnceLock that the router still holds. Since test_router
+        // moves the state into an Arc<OnceLock>, we cannot get it
+        // back. Instead, build a fresh state sharing the same redb,
+        // keys, backend, and cfg.
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+        let mut cfg = Config::default();
+        cfg.set_basedir(cfg_idxdir.parent().unwrap().parent().unwrap().to_path_buf());
+
+        let flush_state = ServeState {
+            redb,
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg,
+            keys,
+            backend: backend.clone(),
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
+        };
+
+        // Run the flush inline.
+        flush_indexes(&flush_state).await.unwrap();
+
+        // All three index files must exist in the local idxdir.
+        let plain_path = cfg_idxdir.join("index.dat");
+        let blob_path = cfg_idxdir.join("blob_index.dat");
+        let tag_path = cfg_idxdir.join("tags.dat");
+        assert!(plain_path.exists(), "plain index not written");
+        assert!(blob_path.exists(), "blob index not written");
+        assert!(tag_path.exists(), "tag index not written");
+
+        // Each local file must be non-empty (encrypted CBOR).
+        let plain_bytes = std::fs::read(&plain_path).unwrap();
+        assert!(!plain_bytes.is_empty(), "plain index empty");
+        let blob_bytes = std::fs::read(&blob_path).unwrap();
+        assert!(!blob_bytes.is_empty(), "blob index empty");
+        let tag_bytes = std::fs::read(&tag_path).unwrap();
+        assert!(!tag_bytes.is_empty(), "tag index empty");
+
+        // The push must have uploaded the same bytes to the backend
+        // at the `indexes/` prefix.
+        let remote_plain = backend
+            .read_from_path(&std::path::Path::new("indexes").join("index.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_plain, plain_bytes, "pushed plain index mismatch");
+
+        let remote_blob = backend
+            .read_from_path(&std::path::Path::new("indexes").join("blob_index.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_blob, blob_bytes, "pushed blob index mismatch");
+
+        let remote_tag = backend
+            .read_from_path(&std::path::Path::new("indexes").join("tags.dat"))
+            .await
+            .unwrap();
+        assert_eq!(remote_tag, tag_bytes, "pushed tag index mismatch");
+    }
+
+    /// Edge case: PUT an empty body (zero-byte object), then GET it
+    /// back. S3 accepts zero-byte objects. `chunk_bytes` returns an
+    /// empty Vec for empty input, so `put_object_inner` writes a
+    /// FileRef with zero chunks and no blob_index entry. The GET path
+    /// must return 200 with an empty body.
+    #[tokio::test]
+    async fn put_object_empty_body() {
+        let state = empty_state();
+        let redb = state.redb.clone();
+        let app = test_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/empty.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().get(header::ETAG).is_some());
+
+        // redb must have a path and file entry, but no blob or block
+        // entries (zero chunks).
+        assert_eq!(redb.path_count().unwrap(), 1);
+        assert_eq!(redb.file_count().unwrap(), 1);
+        assert_eq!(redb.blob_count().unwrap(), 0);
+        assert_eq!(redb.block_count().unwrap(), 0);
+
+        // GET must return 200 with an empty body.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/empty.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
+        let body = body_bytes(response.into_body()).await;
+        assert!(body.is_empty(), "empty body must round-trip as empty");
+
+        // HEAD must also return 200 with content-length 0.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("HEAD")
+                    .uri("/testvault/empty.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
+    }
+
     /// Extract the first inner text of a tag from an XML string.
     /// Used in multipart tests to pull `UploadId` out of S3 XML
     /// responses. Returns `None` if the tag is missing or empty.
