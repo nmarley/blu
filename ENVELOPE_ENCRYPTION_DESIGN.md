@@ -668,7 +668,7 @@ blu identity recover
 blu init <path> [--backend local|s3] [--bucket <name>] [--region <region>]
 
 # Standard operations (unchanged, but now use agent)
-blu sync [--push]
+blu sync
 blu ls
 blu restore-files [--all] [--path <pattern>] [--to <dir>]
 blu pull [--force]

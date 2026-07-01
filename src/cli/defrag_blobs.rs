@@ -1,6 +1,6 @@
 use crate::blob::repack_blobs;
 use crate::cli::clapargs::DefragBlobsArgs;
-use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 
 /// Repack partially-dead blobs that have accumulated dead chunks
@@ -41,6 +41,10 @@ pub async fn defrag_blobs(args: DefragBlobsArgs) -> Result<(), BluError> {
     let stats = repack_blobs(&mut blob_index, &backend, &keys).await?;
 
     cfg.write_blob_index(&blob_index, &keys)?;
+
+    // Repacking rewrote blobs on the backend; sync the indexes so they
+    // reflect the new blob layout.
+    push_indexes_or_fail(&cfg, args.backend.as_deref(), Some(&backend)).await?;
 
     println!(
         "Repacked {} blob(s), moved {} chunks, deleted {} old blob(s)",

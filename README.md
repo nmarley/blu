@@ -47,10 +47,11 @@ blu sync
 
 # Sync specific paths
 blu sync ./documents ./photos
-
-# Sync and push indexes to remote backend
-blu sync --push
 ```
+
+`blu sync` always syncs the updated indexes to the backend (blobs and
+indexes stay consistent). Indexes are written locally too; the local
+copy is what powers search, listing, and status.
 
 ### List files
 
@@ -78,8 +79,8 @@ blu restore-files --file-hashes abc123
 ### Remote Index Sync
 
 ```sh
-# Push indexes to remote after sync
-blu sync --push
+# Indexes are pushed to the backend automatically after any command
+# that changes the vault (sync, delete-files, tagger, ...).
 
 # Pull indexes from remote (e.g., on a different machine)
 blu pull --force

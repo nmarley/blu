@@ -103,10 +103,6 @@ pub struct SyncArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Push indexes to remote backend after sync
-    #[arg(long)]
-    pub push: bool,
-
     /// Show verbose output
     #[arg(long, short)]
     pub verbose: bool,
