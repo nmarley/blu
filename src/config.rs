@@ -421,6 +421,9 @@ impl Config {
     ) -> Result<(), BluError> {
         if backend.exists(&remote_path).await? {
             let data = backend.read_from_path(&remote_path).await?;
+            if let Some(parent) = local_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::write(&local_path, data)?;
             info!("Pulled index {:?}", remote_path);
         }
