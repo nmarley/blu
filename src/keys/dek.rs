@@ -10,7 +10,7 @@
 //! The plaintext DEK is ephemeral: it exists in memory only during
 //! the write or read operation, then is zeroized.
 
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use rand::RngCore;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -155,6 +155,77 @@ impl Dek {
             .decrypt(nonce, ciphertext_and_tag)
             .map_err(|_| BluError::DecryptionFailed("DEK decrypt: authentication failed".into()))
     }
+
+    /// Encrypt a single segment of a v3 blob with this DEK.
+    ///
+    /// The nonce is derived deterministically from the segment index
+    /// (4 zero bytes + 8-byte little-endian counter), not randomly.
+    /// The segment index is also passed as AEAD associated data so a
+    /// segment cannot be reordered or spliced into a different
+    /// position without failing authentication.
+    ///
+    /// Returns `ciphertext || tag (16)` (no inline nonce; the nonce is
+    /// derived from the index by the caller's reader).
+    pub fn encrypt_segment(&self, index: u64, plaintext: &[u8]) -> Result<Vec<u8>> {
+        let cipher = ChaCha20Poly1305::new((&self.bytes).into());
+
+        let nonce_bytes = segment_nonce(index);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let aad = index.to_le_bytes();
+        let payload = Payload {
+            msg: plaintext,
+            aad: &aad,
+        };
+
+        cipher
+            .encrypt(nonce, payload)
+            .map_err(|e| BluError::EncryptionFailed(format!("DEK encrypt_segment: {}", e)))
+    }
+
+    /// Decrypt a single segment that was encrypted with
+    /// [`encrypt_segment`](Self::encrypt_segment).
+    ///
+    /// The caller supplies the same segment index used during
+    /// encryption so the nonce and AAD can be reconstructed. Expects
+    /// `ciphertext || tag (16)` (no inline nonce).
+    pub fn decrypt_segment(&self, index: u64, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        if ciphertext.len() < TAG_SIZE {
+            return Err(BluError::DecryptionFailed(format!(
+                "segment ciphertext too short: {} bytes (minimum {})",
+                ciphertext.len(),
+                TAG_SIZE
+            )));
+        }
+
+        let cipher = ChaCha20Poly1305::new((&self.bytes).into());
+
+        let nonce_bytes = segment_nonce(index);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let aad = index.to_le_bytes();
+        let payload = Payload {
+            msg: ciphertext,
+            aad: &aad,
+        };
+
+        cipher.decrypt(nonce, payload).map_err(|_| {
+            BluError::DecryptionFailed("DEK decrypt_segment: authentication failed".into())
+        })
+    }
+}
+
+/// Construct the deterministic 12-byte nonce for a v3 segment.
+///
+/// The nonce is `[0x00; 4] || index.to_le_bytes()`. The 4-byte zero
+/// prefix reserves room for a future key-version or domain-separation
+/// byte without changing the nonce length. Uniqueness is guaranteed
+/// because each blob gets a fresh DEK, so the `(DEK, index)` pair is
+/// never reused.
+pub fn segment_nonce(index: u64) -> [u8; NONCE_SIZE] {
+    let mut nonce = [0u8; NONCE_SIZE];
+    nonce[4..].copy_from_slice(&index.to_le_bytes());
+    nonce
 }
 
 impl std::fmt::Debug for Dek {
@@ -325,5 +396,119 @@ mod test {
         let recovered_dek = Dek::unwrap(&kek, &wrapped_dek).unwrap();
         let recovered = recovered_dek.decrypt_data(&ciphertext).unwrap();
         assert_eq!(&recovered, plaintext);
+    }
+
+    #[test]
+    fn segment_nonce_construction() {
+        let nonce = segment_nonce(0);
+        assert_eq!(&nonce[0..4], &[0u8, 0, 0, 0]);
+        assert_eq!(&nonce[4..8], &[0u8, 0, 0, 0]);
+        assert_eq!(&nonce[8..12], &[0u8, 0, 0, 0]);
+
+        let nonce42 = segment_nonce(42);
+        assert_eq!(&nonce42[0..4], &[0u8, 0, 0, 0]);
+        assert_eq!(u64::from_le_bytes(nonce42[4..12].try_into().unwrap()), 42);
+    }
+
+    #[test]
+    fn encrypt_decrypt_segment_round_trip() {
+        let dek = Dek::generate();
+        let plaintext = b"segment payload data";
+
+        let ciphertext = dek.encrypt_segment(0, plaintext).unwrap();
+        // No inline nonce: ciphertext + tag only.
+        assert_eq!(ciphertext.len(), plaintext.len() + TAG_SIZE);
+
+        let decrypted = dek.decrypt_segment(0, &ciphertext).unwrap();
+        assert_eq!(&decrypted, plaintext);
+    }
+
+    #[test]
+    fn encrypt_decrypt_segment_multiple_indices() {
+        let dek = Dek::generate();
+        let plaintext = b"same plaintext different segments";
+
+        for index in [0u64, 1, 2, 127, 255, 1023] {
+            let ciphertext = dek.encrypt_segment(index, plaintext).unwrap();
+            let decrypted = dek.decrypt_segment(index, &ciphertext).unwrap();
+            assert_eq!(
+                &decrypted, plaintext,
+                "round-trip failed for index {}",
+                index
+            );
+        }
+    }
+
+    #[test]
+    fn decrypt_segment_wrong_index_fails() {
+        let dek = Dek::generate();
+        let plaintext = b"segment data";
+
+        let ciphertext = dek.encrypt_segment(5, plaintext).unwrap();
+
+        // Decrypting with a different index should fail (nonce/AAD mismatch).
+        let result = dek.decrypt_segment(6, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_segment_tampered_fails() {
+        let dek = Dek::generate();
+        let mut ciphertext = dek.encrypt_segment(0, b"segment data").unwrap();
+
+        // Flip a byte in the ciphertext body.
+        ciphertext[2] ^= 0xFF;
+
+        let result = dek.decrypt_segment(0, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn decrypt_segment_truncated_fails() {
+        let dek = Dek::generate();
+        let result = dek.decrypt_segment(0, &[0u8; 8]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn segments_same_plaintext_different_indices_produce_different_ciphertext() {
+        let dek = Dek::generate();
+        let plaintext = b"identical plaintext";
+
+        let ct0 = dek.encrypt_segment(0, plaintext).unwrap();
+        let ct1 = dek.encrypt_segment(1, plaintext).unwrap();
+        let ct2 = dek.encrypt_segment(2, plaintext).unwrap();
+
+        // All three must be different (different nonces => different ciphertext).
+        assert_ne!(ct0, ct1);
+        assert_ne!(ct1, ct2);
+        assert_ne!(ct0, ct2);
+
+        // But all decrypt back to the same plaintext with their own index.
+        assert_eq!(&dek.decrypt_segment(0, &ct0).unwrap(), plaintext);
+        assert_eq!(&dek.decrypt_segment(1, &ct1).unwrap(), plaintext);
+        assert_eq!(&dek.decrypt_segment(2, &ct2).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn decrypt_segment_with_wrong_key_fails() {
+        let dek1 = Dek::generate();
+        let dek2 = Dek::generate();
+
+        let ciphertext = dek1.encrypt_segment(0, b"secret segment").unwrap();
+        let result = dek2.decrypt_segment(0, &ciphertext);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn encrypt_decrypt_empty_segment() {
+        let dek = Dek::generate();
+        let plaintext = b"";
+
+        let ciphertext = dek.encrypt_segment(0, plaintext).unwrap();
+        assert_eq!(ciphertext.len(), TAG_SIZE);
+
+        let decrypted = dek.decrypt_segment(0, &ciphertext).unwrap();
+        assert!(decrypted.is_empty());
     }
 }
