@@ -60,3 +60,5 @@ pub mod storage;
 pub mod tag;
 /// v2 file format: envelope encryption with KEK/DEK hierarchy
 pub mod v2format;
+/// v3 segmented AEAD blob format (fixed-size segments, prefix fetch)
+pub mod v3format;
