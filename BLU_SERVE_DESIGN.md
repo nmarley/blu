@@ -243,12 +243,14 @@ segment_1   = encrypt(padded[S..2S])
 segment_K   = encrypt(padded[(K-1)*S..K*S])
 ```
 
-Every segment is exactly `SEGMENT_SIZE + 28` bytes on disk (plaintext
-segment + 12-byte nonce + 16-byte tag). An attacker sees a blob of
-size `K * (S + 28)` and learns only K (the segment count), which is
-the same for all ~64 MiB blobs because blob sizes are uniform. There
-is no table of contents, no variable sizes, no internal structure
-visible in the ciphertext.
+Every segment is exactly `SEGMENT_SIZE + 16` bytes on disk (plaintext
+segment + 16-byte Poly1305 tag). The nonce is not stored inline; it is
+derived deterministically from the segment counter (see the v3 wire
+format below). An attacker sees a blob of size `K * (S + 16)` plus a
+fixed-size header, and learns only K (the segment count), which is the
+same for all ~64 MiB blobs because blob sizes are uniform. There is no
+table of contents, no variable sizes, no internal structure visible in
+the ciphertext.
 
 **Where the internal mapping lives**: the client-side encrypted index
 (stored in redb locally, pushed to the backend as encrypted CBOR)
@@ -267,11 +269,16 @@ This mapping is never visible to the storage provider.
 
 **What this enables:**
 
-- Byte-range S3 GET for individual segments
-- Authenticate and decrypt a subset of the blob without downloading
+- Byte-range S3 GET for a segment prefix (the segments `0..=K` covering
+  a chunk's compressed bytes, not the whole blob)
+- Authenticate and decrypt a prefix of the blob without downloading
   all of it
-- Cache miss cost drops from ~64 MiB to `N * SEGMENT_SIZE` where N
-  is the number of segments spanning the requested chunk
+- Cache miss cost for a chunk is proportional to the chunk's position
+  in the compressed stream, not the whole blob. A front chunk fetches
+  only the first few segments; a tail chunk degrades to a full prefix
+  fetch (no worse than v2). Sequential streaming (the primary `blu
+  serve` use case) reads front-to-back, so each seek fetches a minimal
+  growing prefix that the LRU cache already holds.
 
 **What this changes:**
 
@@ -281,11 +288,11 @@ This mapping is never visible to the storage provider.
 - Compression is still whole-blob (preserving cross-chunk context),
   but the compressed output is split into fixed-size segments before
   encryption
-- Slight size overhead: 28 bytes (nonce + tag) per segment instead
-  of per blob, plus padding to align the compressed output to a
-  segment boundary. For 128 segments per blob, overhead is ~3.5 KiB
-  for nonce/tag plus up to one segment of padding, negligible
-  relative to 64 MiB
+- Slight size overhead: 16 bytes (tag) per segment instead of per
+  blob, plus padding to align the compressed output to a segment
+  boundary. For 128 segments per blob, overhead is ~2 KiB for tags
+  plus up to one segment of padding, negligible relative to 64 MiB.
+  No per-segment nonce is stored (it is derived from the counter).
 
 **Segment size**: a reasonable default is 512 KiB (matching chunk
 size). Larger segments (1 MiB) reduce per-segment overhead but
@@ -297,6 +304,109 @@ constant; it can be stored in the v3 header.
 **Compatibility**: this would be a new format version (v3). Existing
 v2 blobs remain readable. New blobs can be written in v3. Migration
 is optional (repack via `blu defrag-blobs --upgrade-format`).
+
+### v3 wire format
+
+The v3 blob reuses the `BLUB` magic and the wrapped-DEK header from v2,
+bumps `format_version` to `3`, and appends v3-specific fields. Index
+files (`BLUI`) remain v2; they are always read whole and gain nothing
+from segmentation.
+
+```text
+Offset   Size     Field
+0        4        Magic: "BLUB" (same as v2)
+4        2        Format version: 3 (LE u16)
+6        2        KEK version (LE u16)
+8        4        Wrapped DEK length N (LE u32)
+12       N        Wrapped DEK (nonce || ciphertext || tag)
+12+N     4        Segment size S in bytes (LE u32)
+16+N     4        Segment count K (LE u32)
+20+N     8        Compressed plaintext length P (LE u64)
+28+N     ...      K segments, each exactly S + 16 bytes
+```
+
+`P` is the length of the compressed stream *before* padding. The
+reader uses it to trim padding from the final segment after
+decompression. The on-disk segment payload is `K * (S + 16)` bytes;
+the total blob is `28 + N + K * (S + 16)`.
+
+Each segment is `encrypt_segment(i, plaintext_slice)` where `i` is the
+0-indexed segment counter. The output layout per segment is
+`ciphertext || tag` (no inline nonce; it is derived).
+
+### Nonce construction
+
+Each segment uses a deterministic 12-byte nonce derived from the
+segment index, not a random nonce:
+
+```text
+nonce = [0x00; 4] || index.to_le_bytes()   (4 zero bytes + 8-byte LE counter)
+```
+
+The 4-byte zero prefix reserves room for a future key-version or
+domain-separation byte without changing the nonce length. Uniqueness
+is guaranteed because each blob gets a fresh DEK, so the `(DEK, index)`
+pair is never reused.
+
+The segment index is also passed as AEAD associated data (AAD) via
+`Payload { msg, aad: index.to_le_bytes() }`. This binds each
+ciphertext to its position: an attacker (or a bug) cannot reorder
+segments or splice a segment into a different index without failing
+authentication.
+
+### Padding rule
+
+The compressed stream is zero-padded to a multiple of `S` before
+segmenting. The final segment's plaintext may therefore be `S` bytes
+of which only a suffix is real compressed data; `P` tells the reader
+how much of the decompressed output is real (the rest is padding that
+gzip ignores because it is past the stream end). Padding bytes are
+encrypted along with the last segment's real content, so they are
+indistinguishable from ciphertext to the storage provider.
+
+### Prefix-fetch read algorithm
+
+Because compression is whole-blob (one gzip stream), a reader cannot
+decompress a middle segment without every preceding compressed byte.
+The read strategy is therefore a **compressed-prefix fetch**, not a
+sparse segment fetch:
+
+1. Look up the chunk's `BlobBlockLocation`, which carries
+   `compressed_end: Option<u64>` (the compressed-stream offset where
+   this chunk's bytes end). `None` means a v2 blob; fall back to the
+   whole-blob path.
+2. Compute `up_to_seg = floor(compressed_end / S)`. Fetch the segment
+   prefix `[0, (up_to_seg + 1) * (S + 16))` from the blob via a single
+   byte-range GET.
+3. Decrypt segments `0..=up_to_seg` in order, concatenating the
+   plaintexts. Decompress the concatenated prefix (gzip can decompress
+   a prefix of a stream and yield the decompressed bytes that fall
+   within it).
+4. Slice the decompressed output at `[offset..offset + size]` (the
+   chunk's decompressed position).
+
+Fetch cost is bounded by the chunk's position in the compressed
+stream: a front chunk fetches one segment; a tail chunk fetches the
+whole blob (no worse than v2). Sequential streaming reads
+front-to-back, so each successive chunk reuses the already-cached
+prefix and fetches at most one new segment.
+
+The `EncBlobReader` LRU cache is updated to store, per blob hash, the
+longest decompressed prefix seen so far. A chunk is served from cache
+when its decompressed end falls within the cached length; otherwise
+the cache is extended by fetching and decrypting the additional
+segments.
+
+### Future work: segment-independent framing
+
+True per-chunk random access (fetch only the segments spanning a
+chunk, with no prefix dependency) would require flushing the
+compressor at segment boundaries so each segment is independently
+decompressible. This trades compression ratio for seek latency. It is
+not built in v3; v3's prefix fetch is no worse than v2 in the worst
+case and strictly better for front-loaded access patterns. Revisit if
+random-seek latency on cold caches proves unacceptable for large
+blobs.
 
 ### Recommendation
 
