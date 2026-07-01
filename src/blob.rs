@@ -92,6 +92,7 @@ impl BlobBuffer {
                     offset: self.offset,
                     size,
                 },
+                compressed_end: None,
             },
         );
         self.offset += size;
@@ -171,13 +172,33 @@ pub struct BlobBlockLocation {
     // TODO: not pub
     /// Blah blah make this private again
     pub position: Position,
+    /// The compressed-stream offset where this chunk's bytes end,
+    /// used by the v3 segmented reader to compute which segment prefix
+    /// to fetch. `None` means the chunk lives in a v2 blob (whole-blob
+    /// fetch, no prefix optimization).
+    #[serde(default)]
+    pub compressed_end: Option<u64>,
 }
 
 impl BlobBlockLocation {
     /// Create a new BlobBlockLocation with the given blob path and
     /// position within the decompressed blob.
     pub fn new(path: PathBuf, position: Position) -> Self {
-        Self { path, position }
+        Self {
+            path,
+            position,
+            compressed_end: None,
+        }
+    }
+
+    /// Create a new BlobBlockLocation with a compressed-end offset,
+    /// used by the v3 segmented write path.
+    pub fn new_v3(path: PathBuf, position: Position, compressed_end: u64) -> Self {
+        Self {
+            path,
+            position,
+            compressed_end: Some(compressed_end),
+        }
     }
 
     /// Returns the path to the blob file containing this block.
@@ -502,6 +523,58 @@ mod test {
 
     use super::*;
     use crate::storage::{BackendKind, Local};
+
+    #[test]
+    fn blob_block_location_v2_cbor_back_compat() {
+        // Simulate deserializing a v2-era BlobBlockLocation that has no
+        // compressed_end field. The #[serde(default)] on compressed_end
+        // must make this load as None.
+        let v2_cbor: Vec<u8> = {
+            // Manually construct CBOR for a map with two fields: path
+            // and position. Using ciborium to serialize a two-field
+            // struct that matches the old layout.
+            #[derive(serde::Serialize)]
+            struct OldLocation {
+                path: PathBuf,
+                position: Position,
+            }
+            let old = OldLocation {
+                path: PathBuf::from("d/dd4/dd4ce/dd4ce38e"),
+                position: Position {
+                    offset: 0,
+                    size: 4096,
+                },
+            };
+            let mut buf = Vec::new();
+            ciborium::into_writer(&old, &mut buf).unwrap();
+            buf
+        };
+
+        let loc: BlobBlockLocation = ciborium::from_reader(&v2_cbor[..]).unwrap();
+        assert_eq!(loc.blob_path(), &PathBuf::from("d/dd4/dd4ce/dd4ce38e"));
+        assert_eq!(loc.position.offset, 0);
+        assert_eq!(loc.position.size, 4096);
+        assert_eq!(loc.compressed_end, None);
+    }
+
+    #[test]
+    fn blob_block_location_v3_round_trip() {
+        let loc = BlobBlockLocation::new_v3(
+            PathBuf::from("d/dd4/dd4ce/dd4ce38e"),
+            Position {
+                offset: 524288,
+                size: 524288,
+            },
+            1_000_000,
+        );
+
+        let mut buf = Vec::new();
+        ciborium::into_writer(&loc, &mut buf).unwrap();
+        let loc2: BlobBlockLocation = ciborium::from_reader(&buf[..]).unwrap();
+
+        assert_eq!(loc, loc2);
+        assert_eq!(loc2.compressed_end, Some(1_000_000));
+    }
 
     fn test_keys() -> DekProvider {
         let kek = crate::keys::kek::Kek::generate();

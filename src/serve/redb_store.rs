@@ -870,12 +870,15 @@ mod test {
                 size: 4096,
             },
         );
-        let location_b = BlobBlockLocation::new(
+        // location_b carries compressed_end to verify it round-trips
+        // through the redb blob_index table.
+        let location_b = BlobBlockLocation::new_v3(
             PathBuf::from("d/dd4/dd4ce/dd4ce38e"),
             Position {
                 offset: 4096,
                 size: 4096,
             },
+            8000,
         );
 
         blob.add_chunk_location(&Hash::from(HASH_A), &location_a);
@@ -954,6 +957,8 @@ mod test {
         assert_eq!(loc.blob_path(), &PathBuf::from("d/dd4/dd4ce/dd4ce38e"));
         assert_eq!(loc.position.offset, 0);
         assert_eq!(loc.position.size, 4096);
+        // v2 blob location: compressed_end is None.
+        assert_eq!(loc.compressed_end, None);
 
         let loc2 = store
             .get_blob_location(&Hash::from(HASH_B))
@@ -961,6 +966,8 @@ mod test {
             .unwrap();
         assert_eq!(loc2.position.offset, 4096);
         assert_eq!(loc2.position.size, 4096);
+        // v3 blob location: compressed_end round-trips through redb.
+        assert_eq!(loc2.compressed_end, Some(8000));
 
         assert!(store
             .get_blob_location(&Hash::from("1340deadbeef"))
@@ -1191,5 +1198,34 @@ mod test {
         // it to 0xAA is still a valid continuation byte range (0x80-0xBF),
         // so the result is valid UTF-8: "ê".
         assert_eq!(next_prefix("é"), Some("ê".to_string()));
+    }
+
+    #[test]
+    fn dump_to_indexes_preserves_compressed_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = RedbStore::open(&tmp.path().join("dump.redb")).unwrap();
+
+        let plain = test_plain_index();
+        let blob = test_blob_index();
+        let tag = test_tag_index();
+
+        store.populate_from_indexes(&plain, &blob, &tag).unwrap();
+
+        let (dumped_plain, dumped_blob, _) = store.dump_to_indexes().unwrap();
+
+        // The dumped blob index should have both chunk locations with
+        // their compressed_end values intact.
+        let loc_a = dumped_blob
+            .get_block_location_ref(&Hash::from(HASH_A))
+            .unwrap();
+        assert_eq!(loc_a.compressed_end, None);
+
+        let loc_b = dumped_blob
+            .get_block_location_ref(&Hash::from(HASH_B))
+            .unwrap();
+        assert_eq!(loc_b.compressed_end, Some(8000));
+
+        // Plain index should round-trip too.
+        assert_eq!(dumped_plain.files.len(), 2);
     }
 }
