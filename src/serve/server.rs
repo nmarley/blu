@@ -2029,6 +2029,129 @@ mod test {
         assert_eq!(body, &file_data[974..]);
     }
 
+    /// Deterministic low-compressibility bytes so the blob's compressed
+    /// stream spans several 512 KiB v3 segments.
+    fn pseudo_random_bytes(seed: u64, len: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(len);
+        let mut state = seed | 1;
+        while out.len() < len {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.extend_from_slice(&state.to_le_bytes());
+        }
+        out.truncate(len);
+        out
+    }
+
+    /// Stage 6g.4: End-to-end serve range read over a multi-segment v3
+    /// blob. Build a file from several incompressible chunks (one v3
+    /// blob, many segments), GET an early byte window, and assert the
+    /// bytes are correct AND the backend served strictly fewer bytes
+    /// than the whole blob. This proves the prefix-fetch win reaches
+    /// the HTTP layer, not just the reader.
+    #[tokio::test]
+    async fn get_early_range_fetches_prefix_not_whole_blob() {
+        let tmp = tempfile::tempdir().unwrap();
+        let redb_path = tmp.path().join("test.redb");
+        let local = Local::new(tmp.path().join("data"));
+        let backend = BackendKind::Local(local.clone());
+
+        let kek = crate::keys::kek::Kek::generate();
+        let keys = DekProvider::Local {
+            kek,
+            kek_version: 0,
+        };
+
+        // Eight ~256 KiB incompressible chunks packed into one v3 blob.
+        let chunk_len = 256 * 1024;
+        let chunks: Vec<Vec<u8>> = (0..8)
+            .map(|i| pseudo_random_bytes(0x5eed_0000 ^ i as u64, chunk_len))
+            .collect();
+        let file_data: Vec<u8> = chunks.iter().flatten().copied().collect();
+
+        let mut blob_idx = BlobIndex::new();
+        let mut blob_buf = crate::blob::BlobBuffer::new(&backend, keys.clone());
+        let mut chunkmetas = Vec::new();
+        for c in &chunks {
+            let mut data = c.clone();
+            let hash = Hash::from(crate::hash::multihash(c).to_bytes());
+            chunkmetas.push(ChunkMeta {
+                hash,
+                size: c.len(),
+            });
+            blob_buf.add_chunk(&mut data, &mut blob_idx).await.unwrap();
+        }
+        blob_buf.finalize(&mut blob_idx).await.unwrap();
+
+        // Confirm a single multi-segment v3 blob was written.
+        assert_eq!(blob_idx.count_blob_files(), 1);
+        let blob_path = blob_idx
+            .map
+            .get(&chunkmetas[0].hash)
+            .map(|loc| loc.blob_path().clone())
+            .unwrap();
+        let whole_blob_len = backend.read_data(&blob_path).await.unwrap().len() as u64;
+
+        let fileref = FileRef {
+            chunkmetas,
+            paths: HashSet::from([PathBuf::from("video.bin")]),
+        };
+        let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(file_hash, fileref);
+
+        let store = RedbStore::open(&redb_path).unwrap();
+        store
+            .populate_from_indexes(&plain, &blob_idx, &TagIndex::new())
+            .unwrap();
+
+        let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+        let state = ServeState {
+            redb: Arc::new(store),
+            bucket_name: "testvault".to_string(),
+            index_updated_at: chrono::Utc
+                .timestamp_opt(1718774400, 0)
+                .unwrap()
+                .naive_utc(),
+            blob_reader: Arc::new(blob_reader),
+            cfg: Config::default(),
+            keys,
+            backend,
+            write_mutex: Mutex::new(()),
+            flush_timer: Mutex::new(None),
+            multipart_uploads: Mutex::new(HashMap::new()),
+        };
+        std::mem::forget(tmp);
+        let app = test_router(state);
+
+        // GET an early window that lives entirely within the first
+        // chunk, so only the front segment prefix must be fetched.
+        let baseline = local.bytes_read();
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/video.bin")
+                    .header("Range", "bytes=0-999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, &file_data[0..1000], "early range bytes mismatch");
+
+        let fetched = local.bytes_read() - baseline;
+        assert!(
+            fetched < whole_blob_len,
+            "early range fetched {} bytes, expected strictly less than whole blob {}",
+            fetched,
+            whole_blob_len
+        );
+    }
+
     #[tokio::test]
     async fn get_object_range_beyond_eof_416() {
         let file_data: Vec<u8> = vec![0xAB; 100];

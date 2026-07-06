@@ -220,6 +220,11 @@ pub struct DefragBlobsArgs {
     /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,
+
+    /// Rewrite all legacy v2 blobs into the v3 segmented format
+    /// instead of repacking partially-dead blobs
+    #[arg(long, default_value = "false")]
+    pub upgrade_format: bool,
 }
 
 #[allow(missing_docs)]

@@ -26,6 +26,13 @@ pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 /// Stored per-blob in the v3 header, so it is tunable without a format
 /// bump.
 pub const DEFAULT_SEGMENT_SIZE: usize = 524_288;
+
+/// Number of leading bytes to fetch when probing a blob's format
+/// version and (for v3) parsing its header before a prefix range read.
+/// A v3 header is `20 + wrapped_dek_len` bytes; the wrapped DEK is an
+/// age-wrapped 32-byte key (well under 512 bytes), so this comfortably
+/// covers any real header while staying negligible against a segment.
+const V3_HEADER_PROBE_BYTES: u64 = 512;
 // Default chunk size (4096 * 128) * 128 will fit into a blob file by default
 // ... around 64 MiB
 const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
@@ -314,19 +321,28 @@ impl EncBlobReader {
         }
 
         // Slow path: cache miss (or the cached prefix is too short).
-        // Fetch, decrypt, decompress lock-free. Whole-blob fetch for
-        // now; Stage 6f swaps the v3 branch to a bounded range read.
+        // Fetch, decrypt, decompress lock-free. v3 blobs fetch only the
+        // segment prefix covering this chunk via a bounded range read;
+        // v2 blobs fetch the whole box.
         debug!(
             "Reading blob file from backend: {}",
             location_ref.path.display()
         );
-        let raw = self.backend.read_data(&location_ref.path).await?;
 
-        let decompressed = match v3format::peek_version(&raw) {
+        // Peek the format version from a small header-sized prefix so
+        // v3 blobs never trigger a whole-blob read. The probe is a few
+        // hundred bytes, negligible against a 512 KiB segment.
+        let probe = self
+            .backend
+            .read_range(&location_ref.path, 0, V3_HEADER_PROBE_BYTES)
+            .await?;
+
+        let decompressed = match v3format::peek_version(&probe) {
             Some(v3format::FORMAT_VERSION_V3) => {
-                // v3 segmented blob: compute the segment prefix covering
-                // this chunk's compressed bytes and decrypt only that.
-                let (header, _) = v3format::read_header(&raw)?;
+                // v3 segmented blob: parse the header from the probe,
+                // compute the segment prefix covering this chunk's
+                // compressed bytes, and range-fetch only that prefix.
+                let (header, payload_offset) = v3format::read_header(&probe)?;
                 let compressed_end = location_ref.compressed_end.ok_or_else(|| {
                     BluError::DecryptionFailed(format!(
                         "v3 blob chunk missing compressed_end: {}",
@@ -334,10 +350,17 @@ impl EncBlobReader {
                     ))
                 })?;
                 let up_to_seg = last_segment_for(compressed_end, header.segment_size);
+                let prefix_end = payload_offset as u64
+                    + (up_to_seg as u64 + 1) * header.on_disk_segment_size() as u64;
+                let raw = self
+                    .backend
+                    .read_range(&location_ref.path, 0, prefix_end)
+                    .await?;
                 decrypt_envelope_segmented_prefix(&raw, up_to_seg, &self.keys)?
             }
             _ => {
                 // v2 whole-blob box.
+                let raw = self.backend.read_data(&location_ref.path).await?;
                 let decrypted = decrypt_envelope(&raw, &self.keys)?;
                 decompress(&decrypted)?
             }
@@ -398,6 +421,26 @@ pub async fn repack_blobs(
     keys: &DekProvider,
 ) -> Result<RepackStats, BluError> {
     let candidates = idx.drain_paths_to_repack();
+    rewrite_blobs(idx, backend, keys, candidates).await
+}
+
+/// Rewrite a set of blobs by reading their live chunks and repacking
+/// them into fresh `BlobBuffer` output, then deleting the originals.
+///
+/// This is the shared machinery behind both `repack_blobs` (which
+/// passes partially-dead blobs) and `blu defrag-blobs --upgrade-format`
+/// (which passes v2 blobs to be re-emitted as v3). Because the writer
+/// always emits the current format (v3), rewriting is format-agnostic:
+/// the caller only chooses which blobs to feed in.
+///
+/// The `BlobIndex` is updated in place: map entries are overwritten
+/// with new locations and stale `path_index` entries are removed.
+pub async fn rewrite_blobs(
+    idx: &mut BlobIndex,
+    backend: &BackendKind,
+    keys: &DekProvider,
+    candidates: HashSet<PathBuf>,
+) -> Result<RepackStats, BluError> {
     if candidates.is_empty() {
         return Ok(RepackStats {
             blobs_repacked: 0,
@@ -1202,6 +1245,118 @@ mod test {
 
         let reader = EncBlobReader::new(keys.clone(), backend.clone());
         let got = reader.get_bytes(&location).await.unwrap();
+        assert_eq!(got, payload);
+    }
+
+    #[tokio::test]
+    async fn v3_front_chunk_fetches_fewer_bytes_than_whole_blob() {
+        // The concrete Stage 6 win: reading a front chunk of a
+        // multi-segment v3 blob fetches strictly fewer backend bytes
+        // than the whole blob. Instrument the Local backend's byte
+        // counter to measure it deterministically (no wall-clock).
+        let datadir = tempdir().unwrap();
+        let local = Local::new(&datadir);
+        let backend = BackendKind::Local(local.clone());
+        let keys = test_keys();
+
+        // Eight ~256 KiB incompressible chunks => a compressed stream
+        // spanning several 512 KiB segments in a single blob.
+        let chunk_len = 256 * 1024;
+        let mut chunks: Vec<Vec<u8>> = (0..8)
+            .map(|i| pseudo_random_bytes(0xabcd_1234 ^ i as u64, chunk_len))
+            .collect();
+
+        let mut idx = BlobIndex::new();
+        let mut blob_buf = BlobBuffer::new(&backend, keys.clone());
+        let mut hashes = Vec::new();
+        for c in chunks.iter_mut() {
+            hashes.push(Hash::from(hash::multihash(c).to_bytes()));
+            blob_buf.add_chunk(c, &mut idx).await.unwrap();
+        }
+        blob_buf.finalize(&mut idx).await.unwrap();
+
+        // Confirm a single multi-segment v3 blob.
+        let front_loc = idx.get_block_location_ref(&hashes[0]).unwrap();
+        let whole_blob = backend.read_data(front_loc.blob_path()).await.unwrap();
+        let (header, _) = v3format::read_header(&whole_blob).unwrap();
+        assert!(header.segment_count > 1, "test needs multiple segments");
+        let whole_blob_len = whole_blob.len() as u64;
+
+        // Fresh reader against a fresh counter: read only the front
+        // chunk and measure the bytes the backend served.
+        let baseline = local.bytes_read();
+        let reader = EncBlobReader::new(keys.clone(), backend.clone());
+        let got = reader.get_bytes(&front_loc).await.unwrap();
+        assert_eq!(&got, &chunks[0], "front chunk must round-trip");
+
+        let fetched = local.bytes_read() - baseline;
+        assert!(
+            fetched < whole_blob_len,
+            "front chunk fetched {} bytes, expected strictly less than whole blob {}",
+            fetched,
+            whole_blob_len
+        );
+    }
+
+    #[tokio::test]
+    async fn rewrite_blobs_upgrades_v2_to_v3() {
+        use crate::compression::compress;
+        use crate::dek_provider::encrypt_envelope;
+        use crate::v2format::FileType;
+
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(&datadir));
+        let keys = test_keys();
+
+        // Manually write a v2 blob holding a single chunk and index it
+        // with compressed_end = None (the v2 marker).
+        let payload = b"legacy v2 payload awaiting upgrade to segmented v3".to_vec();
+        let compressed = compress(&payload).unwrap();
+        let encrypted = encrypt_envelope(&compressed, FileType::Blob, &keys).unwrap();
+        assert_eq!(v3format::peek_version(&encrypted), Some(2));
+
+        let blob_hash = Hash::from(hash::multihash(&encrypted).to_bytes());
+        backend.write_data(&blob_hash, &encrypted).await.unwrap();
+        let v2_path = storage::path_for(&blob_hash).unwrap();
+
+        let chunk_hash = Hash::from(hash::multihash(&payload).to_bytes());
+        let mut idx = BlobIndex::new();
+        idx.add_chunk_location(
+            &chunk_hash,
+            &BlobBlockLocation::new(
+                v2_path.clone(),
+                Position {
+                    offset: 0,
+                    size: payload.len(),
+                },
+            ),
+        );
+
+        // Upgrade: feed the v2 blob path through the shared rewriter.
+        let mut candidates = HashSet::new();
+        candidates.insert(v2_path.clone());
+        let stats = rewrite_blobs(&mut idx, &backend, &keys, candidates)
+            .await
+            .unwrap();
+        assert_eq!(stats.blobs_repacked, 1);
+        assert_eq!(stats.chunks_moved, 1);
+        assert_eq!(stats.old_blobs_deleted, 1);
+
+        // Old v2 blob gone; the chunk now lives in a fresh v3 blob.
+        assert!(!backend.exists(&v2_path).await.unwrap());
+        let new_loc = idx.get_block_location_ref(&chunk_hash).unwrap();
+        assert_ne!(new_loc.blob_path(), &v2_path);
+        assert!(new_loc.compressed_end.is_some(), "upgraded chunk is v3");
+
+        let new_raw = backend.read_data(new_loc.blob_path()).await.unwrap();
+        assert_eq!(
+            v3format::peek_version(&new_raw),
+            Some(v3format::FORMAT_VERSION_V3)
+        );
+
+        // Data survives the upgrade byte-for-byte.
+        let reader = EncBlobReader::new(keys.clone(), backend.clone());
+        let got = reader.get_bytes(&new_loc).await.unwrap();
         assert_eq!(got, payload);
     }
 }

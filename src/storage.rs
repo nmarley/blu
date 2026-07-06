@@ -40,6 +40,20 @@ impl BackendKind {
         }
     }
 
+    /// Read the byte range `[start, end)` (end exclusive) of the object
+    /// at the given path.
+    ///
+    /// Used by the v3 segmented reader to fetch only the segment prefix
+    /// covering a chunk instead of the whole blob. `end` is clamped to
+    /// the object length, so a request past EOF returns the available
+    /// tail rather than erroring.
+    pub async fn read_range(&self, path: &Path, start: u64, end: u64) -> Result<Vec<u8>, BluError> {
+        match self {
+            Self::Local(b) => b.read_range(path, start, end).await,
+            Self::AmazonS3(b) => b.read_range(path, start, end).await,
+        }
+    }
+
     /// Write data to a content-addressed path derived from the hash.
     pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         match self {
@@ -221,6 +235,48 @@ mod test {
         storage.delete(&rel_path).await.unwrap();
 
         assert!(!storage.exists(&rel_path).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn local_read_range_returns_exact_window() {
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir));
+
+        let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+        let mh = multihash(&data);
+        let hash = Hash::from(mh.to_bytes());
+        let rel_path = storage.write_data(&hash, &data).await.unwrap();
+
+        // Interior window [100, 200) is exactly 100 bytes and matches.
+        let window = storage.read_range(&rel_path, 100, 200).await.unwrap();
+        assert_eq!(window, &data[100..200]);
+
+        // Leading window [0, 16).
+        let head = storage.read_range(&rel_path, 0, 16).await.unwrap();
+        assert_eq!(head, &data[0..16]);
+    }
+
+    #[tokio::test]
+    async fn local_read_range_clamps_at_eof() {
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir));
+
+        let data = b"short blob".to_vec();
+        let mh = multihash(&data);
+        let hash = Hash::from(mh.to_bytes());
+        let rel_path = storage.write_data(&hash, &data).await.unwrap();
+
+        // End past EOF returns the available tail, not an error.
+        let tail = storage.read_range(&rel_path, 4, 10_000).await.unwrap();
+        assert_eq!(tail, &data[4..]);
+
+        // Start past EOF returns empty.
+        let empty = storage.read_range(&rel_path, 10_000, 20_000).await.unwrap();
+        assert!(empty.is_empty());
+
+        // Empty window (end <= start) returns empty.
+        let zero = storage.read_range(&rel_path, 5, 5).await.unwrap();
+        assert!(zero.is_empty());
     }
 }
 
