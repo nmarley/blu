@@ -14,7 +14,7 @@
 
 use crate::agent::AgentClient;
 use crate::error::{BluError, Result};
-use crate::keys::dek::Dek;
+use crate::keys::dek::{Dek, SegmentAad};
 use crate::keys::kek::Kek;
 use crate::v2format::{self, FileType};
 use crate::v3format;
@@ -215,6 +215,12 @@ pub fn encrypt_envelope_segmented(
     let segment_count = plaintext_len.div_ceil(segment_size).max(1);
     let padded_len = segment_count * segment_size;
 
+    let aad = SegmentAad {
+        segment_size: segment_size as u32,
+        segment_count: segment_count as u32,
+        plaintext_len: plaintext_len as u64,
+    };
+
     // Zero-pad the final segment up to a full segment_size.
     let mut padded = Vec::with_capacity(padded_len);
     padded.extend_from_slice(compressed);
@@ -224,7 +230,7 @@ pub fn encrypt_envelope_segmented(
     for i in 0..segment_count {
         let start = i * segment_size;
         let end = start + segment_size;
-        let record = dek.encrypt_segment(i as u64, &padded[start..end])?;
+        let record = dek.encrypt_segment(i as u64, &aad, &padded[start..end])?;
         encrypted_segments.extend_from_slice(&record);
     }
 
@@ -272,6 +278,12 @@ pub fn decrypt_envelope_segmented_prefix(
 
     let dek = keys.unwrap_dek(&header.wrapped_dek, header.kek_version)?;
 
+    let aad = SegmentAad {
+        segment_size: header.segment_size,
+        segment_count: header.segment_count,
+        plaintext_len: header.plaintext_len,
+    };
+
     let on_disk_segment = header.on_disk_segment_size();
     let mut compressed =
         Vec::with_capacity((up_to_seg as usize + 1) * header.segment_size as usize);
@@ -288,7 +300,7 @@ pub fn decrypt_envelope_segmented_prefix(
             )));
         }
         let record = &data[start..end];
-        let plain = dek.decrypt_segment(i as u64, record)?;
+        let plain = dek.decrypt_segment(i as u64, &aad, record)?;
         compressed.extend_from_slice(&plain);
     }
 
@@ -296,8 +308,18 @@ pub fn decrypt_envelope_segmented_prefix(
     if is_full {
         // The full compressed stream (plus zero padding) is present.
         // Trim to plaintext_len so the gzip trailer terminates cleanly
-        // and the post-trailer padding is excluded.
-        let trimmed = &compressed[..header.plaintext_len as usize];
+        // and the post-trailer padding is excluded. A plaintext_len
+        // larger than the decrypted bytes indicates a tampered or
+        // corrupted header; return a clean error rather than panicking.
+        let plaintext_len = header.plaintext_len as usize;
+        if plaintext_len > compressed.len() {
+            return Err(BluError::DecryptionFailed(format!(
+                "v3 header plaintext_len {} exceeds decrypted segment bytes {}",
+                plaintext_len,
+                compressed.len()
+            )));
+        }
+        let trimmed = &compressed[..plaintext_len];
         crate::compression::decompress(trimmed)
             .map_err(|e| BluError::DecryptionFailed(e.to_string()))
     } else {
@@ -543,5 +565,159 @@ mod test {
         // Ask for one past the last segment.
         let result = decrypt_envelope_segmented_prefix(&blob, header.segment_count, &keys);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn segmented_tampered_segment_count_fails_auth() {
+        use crate::compression::compress_with_progress;
+
+        let kek = Kek::generate();
+        let keys = local_provider(&kek, 0);
+
+        // Incompressible data so the compressed stream spans multiple
+        // segments (a repetitive payload would shrink into one segment).
+        let mut data = Vec::new();
+        let mut state = 0x1234_5678_9abc_def0u64;
+        for _ in 0..40_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            data.push((state & 0xff) as u8);
+        }
+        let (compressed, _) = compress_with_progress(&data, &[data.len()]).unwrap();
+        let mut blob = encrypt_envelope_segmented(&compressed, 4096, &keys).unwrap();
+
+        let (header, _) = crate::v3format::read_header(&blob).unwrap();
+        assert!(header.segment_count > 1, "test needs multiple segments");
+
+        // Locate the segment_count field in the header tail and
+        // decrement it so the AAD no longer matches the encryption AAD.
+        let shared = 4 + 2 + 2 + 4 + header.wrapped_dek.len();
+        let sc_offset = shared + 4;
+        let sc = u32::from_le_bytes([
+            blob[sc_offset],
+            blob[sc_offset + 1],
+            blob[sc_offset + 2],
+            blob[sc_offset + 3],
+        ]);
+        let tampered_sc = sc - 1;
+        blob[sc_offset..sc_offset + 4].copy_from_slice(&tampered_sc.to_le_bytes());
+
+        let (tampered_header, _) = crate::v3format::read_header(&blob).unwrap();
+        let result =
+            decrypt_envelope_segmented_prefix(&blob, tampered_header.segment_count - 1, &keys);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("authentication failed"),
+            "expected authentication failure, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn segmented_tampered_plaintext_len_fails_auth() {
+        use crate::compression::compress_with_progress;
+
+        let kek = Kek::generate();
+        let keys = local_provider(&kek, 0);
+
+        let data = vec![0x42u8; 20_000];
+        let (compressed, _) = compress_with_progress(&data, &[data.len()]).unwrap();
+        let mut blob = encrypt_envelope_segmented(&compressed, 4096, &keys).unwrap();
+
+        // Locate the plaintext_len field in the header tail and bump it
+        // so the AAD no longer matches.
+        let (header, _) = crate::v3format::read_header(&blob).unwrap();
+        let shared = 4 + 2 + 2 + 4 + header.wrapped_dek.len();
+        let pl_offset = shared + 8;
+        let pl = u64::from_le_bytes([
+            blob[pl_offset],
+            blob[pl_offset + 1],
+            blob[pl_offset + 2],
+            blob[pl_offset + 3],
+            blob[pl_offset + 4],
+            blob[pl_offset + 5],
+            blob[pl_offset + 6],
+            blob[pl_offset + 7],
+        ]);
+        let tampered_pl = pl + 1;
+        blob[pl_offset..pl_offset + 8].copy_from_slice(&tampered_pl.to_le_bytes());
+
+        let (tampered_header, _) = crate::v3format::read_header(&blob).unwrap();
+        let result =
+            decrypt_envelope_segmented_prefix(&blob, tampered_header.segment_count - 1, &keys);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("authentication failed"),
+            "expected authentication failure, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn segmented_oversized_plaintext_len_returns_clean_error() {
+        use crate::compression::compress_with_progress;
+        use crate::v3format;
+
+        let kek = Kek::generate();
+        let keys = local_provider(&kek, 0);
+
+        // Build a valid blob, then reconstruct it with an oversized
+        // plaintext_len that is still authenticated (AAD matches) so the
+        // checked bound -- not the AEAD tag -- is what fires.
+        let data = vec![0x42u8; 5000];
+        let (compressed, _) = compress_with_progress(&data, &[data.len()]).unwrap();
+        let segment_size = 4096usize;
+        let real_plaintext_len = compressed.len();
+
+        let (dek, wrapped_dek, kek_version) = keys.wrap_dek().unwrap();
+        let segment_count = real_plaintext_len.div_ceil(segment_size).max(1);
+        let padded_len = segment_count * segment_size;
+        let mut padded = Vec::with_capacity(padded_len);
+        padded.extend_from_slice(&compressed);
+        padded.resize(padded_len, 0);
+
+        // Use an oversized plaintext_len in both the AAD and the header
+        // so segment authentication passes, but the checked bound fires.
+        let oversized_len = real_plaintext_len as u64 + 10_000;
+        let aad = SegmentAad {
+            segment_size: segment_size as u32,
+            segment_count: segment_count as u32,
+            plaintext_len: oversized_len,
+        };
+
+        let mut encrypted_segments = Vec::new();
+        for i in 0..segment_count {
+            let start = i * segment_size;
+            let end = start + segment_size;
+            let record = dek
+                .encrypt_segment(i as u64, &aad, &padded[start..end])
+                .unwrap();
+            encrypted_segments.extend_from_slice(&record);
+        }
+
+        let mut blob = Vec::new();
+        v3format::write_v3(
+            &mut blob,
+            kek_version,
+            &wrapped_dek,
+            segment_size as u32,
+            segment_count as u32,
+            oversized_len,
+            &encrypted_segments,
+        )
+        .unwrap();
+
+        let (header, _) = v3format::read_header(&blob).unwrap();
+        let result = decrypt_envelope_segmented_prefix(&blob, header.segment_count - 1, &keys);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("exceeds decrypted segment bytes"),
+            "expected oversized-plaintext_len error, got: {}",
+            err_msg
+        );
     }
 }
