@@ -8,7 +8,7 @@
 
 ## User
 
-Please have a look over this and esp. the plans PLAN-blu-serve.md and BLU_SERVE_DESIGN.md. Does this look correct? Complete? Is this an ok architecture? What is your master analysis?
+Please have a look over this and esp. the plans PLAN-blu-serve.md and ../design/BLU_SERVE_DESIGN.md. Does this look correct? Complete? Is this an ok architecture? What is your master analysis?
 
 ---
 
@@ -33,7 +33,7 @@ Excellent, dude! Let me dive into these docs and the codebase for a most thoroug
 1: # blu serve implementation plan
 2: 
 3: Static design document for implementing `blu serve` per
-4: `BLU_SERVE_DESIGN.md`. Decisions locked from the trade-off review:
+4: `../design/BLU_SERVE_DESIGN.md`. Decisions locked from the trade-off review:
 5: 
 6: - redb from day 1 (no in-memory adapter phase)
 7: - axum for HTTP, revisit s3s at Phase 2 write support
@@ -45,7 +45,7 @@ Excellent, dude! Let me dive into these docs and the codebase for a most thoroug
 13: ## Stage 1: Dependencies, skeleton, and doc corrections
 14: 
 15: 1a. Add `redb` and `axum` to `Cargo.toml`
-16: 1b. Correct bogus claims in `BLU_SERVE_DESIGN.md` (axum is not a tokio
+16: 1b. Correct bogus claims in `../design/BLU_SERVE_DESIGN.md` (axum is not a tokio
 17:     transitive dep; `restore_files` does not use `EncBlobReader`; the
 18:     storage seam is a `BackendKind` enum, not a `Backend` trait) and
 19:     fix the stale `Backend` trait mention in `AGENTS.md`
@@ -117,7 +117,7 @@ Excellent, dude! Let me dive into these docs and the codebase for a most thoroug
 85: 6a. Define v3 blob header (segment size stored in header, fixed-size
 86:     segments, no in-blob table of contents)
 87: 6b. Specify the nonce construction explicitly
-88:     (counter-derived, written into `BLU_SERVE_DESIGN.md` section 5
+88:     (counter-derived, written into `../design/BLU_SERVE_DESIGN.md` section 5
 89:     before coding)
 90: 6c. Add `read_range(path, start..end)` to `BackendKind` (and to
 91:     `Local` / `AmazonS3`) for byte-range S3 GET
@@ -136,13 +136,13 @@ Excellent, dude! Let me dive into these docs and the codebase for a most thoroug
 **Input:**
 ```json
 {
-  "filePath": "/home/nathan/projects/blu/BLU_SERVE_DESIGN.md"
+  "filePath": "/home/nathan/projects/blu/docs/design/BLU_SERVE_DESIGN.md"
 }
 ```
 
 **Output:**
 ```
-<path>/home/nathan/projects/blu/BLU_SERVE_DESIGN.md</path>
+<path>/home/nathan/projects/blu/docs/design/BLU_SERVE_DESIGN.md</path>
 <type>file</type>
 <content>
 1: # `blu serve` Design: Encrypted Storage Platform
@@ -1048,7 +1048,7 @@ Bottom line, dude: the read path and listing machinery are solidly built and wel
 ```json
 {
   "description": "Review v3 segmented AEAD implementation",
-  "prompt": "You are reviewing a Rust codebase at /home/nathan/projects/blu (encrypted deduplicated file archival CLI). This is READ-ONLY research; do not modify files.\n\nThe design doc BLU_SERVE_DESIGN.md section 5 describes a v3 segmented AEAD blob format: fixed-size segments (segment size S in header), counter-derived 12-byte nonce ([0x00;4] || u64 LE index), segment index as AAD, zero-padding compressed stream to multiple of S, header layout: BLUB magic, format_version=3 u16 LE, KEK version u16, wrapped DEK len u32 + wrapped DEK, segment size u32, segment count u32, compressed plaintext length P u64, then K segments each S+16 bytes. Prefix-fetch read using compressed_end: Option<u64> on BlobBlockLocation, read_range on BackendKind, EncBlobReader caching longest decompressed prefix per blob.\n\nFind and read the v3 implementation (likely src/v3format.rs or in src/blob.rs, src/v2format.rs, src/dek_provider.rs, src/block/ for BlobBlockLocation, src/storage/ for read_range, and wherever EncBlobReader lives). Also check git log to understand recent commits: \"Add v3 segmented AEAD blob format module\", \"Add segment-aware DEK encryption for v3 blobs\", \"Add compressed_end field to BlobBlockLocation\", \"Wire v3 segmented writer, reader thru blob path\", \"Add v3 segmented prefix fetch and v2 upgrade path\".\n\nReport back:\n1. Does the implemented wire format match the design doc exactly (field order, sizes, endianness, magic, version)?\n2. Nonce construction and AAD: do they match the spec? Any nonce reuse risk (is DEK truly fresh per blob)?\n3. Padding/trim logic: is P used correctly to trim? Any edge cases (empty blob, exact multiple of S)?\n4. Prefix-fetch: is read_range implemented on both Local and AmazonS3 backends? How does EncBlobReader cache prefixes? Any issues (off-by-one in segment count computation, partial final segment handling)?\n5. v2 backward compat: how does the reader distinguish v2/v3? Does defrag-blobs --upgrade-format exist?\n6. Is compression still gzip whole-blob? Does prefix decompression of a gzip stream actually work as implemented (partial stream decoding)?\n7. Test coverage for v3 (round trips, prefix fetch, tamper/reorder detection via AAD).\n8. Any security concerns: does whole-blob authentication still exist, or can an attacker truncate a blob to K' segments and have it authenticate as a valid shorter blob (truncation attack, since per-segment tags authenticate position but maybe not total count... check if segment count K is authenticated anywhere)?\nBe specific with file:line references. Be very thorough.",
+  "prompt": "You are reviewing a Rust codebase at /home/nathan/projects/blu (encrypted deduplicated file archival CLI). This is READ-ONLY research; do not modify files.\n\nThe design doc ../design/BLU_SERVE_DESIGN.md section 5 describes a v3 segmented AEAD blob format: fixed-size segments (segment size S in header), counter-derived 12-byte nonce ([0x00;4] || u64 LE index), segment index as AAD, zero-padding compressed stream to multiple of S, header layout: BLUB magic, format_version=3 u16 LE, KEK version u16, wrapped DEK len u32 + wrapped DEK, segment size u32, segment count u32, compressed plaintext length P u64, then K segments each S+16 bytes. Prefix-fetch read using compressed_end: Option<u64> on BlobBlockLocation, read_range on BackendKind, EncBlobReader caching longest decompressed prefix per blob.\n\nFind and read the v3 implementation (likely src/v3format.rs or in src/blob.rs, src/v2format.rs, src/dek_provider.rs, src/block/ for BlobBlockLocation, src/storage/ for read_range, and wherever EncBlobReader lives). Also check git log to understand recent commits: \"Add v3 segmented AEAD blob format module\", \"Add segment-aware DEK encryption for v3 blobs\", \"Add compressed_end field to BlobBlockLocation\", \"Wire v3 segmented writer, reader thru blob path\", \"Add v3 segmented prefix fetch and v2 upgrade path\".\n\nReport back:\n1. Does the implemented wire format match the design doc exactly (field order, sizes, endianness, magic, version)?\n2. Nonce construction and AAD: do they match the spec? Any nonce reuse risk (is DEK truly fresh per blob)?\n3. Padding/trim logic: is P used correctly to trim? Any edge cases (empty blob, exact multiple of S)?\n4. Prefix-fetch: is read_range implemented on both Local and AmazonS3 backends? How does EncBlobReader cache prefixes? Any issues (off-by-one in segment count computation, partial final segment handling)?\n5. v2 backward compat: how does the reader distinguish v2/v3? Does defrag-blobs --upgrade-format exist?\n6. Is compression still gzip whole-blob? Does prefix decompression of a gzip stream actually work as implemented (partial stream decoding)?\n7. Test coverage for v3 (round trips, prefix fetch, tamper/reorder detection via AAD).\n8. Any security concerns: does whole-blob authentication still exist, or can an attacker truncate a blob to K' segments and have it authenticate as a valid shorter blob (truncation attack, since per-segment tags authenticate position but maybe not total count... check if segment count K is authenticated anywhere)?\nBe specific with file:line references. Be very thorough.",
   "subagent_type": "explore"
 }
 ```
@@ -1314,7 +1314,7 @@ Found 75 matches
 28: //! reader uses it to trim padding from the final segment after
 29: //! decompression.
 30: //!
-31: //! See `BLU_SERVE_DESIGN.md` section 5 for the full rationale.
+31: //! See `../design/BLU_SERVE_DESIGN.md` section 5 for the full rationale.
 32: 
 33: use std::io::{self, Write};
 34: 

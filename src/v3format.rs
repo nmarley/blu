@@ -28,7 +28,7 @@
 //! reader uses it to trim padding from the final segment after
 //! decompression.
 //!
-//! See `BLU_SERVE_DESIGN.md` section 5 for the full rationale.
+//! See `docs/design/BLU_SERVE_DESIGN.md` section 5 for the full rationale.
 
 use std::io::{self, Write};
 

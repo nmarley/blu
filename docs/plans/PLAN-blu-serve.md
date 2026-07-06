@@ -1,7 +1,7 @@
 # blu serve implementation plan
 
 Static design document for implementing `blu serve` per
-`BLU_SERVE_DESIGN.md`. Decisions locked from the trade-off review:
+`../design/BLU_SERVE_DESIGN.md`. Decisions locked from the trade-off review:
 
 - redb from day 1 (no in-memory adapter phase)
 - axum for HTTP, revisit s3s at Phase 2 write support
@@ -13,7 +13,7 @@ by mutating this file.
 ## Stage 1: Dependencies, skeleton, and doc corrections
 
 1a. Add `redb` and `axum` to `Cargo.toml`
-1b. Correct bogus claims in `BLU_SERVE_DESIGN.md` (axum is not a tokio
+1b. Correct bogus claims in `../design/BLU_SERVE_DESIGN.md` (axum is not a tokio
     transitive dep; `restore_files` does not use `EncBlobReader`; the
     storage seam is a `BackendKind` enum, not a `Backend` trait) and
     fix the stale `Backend` trait mention in `AGENTS.md`
@@ -85,7 +85,7 @@ by mutating this file.
 6a. Define v3 blob header (segment size stored in header, fixed-size
     segments, no in-blob table of contents)
 6b. Specify the nonce construction explicitly
-    (counter-derived, written into `BLU_SERVE_DESIGN.md` section 5
+    (counter-derived, written into `../design/BLU_SERVE_DESIGN.md` section 5
     before coding)
 6c. Add `read_range(path, start..end)` to `BackendKind` (and to
     `Local` / `AmazonS3`) for byte-range S3 GET

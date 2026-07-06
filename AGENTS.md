@@ -89,8 +89,8 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 ## Design docs
 
 - `ENVELOPE_ENCRYPTION_DESIGN.md` -- canonical KEK/DEK design reference
-- `BLU_SERVE_DESIGN.md` -- `blu serve` local daemon design (S3-compatible API, redb index, segmented AEAD)
-- `TODO.md` -- consolidated backlog
+- `docs/design/BLU_SERVE_DESIGN.md` -- `blu serve` local daemon design (S3-compatible API, redb index, segmented AEAD)
+- `docs/project/TODO.md` -- consolidated backlog
 
 ## Platform
 

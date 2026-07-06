@@ -1,6 +1,6 @@
-# Pulse Check
+# Start Here
 
-Last updated: 2026-05-16
+Last updated: 2026-07-05
 
 Version: 0.5.0 (pre-release, beta quality)
 
@@ -15,6 +15,13 @@ scrub support, defrag-blobs is a real repack command backed by shared
 logic, bare unwraps have been replaced with proper error propagation
 (24 fixed), and dead config code has been removed. Tier 1 (data
 pipeline) is complete. Zero CLI-layer tests still exist.
+
+Since the last pulse, v3 segmented AEAD blobs landed (fixed-size
+segments with counter-derived nonces, prefix-fetch reads, v2 upgrade
+path), and `blu serve` is a working local S3-compatible daemon (redb
+index, multipart upload, debounced flush, graceful shutdown, traffic
+countermeasures). Index serde migrated from bincode to ciborium. Scrypt
+work factor is pinned to a minimum of 18.
 
 ## Area-by-Area Status
 
@@ -40,6 +47,23 @@ filtering.
 
 Missing: no `list` method on backends (relies entirely on index for blob
 enumeration; index loss means no discovery). No `blu doctor` diagnostics.
+
+### v3 Segmented AEAD Blob Format: NEW
+
+v3 replaces v2's single sealed AEAD box with fixed-size, independently
+authenticated segments. Each segment uses the blob's DEK with a
+counter-derived nonce (12 bytes: [0x00;4] || u64 LE segment index) and
+the segment index as AAD. This enables prefix-fetch reads: a reader can
+download and decrypt only the segments covering a chunk's compressed
+bytes without fetching the whole blob.
+
+Index files (`BLUI`) remain v2; they are always read whole and gain
+nothing from segmentation.
+
+The v2 → v3 upgrade path is wired through `defrag-blobs --upgrade-format`
+(or inline via `delete-files --scrub` on a v2 vault). `EncBlobReader`
+caches the longest decompressed prefix per blob to avoid re-fetching
+segments.
 
 ### Status Command (`src/cli/status.rs`): WORKING
 
@@ -86,6 +110,8 @@ DEKs), deletes old blobs from the backend, and returns stats.
 repack after deletion. Without `--scrub`, an advisory message shows
 how many blobs have dead chunks pending repack.
 
+`--upgrade-format` upgrades v2 blobs to v3 during repack.
+
 ### Search (`src/cli/search.rs` + `src/search.rs`): PARTIAL
 
 Functional for basic substring search across filenames and tags. Rebuilds
@@ -128,6 +154,24 @@ round-trips (surviving chunks in new blobs, old blobs gone), noop
 repack, and data integrity verification after repack. Zero tests for
 CLI subcommand entry points: status, delete, search, defrag, sync,
 encrypt, restore, list, backend.
+
+### `blu serve` Local Daemon: WORKING
+
+A translation layer that presents decrypted, de-obfuscated files to any
+S3-compatible client while the real backend holds only opaque,
+content-addressed encrypted blobs. Uses axum for HTTP, redb for the
+local index store, and supports:
+
+- `GetObject` and `HeadObject` (read path)
+- `ListObjectsV2` (prefix listing)
+- `PutObject` and multipart upload (write path)
+- `DeleteObject`
+- Startup index sync from backend
+- Debounced index flush after vault changes
+- Graceful shutdown
+- Traffic analysis countermeasures (decoy padding, timing jitter)
+
+Missing: full end-to-end write path tests, streaming index I/O.
 
 ## Bare Unwraps in Production Code
 
