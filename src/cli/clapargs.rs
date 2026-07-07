@@ -287,6 +287,11 @@ pub struct ServeArgs {
     /// Bind address for the HTTP server (default: 127.0.0.1:7777)
     #[arg(long)]
     pub bind: Option<String>,
+
+    /// Number of decrypted blobs to keep in the in-memory LRU cache
+    /// (default: 10, ~64 MiB per entry at default chunk/blob sizing).
+    #[arg(long)]
+    pub cache_blobs: Option<usize>,
 }
 
 /// Type of status check to run. Deep means hash every file, shallow will use

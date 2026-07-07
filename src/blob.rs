@@ -255,7 +255,7 @@ impl BlobBlockLocation {
 /// The number of decrypted blobs to keep in the LRU cache. With 512 KiB
 /// chunks and 128 chunks per blob, each cached entry is ~64 MiB decompressed,
 /// so 10 entries caps memory at ~640 MiB worst case.
-const BLOB_CACHE_CAPACITY: usize = 10;
+pub(crate) const BLOB_CACHE_CAPACITY: usize = 10;
 
 /// EncBlobReader reads encrypted blobs from storage, decrypts and
 /// decompresses them, and caches the result in an LRU cache.

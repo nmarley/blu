@@ -95,7 +95,7 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::Sync(a) => cli::sync(a).await,
         clapargs::Action::Tagger(a) => cli::tagger(a).await,
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
-        clapargs::Action::Serve(a) => blu::serve::serve(a.bind).await,
+        clapargs::Action::Serve(a) => blu::serve::serve(a.bind, a.cache_blobs).await,
         // These are dispatched above, before basedir resolution
         clapargs::Action::Agent(_)
         | clapargs::Action::AgentDaemon

@@ -16,12 +16,53 @@
 
 use chrono::NaiveDateTime;
 
-use crate::blob::EncBlobReader;
+use crate::blob::{EncBlobReader, BLOB_CACHE_CAPACITY};
 use crate::config::Config;
 use crate::dek_provider::DekProvider;
 use crate::error::BluError;
 use crate::serve::redb_store::RedbStore;
 use crate::storage::BackendKind;
+
+/// Maximum number of attempts for the startup index pull before
+/// giving up and leaving the daemon in the not-ready (503) state.
+const SYNC_MAX_ATTEMPTS: usize = 5;
+
+/// Base delay for exponential backoff between index-pull retries.
+/// Each successive retry sleeps `base * 2^(attempt-1)`: 1s, 2s, 4s, 8s.
+const SYNC_BACKOFF_BASE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Run `op` with a bounded number of attempts and exponential
+/// backoff. Returns `Ok` as soon as `op` succeeds, or the last
+/// `BluError` after `max_attempts` failures. Each failed attempt is
+/// logged at `warn` level. When `base_delay` is zero the sleeps
+/// return immediately, which keeps the unit tests fast.
+async fn retry_with_backoff<F, Fut, T>(
+    mut op: F,
+    max_attempts: usize,
+    base_delay: std::time::Duration,
+) -> Result<T, BluError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, BluError>>,
+{
+    let mut last_err: Option<BluError> = None;
+    for attempt in 1..=max_attempts {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                warn!("sync attempt {}/{} failed: {}", attempt, max_attempts, e);
+                last_err = Some(e);
+                if attempt < max_attempts {
+                    let delay = base_delay * 2u32.pow((attempt - 1) as u32);
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+    // `max_attempts >= 1` guarantees the loop body ran at least once
+    // and populated `last_err`.
+    Err(last_err.expect("max_attempts >= 1 guarantees an error"))
+}
 
 /// Synchronize the local redb store with the backend.
 ///
@@ -42,10 +83,14 @@ use crate::storage::BackendKind;
 /// individual file modification times are not tracked in the current
 /// index format), and an `EncBlobReader` owning its own cloned keys
 /// and backend for serving chunk data.
+///
+/// `cache_blobs` overrides the default decrypted-blob LRU cache size
+/// (`BLOB_CACHE_CAPACITY`); `None` uses the default.
 pub async fn sync_from_backend(
     cfg: Config,
     keys: DekProvider,
     backend: BackendKind,
+    cache_blobs: Option<usize>,
 ) -> Result<
     (
         Config,
@@ -60,7 +105,12 @@ pub async fn sync_from_backend(
     let redb_path = cfg.bludir().join("serve.redb");
 
     info!("pulling indexes from backend");
-    cfg.pull_indexes(&backend).await?;
+    retry_with_backoff(
+        || async { cfg.pull_indexes(&backend).await },
+        SYNC_MAX_ATTEMPTS,
+        SYNC_BACKOFF_BASE,
+    )
+    .await?;
 
     let plain = cfg.load_plain_index(&keys)?;
     let updated_at = plain.updated_at();
@@ -83,7 +133,86 @@ pub async fn sync_from_backend(
 
     // The blob reader needs its own key/backend handles for the read
     // path. Clone before moving the originals back out to the caller.
-    let blob_reader = EncBlobReader::new(keys.clone(), backend.clone());
+    let blob_cap = cache_blobs.unwrap_or(BLOB_CACHE_CAPACITY);
+    let blob_reader = EncBlobReader::with_capacity(keys.clone(), backend.clone(), blob_cap);
 
     Ok((cfg, keys, backend, store, updated_at, blob_reader))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A closure fails the first two attempts then succeeds; the
+    /// retry helper must keep calling until `Ok`, and the attempt
+    /// counter must reflect exactly three invocations. `base_delay`
+    /// is zero so the backoff sleeps return immediately.
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_after_transient_failure() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = AtomicUsize::new(0);
+
+        let result = retry_with_backoff(
+            || {
+                let count = attempts.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if count < 2 {
+                        Err(BluError::StorageError("transient backend".to_string()))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+            5,
+            std::time::Duration::ZERO,
+        )
+        .await;
+
+        assert!(result.is_ok(), "expected eventual success, got {result:?}");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    /// When every attempt fails, the helper returns the last error
+    /// and stops after exactly `max_attempts` tries.
+    #[tokio::test]
+    async fn retry_with_backoff_exhausts_attempts_returns_last_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = AtomicUsize::new(0);
+
+        let result = retry_with_backoff(
+            || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Result::<(), BluError>::Err(BluError::StorageError("persistent".to_string()))
+                }
+            },
+            3,
+            std::time::Duration::ZERO,
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        assert!(matches!(result.unwrap_err(), BluError::StorageError(_)));
+    }
+
+    /// A first-try success must not retry.
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_first_try() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let attempts = AtomicUsize::new(0);
+
+        let result = retry_with_backoff(
+            || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(42u8) }
+            },
+            5,
+            std::time::Duration::ZERO,
+        )
+        .await;
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
 }

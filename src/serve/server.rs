@@ -127,11 +127,13 @@ impl std::fmt::Debug for ServeState {
 }
 
 /// Wait for SIGTERM or SIGINT, then return. Used as the graceful
-/// shutdown signal for `axum::serve`.
-async fn shutdown_signal() {
-    let mut sigterm = signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-    let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
-
+/// shutdown signal for `axum::serve`. The signal streams are installed
+/// by the caller and moved in so installation failures surface as
+/// `BluError` rather than a panic.
+async fn shutdown_signal(
+    mut sigterm: tokio::signal::unix::Signal,
+    mut sigint: tokio::signal::unix::Signal,
+) {
     tokio::select! {
         _ = sigterm.recv() => info!("received SIGTERM, shutting down"),
         _ = sigint.recv() => info!("received SIGINT, shutting down"),
@@ -144,12 +146,11 @@ async fn shutdown_signal() {
 /// and all S3 endpoints return 503. This gives process supervisors a
 /// real readiness signal instead of the port being closed until sync
 /// finishes.
-pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
-    let addr: SocketAddr = bind_addr
-        .as_deref()
-        .unwrap_or(DEFAULT_BIND_ADDR)
+pub async fn serve(bind_addr: Option<String>, cache_blobs: Option<usize>) -> Result<(), BluError> {
+    let addr_str = bind_addr.as_deref().unwrap_or(DEFAULT_BIND_ADDR);
+    let addr: SocketAddr = addr_str
         .parse()
-        .expect("invalid bind address");
+        .map_err(|e| BluError::InvalidConfig(format!("invalid bind address {addr_str}: {e}")))?;
 
     info!("loading vault config and keys");
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
@@ -186,7 +187,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
     let sync_ready = ready.clone();
     tokio::spawn(async move {
         info!("syncing indexes from backend into local redb store");
-        match index_sync::sync_from_backend(cfg, keys, backend).await {
+        match index_sync::sync_from_backend(cfg, keys, backend, cache_blobs).await {
             Ok((cfg, keys, backend, store, index_updated_at, blob_reader)) => {
                 let bucket_name = cfg
                     .basedir()
@@ -248,8 +249,11 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
         }
     });
 
+    let sigterm = signal(SignalKind::terminate())?;
+    let sigint = signal(SignalKind::interrupt())?;
+
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(sigterm, sigint))
         .await?;
 
     // Final best-effort flush so no writes are lost on shutdown.
@@ -692,6 +696,14 @@ fn parse_range_header(headers: &HeaderMap, total_size: u64) -> Result<Option<Byt
     Ok(Some(ByteRange { start, end }))
 }
 
+/// Format a `NaiveDateTime` as an RFC 7231 IMF-fixdate HTTP-date,
+/// the format required for HTTP headers like `Last-Modified`:
+/// `Wed, 21 Oct 2015 07:28:00 GMT`. The index timestamp is stored in
+/// UTC, so the `GMT` suffix is correct.
+fn http_date(dt: NaiveDateTime) -> String {
+    dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
 /// `HEAD /{bucket}/{*key}` -- HeadObject. Returns metadata headers
 /// (Content-Length, Last-Modified, ETag) with no body. 404 if the
 /// key does not exist.
@@ -732,10 +744,7 @@ async fn head_object_handler(
     };
 
     let total = fileref.total_size();
-    let last_modified = s
-        .index_updated_at
-        .format("%Y-%m-%dT%H:%M:%S.000Z")
-        .to_string();
+    let last_modified = http_date(s.index_updated_at);
 
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_LENGTH, total.to_string().parse().unwrap());
@@ -803,10 +812,7 @@ async fn get_object_handler(
         }
     };
 
-    let last_modified = s
-        .index_updated_at
-        .format("%Y-%m-%dT%H:%M:%S.000Z")
-        .to_string();
+    let last_modified = http_date(s.index_updated_at);
     let etag = format!("\"{}\"", file_hash.dbg_short(16));
 
     match range {
@@ -1691,6 +1697,25 @@ mod test {
             .to_vec()
     }
 
+    #[test]
+    fn http_date_formats_rfc7231_imf_fixdate() {
+        let dt = chrono::Utc
+            .timestamp_opt(1718774400, 0)
+            .unwrap()
+            .naive_utc();
+        assert_eq!(http_date(dt), "Wed, 19 Jun 2024 05:20:00 GMT");
+    }
+
+    #[test]
+    fn http_date_emits_gmt_suffix() {
+        let dt = chrono::Utc
+            .timestamp_opt(1_600_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let formatted = http_date(dt);
+        assert_eq!(formatted, "Sun, 13 Sep 2020 12:26:40 GMT");
+    }
+
     /// Build a `ServeState` with real blob data. Writes `file_data`
     /// through `BlobBuffer` (chunking, encrypting, uploading to a
     /// local backend), then populates redb from the resulting
@@ -2142,7 +2167,13 @@ mod test {
             response.headers().get(header::CONTENT_LENGTH).unwrap(),
             "512"
         );
-        assert!(response.headers().get(header::LAST_MODIFIED).is_some());
+        // Last-Modified must be an RFC 7231 HTTP-date, not an
+        // ISO-8601 timestamp. The test fixture uses index_updated_at
+        // = 2024-06-19 05:20:00 UTC.
+        assert_eq!(
+            response.headers().get(header::LAST_MODIFIED).unwrap(),
+            "Wed, 19 Jun 2024 05:20:00 GMT"
+        );
         assert!(response.headers().get(header::ETAG).is_some());
 
         let body = body_bytes(response.into_body()).await;
