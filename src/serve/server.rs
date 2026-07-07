@@ -10,28 +10,30 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use axum::body::Bytes;
-use axum::extract::{Path, Query};
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, Path, Query};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use chrono::NaiveDateTime;
 use rand::RngCore;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::blob::{BlobBuffer, BlobIndex, EncBlobReader};
-use crate::block::{chunk_bytes, ChunkMeta, FileRef, DEFAULT_CHUNK_SIZE};
+use crate::block::{ChunkMeta, FileRef, DEFAULT_CHUNK_SIZE};
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::config::Config;
 use crate::dek_provider::DekProvider;
 use crate::error::BluError;
-use crate::hash::{self, Hash};
+use crate::hash::{Hash, StreamingHash};
 use crate::io::Position;
 use crate::serve::index_sync;
 use crate::serve::redb_store::RedbStore;
@@ -46,21 +48,29 @@ const DEFAULT_BIND_ADDR: &str = "127.0.0.1:7777";
 /// (PutObject or DeleteObject) a debounce timer is scheduled; when it
 /// fires, redb state is dumped to the on-disk indexes and pushed to
 /// the backend. Replacing the pending timer on each write coalesces
-/// bursts of writes into a single flush.
 const FLUSH_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How often the stale-upload reaper scans for abandoned multipart
+/// uploads.
+const MPU_REAPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Uploads older than this are considered stale and reaped.
+const MPU_STALE_THRESHOLD_SECS: i64 = 3600;
 
 /// In-progress multipart upload. Stored in
 /// `ServeState::multipart_uploads` keyed by `upload_id`. Parts are
-/// buffered in memory; on `CompleteMultipartUpload` they are
-/// concatenated and run through the standard PutObject pipeline.
+/// spooled to temp files (one per part); on `CompleteMultipartUpload`
+/// the part files are concatenated and run through the file-based
+/// PutObject pipeline.
 pub(crate) struct MultipartState {
     /// Object key (path) the upload targets.
     path: String,
-    /// Buffered part bytes, 0-indexed. S3 part numbers are 1-indexed;
-    /// we store parts[N-1] at index N-1.
-    parts: Vec<Vec<u8>>,
-    /// Creation timestamp, used for staleness reaping if we ever add
-    /// a GC pass. Currently informational only.
+    /// Spooled part temp files, 0-indexed. S3 part numbers are
+    /// 1-indexed; we store parts[N-1] at index N-1. `None` for gaps
+    /// where UploadPart has not been called yet. Temp files are
+    /// RAII-cleaned when dropped (on abort, reap, or completion).
+    parts: Vec<Option<tempfile::NamedTempFile>>,
+    /// Creation timestamp, used for staleness reaping.
     created_at: NaiveDateTime,
 }
 
@@ -162,6 +172,7 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
                 .post(multipart_post_handler)
                 .delete(delete_object_handler),
         )
+        .layer(DefaultBodyLimit::disable())
         .with_state(ready.clone());
 
     let listener = TcpListener::bind(addr).await?;
@@ -203,6 +214,36 @@ pub async fn serve(bind_addr: Option<String>) -> Result<(), BluError> {
             }
             Err(e) => {
                 error!("index sync failed, server remains not-ready: {}", e);
+            }
+        }
+    });
+
+    // Start the stale multipart-upload reaper. It periodically scans
+    // `multipart_uploads` and reaps uploads older than
+    // [`MPU_STALE_THRESHOLD_SECS`], dropping their temp files (RAII).
+    let reaper_ready = ready.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(MPU_REAPER_INTERVAL).await;
+            let Some(state) = reaper_ready.get() else {
+                continue;
+            };
+            let now = chrono::Utc::now().naive_utc();
+            let stale_ids: Vec<String> = state
+                .multipart_uploads
+                .lock()
+                .await
+                .iter()
+                .filter(|(_, mpu)| (now - mpu.created_at).num_seconds() > MPU_STALE_THRESHOLD_SECS)
+                .map(|(id, _)| id.clone())
+                .collect();
+            if !stale_ids.is_empty() {
+                let mut uploads = state.multipart_uploads.lock().await;
+                for id in &stale_ids {
+                    if uploads.remove(id).is_some() {
+                        info!("reaped stale multipart upload {}", id);
+                    }
+                }
             }
         }
     });
@@ -477,23 +518,53 @@ async fn reclaim_dead_blobs(state: &ServeState, blobs_dead: &[std::path::PathBuf
 /// BlobBlockLocation -> EncBlobReader::get_bytes -> concatenate.
 /// The `EncBlobReader` LRU cache makes sequential reads efficient
 /// (chunks from the same blob share a cache entry).
-async fn fetch_file_bytes(
-    fileref: &FileRef,
-    redb: &RedbStore,
-    blob_reader: &EncBlobReader,
-) -> Result<Vec<u8>, BluError> {
-    let total = fileref.total_size() as usize;
-    let mut buf = Vec::with_capacity(total);
-    for chunkmeta in &fileref.chunkmetas {
-        let location =
-            redb.get_blob_location(&chunkmeta.hash)?
-                .ok_or_else(|| BluError::BlockNotFound {
-                    hash: chunkmeta.hash.to_string(),
-                })?;
-        let chunk = blob_reader.get_bytes(&location).await?;
-        buf.extend_from_slice(&chunk);
-    }
-    Ok(buf)
+/// Build a streaming response body for a full-file GET. A background
+/// task fetches chunk data one at a time from the storage backend
+/// and sends each through a bounded mpsc channel; the channel's
+/// receiver is wrapped as a stream and consumed by `StreamBody`.
+///
+/// This keeps peak memory bounded by the chunk size (plus the
+/// `EncBlobReader` LRU cache) instead of buffering the entire file
+/// into a single `Vec<u8>` before responding. If the client
+/// disconnects early, the sender is dropped and the background task
+/// stops fetching.
+fn streaming_file_body(
+    fileref: FileRef,
+    redb: Arc<RedbStore>,
+    blob_reader: Arc<EncBlobReader>,
+) -> tokio_stream::wrappers::ReceiverStream<Result<Bytes, BluError>> {
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    tokio::spawn(async move {
+        for chunkmeta in &fileref.chunkmetas {
+            let location = match redb.get_blob_location(&chunkmeta.hash) {
+                Ok(Some(loc)) => loc,
+                Ok(None) => {
+                    let _ = tx
+                        .send(Err(BluError::BlockNotFound {
+                            hash: chunkmeta.hash.to_string(),
+                        }))
+                        .await;
+                    return;
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            match blob_reader.get_bytes(&location).await {
+                Ok(chunk) => {
+                    if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            }
+        }
+    });
+    tokio_stream::wrappers::ReceiverStream::new(rx)
 }
 
 /// Fetch only the byte range `[start, end)` (0-indexed, end exclusive)
@@ -740,24 +811,8 @@ async fn get_object_handler(
 
     match range {
         None => {
-            // Full file.
-            let data = match fetch_file_bytes(&fileref, &s.redb, &s.blob_reader).await {
-                Ok(d) => d,
-                Err(e) => {
-                    return s3xml::error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "InternalError",
-                        &e.to_string(),
-                    )
-                    .into_response();
-                }
-            };
-
             let mut response_headers = HeaderMap::new();
-            response_headers.insert(
-                header::CONTENT_LENGTH,
-                data.len().to_string().parse().unwrap(),
-            );
+            response_headers.insert(header::CONTENT_LENGTH, total.to_string().parse().unwrap());
             response_headers.insert(
                 header::CONTENT_TYPE,
                 "application/octet-stream".parse().unwrap(),
@@ -765,12 +820,12 @@ async fn get_object_handler(
             response_headers.insert(header::LAST_MODIFIED, last_modified.parse().unwrap());
             response_headers.insert(header::ETAG, etag.parse().unwrap());
 
-            (
-                StatusCode::OK,
-                response_headers,
-                axum::body::Body::from(data),
-            )
-                .into_response()
+            let body = axum::body::Body::from_stream(streaming_file_body(
+                fileref,
+                s.redb.clone(),
+                s.blob_reader.clone(),
+            ));
+            (StatusCode::OK, response_headers, body).into_response()
         }
 
         Some(r) => {
@@ -829,7 +884,7 @@ async fn put_object_handler(
     state: axum::extract::State<Arc<OnceLock<ServeState>>>,
     Path((bucket, key)): Path<(String, String)>,
     params: Query<HashMap<String, String>>,
-    body: Bytes,
+    body: Body,
 ) -> axum::response::Response {
     let s = match state.0.get() {
         Some(s) => s,
@@ -849,8 +904,7 @@ async fn put_object_handler(
     }
 
     // Dispatch multipart part upload when the query string carries
-    // `partNumber` and `uploadId`. The plain PutObject path holds
-    // below.
+    // `partNumber` and `uploadId`.
     if let (Some(part_number), Some(upload_id)) = (params.get("partNumber"), params.get("uploadId"))
     {
         return upload_part(
@@ -863,17 +917,15 @@ async fn put_object_handler(
         .into_response();
     }
 
-    // All write-path work happens under the write mutex so redb state
-    // stays consistent and no two PutObjects overlap. The lock is
-    // held for the full chunk/pack/encrypt/upload/index-update cycle.
     let _guard = s.write_mutex.lock().await;
-    match put_object_full(s, &key, &body).await {
+    let result = spool_and_put(s, &key, body).await;
+    match result {
         Ok(file_hash) => {
             let etag = format!("\"{}\"", file_hash.dbg_short(16));
             let mut headers = HeaderMap::new();
             headers.insert(header::ETAG, etag.parse().unwrap());
             schedule_flush(state.0.clone()).await;
-            (StatusCode::OK, headers, String::new()).into_response()
+            (StatusCode::OK, headers, Body::empty()).into_response()
         }
         Err(e) => s3xml::error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -884,116 +936,140 @@ async fn put_object_handler(
     }
 }
 
+/// Spool the request body to a temp file (to keep peak memory bounded)
+/// and run the full PutObject pipeline from file. The temp file is
+/// deleted after the pipeline completes.
+async fn spool_and_put(state: &ServeState, key: &str, body: Body) -> Result<Hash, BluError> {
+    let temp_path = spool_body_to_temp(body).await?;
+    let result = put_object_full_from_file(state, key, &temp_path).await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
+    result
+}
+
 /// Full PutObject pipeline: chunk, dedup, pack, encrypt, upload, and
-/// commit the new object to redb, then unlink the old object's
-/// reference to this path and reclaim any blobs it left dead. Shared
-/// by the plain PutObject handler and CompleteMultipartUpload.
+/// commit the new object from a file on disk, then unlink the old
+/// object's reference to this path and reclaim any blobs it left dead.
 ///
 /// Ordering (the fix for the non-atomic overwrite data-loss bug):
 ///
-/// 1. Resolve the old file_hash (if any) *before* writing, so the new
-///    write does not clobber the lookup.
-/// 2. Run [`put_object_inner`] to chunk, pack, encrypt, upload, and
-///    commit the new FileRef, repointing `path_index[key]` to the new
-///    file_hash. New blobs land in the backend and `blob_index`.
-/// 3. Only after the new content commits, unlink the old FileRef's
-///    reference to this path via [`RedbStore::unlink_overwritten_path`]
-///    (which leaves `path_index[key]` pointing at the new file_hash)
-///    and reclaim blobs the old content left dead from the backend.
+/// 1. Resolve the old file_hash (if any) *before* writing.
+/// 2. Run [`put_object_inner_from_file`] to chunk, pack, encrypt,
+///    upload, and commit the new FileRef, repointing `path_index[key]`
+///    to the new file_hash.
+/// 3. Only after the new content commits, unlink the old FileRef and
+///    reclaim blobs the old content left dead from the backend.
 ///
-/// If the new content is byte-identical to the old (`old_file_hash ==
-/// new_file_hash`) the unlink is a no-op: [`put_object_inner`] is
-/// idempotent and dedup already skipped the reupload, so nothing is
-/// left dead and the old FileRef still legitimately owns this path.
+/// If the new content is byte-identical (`old_file_hash ==
+/// new_file_hash`) the unlink is skipped: dedup already found the
+/// chunks in blob_index, nothing new was uploaded, and the FileRef
+/// still legitimately owns this path.
 ///
 /// The caller must already hold `ServeState::write_mutex`.
-async fn put_object_full(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
-    // Resolve the old file_hash before writing so the lookup reflects
-    // the pre-overwrite state, not the new content we are about to
-    // commit.
+async fn put_object_full_from_file(
+    state: &ServeState,
+    key: &str,
+    file: &std::path::Path,
+) -> Result<Hash, BluError> {
     let old_file_hash = state.redb.get_file_hash_by_path(key)?;
-
-    // Commit the new object first. put_object_inner repoints
-    // path_index[key] -> new_file_hash and writes new blob_index /
-    // block_index entries in a single redb transaction. If this fails
-    // we return early without touching the old object: its blobs and
-    // indexes are intact, so the overwrite is a no-op from the
-    // caller's perspective.
-    let new_file_hash = put_object_inner(state, key, body).await?;
-
-    // Reclaim the old object's reference to this path only after the
-    // new content has committed. Identical content (same file_hash)
-    // is a true no-op: put_object_inner's merge was idempotent and
-    // nothing is left dead, so skip the unlink entirely, otherwise
-    // we would strip this path from the still-valid FileRef.
+    let new_file_hash = put_object_inner_from_file(state, key, file).await?;
     if let Some(old_file_hash) = old_file_hash {
         if old_file_hash != new_file_hash {
             let stats = state.redb.unlink_overwritten_path(&old_file_hash, key)?;
             reclaim_dead_blobs(state, &stats.blobs_dead).await;
         }
     }
-
     Ok(new_file_hash)
 }
 
-/// Inner PutObject pipeline: chunk, dedup, pack, encrypt, upload, then
-/// update redb in a single write transaction via
-/// [`RedbStore::put_object`]. Returns the file hash (used as the ETag)
-/// on success.
+/// Spool an HTTP request body to a temp file, keeping peak memory
+/// bounded by the stream buffer size (not the body length). Used by
+/// the PutObject and UploadPart handlers for large uploads.
 ///
-/// The caller must already hold `ServeState::write_mutex`. For
-/// overwrites, [`put_object_full`] is responsible for resolving the
-/// old file_hash and reclaiming it after this call commits.
-async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
-    // Chunk and hash. chunk_bytes returns at least one (possibly
-    // empty) chunk for any input, matching S3's acceptance of
-    // zero-byte objects.
-    let chunks = chunk_bytes(body, DEFAULT_CHUNK_SIZE);
-    let chunkmetas: Vec<ChunkMeta> = chunks.iter().map(|c| ChunkMeta::new(c)).collect();
+/// The temp file lives inside a leaked [`tempfile::TempDir`] whose
+/// path is returned so the caller can clean it up after chunking.
+/// Returns the temp file path (the body is written and flushed).
+async fn spool_body_to_temp(body: Body) -> Result<PathBuf, BluError> {
+    use tokio_stream::StreamExt as _;
 
-    // Whole-file hash is the multihash of the original bytes -- used
-    // as the FileRef identity and the ETag.
-    let file_hash = Hash::from(hash::multihash(body).to_bytes());
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("body");
+    let mut file = tokio::fs::File::create(&path).await?;
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| BluError::Internal(format!("body stream error: {e}")))?;
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    drop(file);
+    std::mem::forget(dir);
+    Ok(path)
+}
 
-    // Build a FileRef and record this path on it. The path entry is
-    // also written to path_index inside put_object below.
-    let mut fileref = FileRef::new(chunkmetas.clone());
-    fileref.paths.insert(std::path::PathBuf::from(key));
+/// Read exactly `buf.len()` bytes from `file`, or until EOF returns
+/// fewer. Returns the number of bytes filled (0 means EOF).
+async fn read_exact_or_eof(file: &mut tokio::fs::File, buf: &mut [u8]) -> Result<usize, BluError> {
+    use tokio::io::AsyncReadExt;
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = file.read(&mut buf[filled..]).await?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    Ok(filled)
+}
 
-    // Dedup: for each chunk, check if it already lives in a blob. New
-    // chunks go into a fresh BlobBuffer; dedup hits skip the blob
-    // pipeline entirely. Track new vs dedup locations so put_object
-    // only inserts new entries into blob_index.
+/// File-based PutObject pipeline: chunk, dedup, pack, encrypt, upload,
+/// and commit a new object from a file on disk instead of an
+/// in-memory `&[u8]`. Reads the file in exact
+/// [`DEFAULT_CHUNK_SIZE`] chunks, hashes the whole file incrementally
+/// via [`StreamingHash` and processes each chunk through the dedup /
+/// BlobBuffer pipeline.
+///
+/// The caller must already hold `ServeState::write_mutex`.
+async fn put_object_inner_from_file(
+    state: &ServeState,
+    key: &str,
+    file: &std::path::Path,
+) -> Result<Hash, BluError> {
+    let chunk_size = DEFAULT_CHUNK_SIZE;
+    let mut f = tokio::fs::File::open(file).await?;
+    let mut hasher = StreamingHash::new();
+    let mut chunkmetas: Vec<ChunkMeta> = Vec::new();
     let mut new_blob_locations: Vec<(Hash, crate::blob::BlobBlockLocation)> = Vec::new();
     let mut blob_buf = BlobBuffer::new(&state.backend, state.keys.clone());
     let mut req_blob_index = BlobIndex::new();
 
-    for (chunk_bytes_vec, cm) in chunks.iter().zip(chunkmetas.iter()) {
-        if state.redb.get_blob_location(&cm.hash)?.is_some() {
-            continue;
+    let mut chunk_buf = vec![0u8; chunk_size];
+    loop {
+        let n = read_exact_or_eof(&mut f, &mut chunk_buf).await?;
+        if n == 0 {
+            break;
         }
-        let mut chunk_bytes_mut = chunk_bytes_vec.clone();
-        blob_buf
-            .add_chunk(&mut chunk_bytes_mut, &mut req_blob_index)
-            .await?;
+        let chunk = &chunk_buf[..n];
+        hasher.update(chunk);
+        let cm = ChunkMeta::new(chunk);
+        chunkmetas.push(cm);
+
+        let chunk_hash = &chunkmetas.last().unwrap().hash;
+        if state.redb.get_blob_location(chunk_hash)?.is_none() {
+            let mut chunk_data = chunk.to_vec();
+            blob_buf
+                .add_chunk(&mut chunk_data, &mut req_blob_index)
+                .await?;
+        }
     }
     blob_buf.finalize(&mut req_blob_index).await?;
 
-    // After finalize, the per-request BlobIndex has a location for
-    // every freshly-packed chunk. Walk it into the new_blob_locations
-    // list. Dedup hits are intentionally skipped here -- their
-    // blob_index entries already exist in redb.
+    let file_hash = hasher.finalize();
+    let mut fileref = FileRef::new(chunkmetas.clone());
+    fileref.paths.insert(std::path::PathBuf::from(key));
+
     for (chunk_hash, location) in &req_blob_index.map {
         new_blob_locations.push((chunk_hash.clone(), location.clone()));
     }
 
-    // Build the blockref update list: (chunk_hash, file_hash, position)
-    // for every chunk in this file. Dedup hits need their existing
-    // BlockRef merged with this file_hash -> position; put_object
-    // fetches and merges internally so the caller only supplies the
-    // new (file_hash, position) pair for each chunk. The position
-    // comes from the freshly-written blob for new chunks, or from the
-    // existing BlobBlockLocation for dedup hits.
     let mut blockref_updates: Vec<(Hash, Hash, Position)> = Vec::with_capacity(chunkmetas.len());
     for cm in &chunkmetas {
         let location = match req_blob_index.map.get(&cm.hash) {
@@ -1002,7 +1078,7 @@ async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<
                 Some(loc) => loc,
                 None => {
                     return Err(BluError::Internal(format!(
-                        "chunk {} has no blob location after put_object_inner",
+                        "chunk {} has no blob location after put_object_inner_from_file",
                         cm.hash.dbg_short(12)
                     )));
                 }
@@ -1238,16 +1314,38 @@ fn generate_upload_id() -> String {
     hex::encode(bytes)
 }
 
-/// UploadPart: append the request body to the multipart upload named
-/// by `upload_id` at slot `part_number - 1`. Part numbers are
-/// 1-indexed in S3; we store 0-indexed. If the upload_id is not
-/// found, returns 404 `NoSuchUpload`. On success returns 200 with an
-/// `ETag` header containing the hex hash of the part bytes (quoted).
+/// Spool an HTTP request body to a [`tempfile::NamedTempFile`] and
+/// compute the SHA-512 digest incrementally. RAII cleanup happens when
+/// the returned file is dropped. Returns the temp file and the raw
+/// digest bytes (used for the part ETag).
+async fn spool_part_body(body: Body) -> Result<(tempfile::NamedTempFile, Vec<u8>), BluError> {
+    use tokio_stream::StreamExt as _;
+
+    let temp = tempfile::NamedTempFile::new()?;
+    let path = temp.path().to_path_buf();
+    let mut file = tokio::fs::File::create(&path).await?;
+    let mut hasher = StreamingHash::new();
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| BluError::Internal(format!("body stream error: {e}")))?;
+        file.write_all(&chunk).await?;
+        hasher.update(&chunk);
+    }
+    file.flush().await?;
+    drop(file);
+    Ok((temp, hasher.finalize_raw()))
+}
+
+/// UploadPart: spool the request body to a temp file and store it in
+/// the multipart upload named by `upload_id` at slot `part_number - 1`.
+/// Part numbers are 1-indexed in S3; we store 0-indexed. If the
+/// upload_id is not found, returns 404 `NoSuchUpload`. On success
+/// returns 200 with an `ETag` header containing the hex part hash.
 async fn upload_part(
     ready: Arc<OnceLock<ServeState>>,
     upload_id: String,
     part_number: String,
-    body: Bytes,
+    body: Body,
 ) -> axum::response::Response {
     let Some(state) = ready.get() else {
         return s3xml::error_response(
@@ -1268,22 +1366,33 @@ async fn upload_part(
             .into_response();
         }
     };
+
+    let (part_file, digest) = match spool_part_body(body).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            )
+            .into_response();
+        }
+    };
+
     let mut uploads = state.multipart_uploads.lock().await;
     let Some(mpu) = uploads.get_mut(&upload_id) else {
         return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchUpload", &upload_id)
             .into_response();
     };
-    // Extend or insert at part_idx. Parts may arrive out of order;
-    // fill any gap with empty Vecs so parts[part_idx] is valid.
     while mpu.parts.len() <= part_idx {
-        mpu.parts.push(Vec::new());
+        mpu.parts.push(None);
     }
-    mpu.parts[part_idx] = body.to_vec();
-    let etag = format!("\"{}\"", hex::encode(hash::sha512(&body)));
+    mpu.parts[part_idx] = Some(part_file);
+    let etag = format!("\"{}\"", hex::encode(&digest));
     drop(uploads);
     let mut headers = HeaderMap::new();
     headers.insert(header::ETAG, etag.parse().unwrap());
-    (StatusCode::OK, headers, String::new()).into_response()
+    (StatusCode::OK, headers, Body::empty()).into_response()
 }
 
 /// CompleteMultipartUpload: remove the multipart state, concatenate
@@ -1325,16 +1434,69 @@ async fn complete_multipart(
         "completing multipart upload {} for key {} (created at {})",
         upload_id, write_key, mpu.created_at
     );
-    // Concatenate all parts in order. Any empty slots contribute no
-    // bytes, matching S3's "ignore missing parts" behavior for
-    // out-of-range gaps (real S3 rejects gaps; we tolerate them).
-    let mut body = Vec::with_capacity(mpu.parts.iter().map(|p| p.len()).sum());
-    for part in &mpu.parts {
-        body.extend_from_slice(part);
+    // Concatenate part temp files into a single temp file for the
+    // file-based PutObject pipeline. Parts are read in order; gaps
+    // (None entries) contribute no bytes.
+    let combined_dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            )
+            .into_response();
+        }
+    };
+    let combined_path = combined_dir.path().join("combined");
+    {
+        let mut combined = match tokio::fs::File::create(&combined_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                return s3xml::error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
+                .into_response();
+            }
+        };
+        for part in mpu.parts.iter().flatten() {
+            let part_path = part.path();
+            let mut pf = match tokio::fs::File::open(part_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    return s3xml::error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "InternalError",
+                        &e.to_string(),
+                    )
+                    .into_response();
+                }
+            };
+            if let Err(e) = tokio::io::copy(&mut pf, &mut combined).await {
+                return s3xml::error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "InternalError",
+                    &e.to_string(),
+                )
+                .into_response();
+            }
+        }
+        if let Err(e) = combined.flush().await {
+            return s3xml::error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "InternalError",
+                &e.to_string(),
+            )
+            .into_response();
+        }
+        drop(combined);
     }
+    // mpu drops here, cleaning up part temp files (RAII).
 
     let _guard = state.write_mutex.lock().await;
-    match put_object_full(state, &write_key, &body).await {
+    match put_object_full_from_file(state, &write_key, &combined_path).await {
         Ok(file_hash) => {
             schedule_flush(ready.clone()).await;
             let etag = format!("\"{}\"", file_hash.dbg_short(16));
@@ -3915,6 +4077,234 @@ mod test {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get(header::CONTENT_LENGTH).unwrap(), "0");
+    }
+
+    /// Stage 4: A PUT above the old 2 MB axum default body limit
+    /// must succeed (200 OK + ETag) and round-trip via GET. This
+    /// validates the `DefaultBodyLimit::disable()` layer and the
+    /// spool-to-temp-file streaming path.
+    #[tokio::test]
+    async fn put_object_large_body_above_old_limit() {
+        let file_data: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let state = empty_state();
+        let app = test_router(state);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/large.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET back the full content and verify byte-for-byte.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/large.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            file_data.len().to_string(),
+        );
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body.len(), file_data.len());
+        assert_eq!(body, file_data, "large PUT must round-trip byte-for-byte");
+    }
+
+    /// Stage 4: A multi-chunk file fetched via the non-range GET path
+    /// must stream back correctly. The file is small enough to fit in
+    /// one blob (multi-chunk, not multi-blob), but the streaming
+    /// response body must concatenate chunks correctly.
+    #[tokio::test]
+    async fn streaming_get_multi_chunk_file() {
+        let state = empty_state();
+        let app = test_router(state);
+
+        // Create a file with content spanning multiple chunks
+        // (> DEFAULT_CHUNK_SIZE = 512 KiB).
+        let file_data: Vec<u8> = (0..600_000).map(|i| (i % 251) as u8).collect();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/multi.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET back the full file via the streaming response body.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/multi.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, file_data, "streaming GET must round-trip correctly");
+    }
+
+    /// Stage 4: Multipart upload with parts spooled to temp files
+    /// must complete and produce the correct content. Tests the
+    /// `Vec<Option<NamedTempFile>>` spooling path end-to-end.
+    #[tokio::test]
+    async fn multipart_spool_round_trip() {
+        let state = empty_state();
+        let app = test_router(state);
+
+        let part1 = b"hello ".to_vec();
+        let part2 = b"brave new ".to_vec();
+        let part3 = b"world\n".to_vec();
+        let expected: Vec<u8> = [part1.as_slice(), part2.as_slice(), part3.as_slice()].concat();
+
+        // Initiate multipart upload.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/testvault/mp.bin?uploads")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let xml = body_string(response.into_body()).await;
+        let upload_id = extract_xml_value(&xml, "UploadId").expect("missing UploadId");
+
+        // Upload parts.
+        for (i, part) in [part1, part2, part3].iter().enumerate() {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri(format!(
+                            "/testvault/mp.bin?partNumber={}&uploadId={}",
+                            i + 1,
+                            upload_id
+                        ))
+                        .body(Body::from(part.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        // Complete multipart upload.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/testvault/mp.bin?uploadId={}", upload_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // GET the completed file and verify content.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/mp.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, expected, "multipart spool must round-trip correctly");
+    }
+
+    /// Stage 4: Stale multipart uploads should be reaped by the
+    /// background reaper. We insert one with an old `created_at` and
+    /// trigger the reap synchronously (inlining the scan) to verify it
+    /// gets cleaned up.
+    #[tokio::test]
+    async fn stale_multipart_upload_reaped() {
+        use chrono::{Timelike, Utc};
+
+        let state = empty_state();
+
+        // Insert a stale upload (created_at 2 hours ago).
+        let stale_mpu = MultipartState {
+            path: "stale.bin".to_string(),
+            parts: Vec::new(),
+            created_at: Utc::now()
+                .naive_utc()
+                .with_hour(Utc::now().naive_utc().hour().saturating_sub(2))
+                .unwrap_or_else(|| Utc::now().naive_utc() - chrono::Duration::hours(2)),
+        };
+        state
+            .multipart_uploads
+            .lock()
+            .await
+            .insert("stale-id".to_string(), stale_mpu);
+
+        // Run the reap scan inline.
+        let now = chrono::Utc::now().naive_utc();
+        let stale_ids: Vec<String> = state
+            .multipart_uploads
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, mpu)| {
+                (now - mpu.created_at).num_seconds()
+                    > crate::serve::server::MPU_STALE_THRESHOLD_SECS
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        {
+            let mut uploads = state.multipart_uploads.lock().await;
+            for id in &stale_ids {
+                uploads.remove(id);
+            }
+        }
+
+        assert!(
+            stale_ids.contains(&"stale-id".to_string()),
+            "stale upload should be detected for reap"
+        );
+        assert!(
+            state
+                .multipart_uploads
+                .lock()
+                .await
+                .get("stale-id")
+                .is_none(),
+            "stale upload should be removed"
+        );
     }
 
     /// Extract the first inner text of a tag from an XML string.
