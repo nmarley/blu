@@ -423,9 +423,10 @@ fn resolve_path(
 /// index), strips the file from any tag_index entries, then deletes
 /// any fully-dead blob files from the storage backend.
 ///
-/// `PutObject` calls this when overwriting an existing path so the
-/// old file's chunks are reclaimed before the new FileRef is written.
-/// `DeleteObject` calls this directly.
+/// `DeleteObject` calls this directly. The overwrite path
+/// (`put_object_full`) calls [`RedbStore::unlink_overwritten_path`]
+/// instead, because the path_index entry must survive repointing to
+/// the new file_hash.
 ///
 /// Backend blob deletion is best-effort: if a blob file cannot be
 /// deleted (e.g., transient S3 error), a warning is logged and the
@@ -441,11 +442,23 @@ async fn delete_file_cascade(
     path: &str,
 ) -> Result<crate::serve::redb_store::DeleteStats, BluError> {
     let stats = state.redb.delete_object_index(file_hash, path)?;
+    reclaim_dead_blobs(state, &stats.blobs_dead).await;
+    Ok(stats)
+}
 
-    // Delete fully-dead blob files from the backend. The redb
-    // transaction has already committed, so the index is consistent
-    // even if a backend delete fails.
-    for blob_path in &stats.blobs_dead {
+/// Delete fully-dead blob files from the storage backend. The redb
+/// transaction that flagged these blobs as dead has already committed,
+/// so the index stays consistent even if a backend delete fails.
+///
+/// Best-effort: a transient backend error is logged as a warning and
+/// the loop continues. The orphaned blob remains on the backend and
+/// can be reclaimed by a future defrag pass.
+///
+/// Shared by [`delete_file_cascade`] (DeleteObject) and the overwrite
+/// path in [`put_object_full`] (after the new content commits and the
+/// old FileRef is unlinked).
+async fn reclaim_dead_blobs(state: &ServeState, blobs_dead: &[std::path::PathBuf]) {
+    for blob_path in blobs_dead {
         if let Err(e) = state.backend.delete(blob_path).await {
             warn!(
                 "failed to delete dead blob {} from backend: {} \
@@ -455,8 +468,6 @@ async fn delete_file_cascade(
             );
         }
     }
-
-    Ok(stats)
 }
 
 /// Fetch all chunk data for a `FileRef`, in chunk order, and
@@ -873,24 +884,56 @@ async fn put_object_handler(
     }
 }
 
-/// Full PutObject pipeline: run the overwrite cascade if the path
-/// already exists, then chunk, dedup, pack, encrypt, upload, and
-/// update redb. Shared by the plain PutObject handler and
-/// CompleteMultipartUpload.
+/// Full PutObject pipeline: chunk, dedup, pack, encrypt, upload, and
+/// commit the new object to redb, then unlink the old object's
+/// reference to this path and reclaim any blobs it left dead. Shared
+/// by the plain PutObject handler and CompleteMultipartUpload.
+///
+/// Ordering (the fix for the non-atomic overwrite data-loss bug):
+///
+/// 1. Resolve the old file_hash (if any) *before* writing, so the new
+///    write does not clobber the lookup.
+/// 2. Run [`put_object_inner`] to chunk, pack, encrypt, upload, and
+///    commit the new FileRef, repointing `path_index[key]` to the new
+///    file_hash. New blobs land in the backend and `blob_index`.
+/// 3. Only after the new content commits, unlink the old FileRef's
+///    reference to this path via [`RedbStore::unlink_overwritten_path`]
+///    (which leaves `path_index[key]` pointing at the new file_hash)
+///    and reclaim blobs the old content left dead from the backend.
+///
+/// If the new content is byte-identical to the old (`old_file_hash ==
+/// new_file_hash`) the unlink is a no-op: [`put_object_inner`] is
+/// idempotent and dedup already skipped the reupload, so nothing is
+/// left dead and the old FileRef still legitimately owns this path.
 ///
 /// The caller must already hold `ServeState::write_mutex`.
 async fn put_object_full(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
-    // Overwrite: if the path already exists, cascade-delete the old
-    // file's reference to this path before writing the new one. The
-    // old file's chunks are decremented in block_index and removed
-    // from blob_index when unreferenced; the blob files themselves
-    // are reclaimed later by the index flush. Only the single path
-    // is removed from the old FileRef; if another path still
-    // references the same content, the old FileRef and blobs survive.
-    if let Some(old_file_hash) = state.redb.get_file_hash_by_path(key)? {
-        delete_file_cascade(state, &old_file_hash, key).await?;
+    // Resolve the old file_hash before writing so the lookup reflects
+    // the pre-overwrite state, not the new content we are about to
+    // commit.
+    let old_file_hash = state.redb.get_file_hash_by_path(key)?;
+
+    // Commit the new object first. put_object_inner repoints
+    // path_index[key] -> new_file_hash and writes new blob_index /
+    // block_index entries in a single redb transaction. If this fails
+    // we return early without touching the old object: its blobs and
+    // indexes are intact, so the overwrite is a no-op from the
+    // caller's perspective.
+    let new_file_hash = put_object_inner(state, key, body).await?;
+
+    // Reclaim the old object's reference to this path only after the
+    // new content has committed. Identical content (same file_hash)
+    // is a true no-op: put_object_inner's merge was idempotent and
+    // nothing is left dead, so skip the unlink entirely, otherwise
+    // we would strip this path from the still-valid FileRef.
+    if let Some(old_file_hash) = old_file_hash {
+        if old_file_hash != new_file_hash {
+            let stats = state.redb.unlink_overwritten_path(&old_file_hash, key)?;
+            reclaim_dead_blobs(state, &stats.blobs_dead).await;
+        }
     }
-    put_object_inner(state, key, body).await
+
+    Ok(new_file_hash)
 }
 
 /// Inner PutObject pipeline: chunk, dedup, pack, encrypt, upload, then
@@ -898,9 +941,9 @@ async fn put_object_full(state: &ServeState, key: &str, body: &[u8]) -> Result<H
 /// [`RedbStore::put_object`]. Returns the file hash (used as the ETag)
 /// on success.
 ///
-/// The caller must already hold `ServeState::write_mutex` and must
-/// have already run the overwrite cascade if the path previously
-/// existed.
+/// The caller must already hold `ServeState::write_mutex`. For
+/// overwrites, [`put_object_full`] is responsible for resolving the
+/// old file_hash and reclaiming it after this call commits.
 async fn put_object_inner(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
     // Chunk and hash. chunk_bytes returns at least one (possibly
     // empty) chunk for any input, matching S3's acceptance of
@@ -2799,6 +2842,205 @@ mod test {
             !backend.exists(&blob_path).await.unwrap(),
             "old blob should be gone after overwrite"
         );
+    }
+
+    /// Overwriting a path with byte-identical content must be a true
+    /// no-op: the ETag is unchanged, the existing blob survives
+    /// untouched on the backend (not deleted-and-reuploaded), and the
+    /// blob_index set is unchanged. This is the regression guard for
+    /// the Stage 3 fix; the pre-fix ordering ran the delete cascade
+    /// before the new commit, so an identical overwrite would remove
+    /// the blob_index entry, delete the blob file, then re-add the
+    /// entry and re-upload a fresh blob at the same content-addressed
+    /// path, leaving the blob file with a new mtime.
+    #[tokio::test]
+    async fn put_object_overwrite_identical_is_noop() {
+        let state = empty_state();
+        let redb = state.redb.clone();
+        let backend = state.backend.clone();
+        let datadir = match &state.backend {
+            BackendKind::Local(l) => l.datadir().to_path_buf(),
+            BackendKind::AmazonS3(_) => unreachable!("test uses a local backend"),
+        };
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+
+        // First PUT writes the object and its blob.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/same.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag_first = response
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Snapshot the blob set and the on-disk blob mtime before the
+        // identical overwrite.
+        let (_, blob_idx_before, _) = redb.dump_to_indexes().unwrap();
+        let blob_paths_before: HashSet<PathBuf> = blob_idx_before
+            .map
+            .values()
+            .map(|l| l.blob_path().clone())
+            .collect();
+        assert_eq!(blob_paths_before.len(), 1);
+        let blob_path = blob_paths_before.iter().next().unwrap().clone();
+        let full_blob_path = datadir.join(&blob_path);
+        let mtime_before = std::fs::metadata(&full_blob_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        // Second PUT with identical content.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/same.bin")
+                    .body(Body::from(file_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let etag_second = response
+            .headers()
+            .get(header::ETAG)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // ETag is unchanged (identical content hashes to the same file).
+        assert_eq!(
+            etag_first, etag_second,
+            "ETag must not change on identical overwrite"
+        );
+        // The expected ETag is the multihash of the content.
+        let expected_file_hash = Hash::from(hash::multihash(&file_data).to_bytes());
+        assert_eq!(
+            etag_second,
+            format!("\"{}\"", expected_file_hash.dbg_short(16))
+        );
+
+        // The blob file on the backend was NOT deleted-and-recreated:
+        // its modification time is unchanged.
+        let mtime_after = std::fs::metadata(&full_blob_path)
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "blob must not be deleted-and-reuploaded on identical overwrite"
+        );
+        assert!(backend.exists(&blob_path).await.unwrap());
+
+        // The blob_index set is unchanged.
+        let (_, blob_idx_after, _) = redb.dump_to_indexes().unwrap();
+        let blob_paths_after: HashSet<PathBuf> = blob_idx_after
+            .map
+            .values()
+            .map(|l| l.blob_path().clone())
+            .collect();
+        assert_eq!(blob_paths_before, blob_paths_after);
+
+        // GET returns the identical content.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/same.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, file_data);
+    }
+
+    /// Overwriting one of two paths that share a blob must not delete
+    /// the shared blob: the other path still references it. This is
+    /// the overwrite analogue of `delete_object_preserves_shared_blob`
+    /// and guards the Stage 3 old-vs-new blob-set logic: after the new
+    /// content commits, the old FileRef is unlinked and only blobs left
+    /// unreferenced by *any* surviving path are reclaimed.
+    #[tokio::test]
+    async fn put_object_overwrite_preserves_shared_blob() {
+        let shared_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+        let (state, blob_path) = shared_chunk_state("file_a.bin", "file_b.bin", &shared_data).await;
+
+        let backend = state.backend.clone();
+        let app = test_router(state);
+
+        // The shared blob exists before overwrite.
+        assert!(backend.exists(&blob_path).await.unwrap());
+
+        // Overwrite file_a.bin with distinct content.
+        let new_data: Vec<u8> = vec![0xAA; 300];
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/testvault/file_a.bin")
+                    .body(Body::from(new_data.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // file_b.bin still resolves to the original shared content.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/file_b.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(
+            body, shared_data,
+            "file_b.bin must still resolve after overwriting file_a.bin"
+        );
+
+        // The shared blob survives because file_b.bin still references it.
+        assert!(
+            backend.exists(&blob_path).await.unwrap(),
+            "shared blob must survive overwriting one of two referencing paths"
+        );
+
+        // file_a.bin now returns the new content.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/file_a.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, new_data);
     }
 
     /// Stage 5f.6: After a write, calling `flush_indexes` directly

@@ -38,6 +38,14 @@ impl Local {
         self.bytes_read.load(Ordering::Relaxed)
     }
 
+    /// Absolute path of the on-disk data directory. Exposed so tests
+    /// can resolve content-addressed blob paths and assert on
+    /// filesystem metadata (e.g., that an overwrite did not
+    /// delete-and-recreate an identical blob).
+    pub fn datadir(&self) -> &Path {
+        &self.datadir
+    }
+
     /// Read the data blob at the given relative path from local disk.
     ///
     /// The path should be a relative content-addressed path (e.g.,

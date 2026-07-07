@@ -477,6 +477,46 @@ impl RedbStore {
         file_hash: &Hash,
         path: &str,
     ) -> Result<DeleteStats, BluError> {
+        self.unlink_path_inner(file_hash, path, true)
+    }
+
+    /// Unlink a path from an old FileRef without removing the
+    /// `path_index` entry.
+    ///
+    /// Used by the overwrite path in
+    /// [`put_object_full`](crate::serve::server::put_object_full):
+    /// [`put_object_inner`](crate::serve::server::put_object_inner)
+    /// has already committed the new FileRef and repointed
+    /// `path_index[key]` to the new file_hash, so removing the
+    /// path_index entry here would destroy the just-written mapping.
+    /// Instead this method only removes `path` from the old
+    /// FileRef's `paths` set (and cascades block/blob/tag cleanup
+    /// when that was the last path), leaving `path_index` untouched.
+    ///
+    /// See [`delete_object_index`](Self::delete_object_index) for the
+    /// full cascade semantics; the only difference is the
+    /// `path_index` entry is preserved.
+    pub fn unlink_overwritten_path(
+        &self,
+        file_hash: &Hash,
+        path: &str,
+    ) -> Result<DeleteStats, BluError> {
+        self.unlink_path_inner(file_hash, path, false)
+    }
+
+    /// Shared body of [`delete_object_index`] and
+    /// [`unlink_overwritten_path`].
+    ///
+    /// When `remove_path_index` is true the `path_index` entry for
+    /// `path` is removed (the DeleteObject case). When false it is
+    /// left in place (the overwrite case, where `put_object_inner`
+    /// has already repointed it at the new file_hash).
+    fn unlink_path_inner(
+        &self,
+        file_hash: &Hash,
+        path: &str,
+        remove_path_index: bool,
+    ) -> Result<DeleteStats, BluError> {
         let txn = self.db.begin_write()?;
         let stats = {
             let mut file_table = txn.open_table(FILE_INDEX)?;
@@ -498,9 +538,13 @@ impl RedbStore {
             match fileref_opt {
                 None => DeleteStats::default(),
                 Some(mut fileref) => {
-                    // Remove only the single requested path from
-                    // path_index and from the FileRef's paths set.
-                    path_table.remove(path)?;
+                    // Remove the single requested path from
+                    // path_index (unless the caller is preserving it
+                    // for an overwrite) and from the FileRef's paths
+                    // set.
+                    if remove_path_index {
+                        path_table.remove(path)?;
+                    }
                     fileref.paths.retain(|p| p.to_string_lossy() != path);
 
                     if !fileref.paths.is_empty() {
@@ -1443,6 +1487,219 @@ mod test {
             .get_blob_location(&Hash::from(HASH_A))
             .unwrap()
             .is_none());
+    }
+
+    /// `unlink_overwritten_path` is the overwrite-path counterpart of
+    /// [`delete_object_index`](Self::delete_object_index): it must
+    /// remove `path` from the old FileRef's `paths` set and cascade
+    /// when that was the last path, but it must NOT remove the
+    /// `path_index` entry, because [`put_object_inner`] has already
+    /// repointed it at the new file_hash.
+    ///
+    /// This test builds the pre-overwrite state, simulates the new
+    /// write committing via [`RedbStore::put_object`] (so `path_index`
+    /// repoints to the new file_hash), then calls
+    /// `unlink_overwritten_path` for the old file and asserts:
+    /// the path_index entry still points at the new file_hash, the old
+    /// FileRef is gone, the old-only chunk's blockref/blob entries are
+    /// dropped, and the old-only blob is flagged dead while the new
+    /// file's blob survives.
+    #[test]
+    fn unlink_overwritten_path_preserves_path_index_and_cascades() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = RedbStore::open(&tmp.path().join("unlink.redb")).unwrap();
+
+        // Distinct hashes for the scenario.
+        let chunk_x = Hash::from("13401111"); // old-only chunk
+        let chunk_z = Hash::from("13402222"); // new chunk
+        let old_file = Hash::from("13403333");
+        let new_file = Hash::from("13404444");
+
+        let blob_x = PathBuf::from("x/xx/xxxx");
+        let blob_z = PathBuf::from("z/zz/zzzz");
+        let pos = Position {
+            offset: 0,
+            size: 4096,
+        };
+
+        // Old FileRef owns path "key"; chunk X is its sole chunk.
+        let old_fileref = FileRef {
+            chunkmetas: vec![ChunkMeta {
+                hash: chunk_x.clone(),
+                size: 4096,
+            }],
+            paths: HashSet::from([PathBuf::from("key")]),
+        };
+        let mut blockref_x = BlockRef::new();
+        blockref_x.references.insert(old_file.clone(), pos.clone());
+
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(old_file.clone(), old_fileref);
+        plain.blocks.insert(chunk_x.clone(), blockref_x);
+
+        let mut blob = BlobIndex::default();
+        blob.add_chunk_location(
+            &chunk_x,
+            &BlobBlockLocation::new(blob_x.clone(), pos.clone()),
+        );
+
+        store
+            .populate_from_indexes(&plain, &blob, &TagIndex::new())
+            .unwrap();
+
+        // Sanity: path_index["key"] -> old_file before overwrite.
+        assert_eq!(
+            store.get_file_hash_by_path("key").unwrap().unwrap(),
+            old_file
+        );
+
+        // Simulate the new write committing: repoint path_index["key"]
+        // to new_file and add new_file's FileRef + chunk Z blob entry
+        // via the real put_object path, exactly as put_object_inner
+        // would.
+        let new_fileref = FileRef {
+            chunkmetas: vec![ChunkMeta {
+                hash: chunk_z.clone(),
+                size: 4096,
+            }],
+            paths: HashSet::from([PathBuf::from("key")]),
+        };
+        store
+            .put_object(
+                &new_file,
+                &new_fileref,
+                "key",
+                &[(
+                    chunk_z.clone(),
+                    BlobBlockLocation::new(blob_z.clone(), pos.clone()),
+                )],
+                &[(chunk_z.clone(), new_file.clone(), pos.clone())],
+            )
+            .unwrap();
+
+        // path_index["key"] now points at new_file.
+        assert_eq!(
+            store.get_file_hash_by_path("key").unwrap().unwrap(),
+            new_file
+        );
+
+        // Unlink the old file's reference to "key". This must NOT
+        // remove path_index["key"].
+        let stats = store.unlink_overwritten_path(&old_file, "key").unwrap();
+        assert_eq!(stats.blocks_removed, 1);
+        assert_eq!(stats.chunks_removed, 1);
+        assert_eq!(stats.blobs_dead, vec![blob_x.clone()]);
+
+        // The path_index entry is preserved and still points at the
+        // new file_hash (this is the whole point of the overwrite
+        // variant).
+        assert_eq!(
+            store.get_file_hash_by_path("key").unwrap().unwrap(),
+            new_file
+        );
+
+        // The old FileRef is gone; the new one survives with "key".
+        assert!(store.get_fileref(&old_file).unwrap().is_none());
+        let surviving_new = store.get_fileref(&new_file).unwrap().unwrap();
+        assert!(surviving_new.paths.contains(&PathBuf::from("key")));
+
+        // The old-only chunk X is dropped; chunk Z survives.
+        assert!(store.get_blockref(&chunk_x).unwrap().is_none());
+        assert!(store.get_blob_location(&chunk_x).unwrap().is_none());
+        assert!(store.get_blob_location(&chunk_z).unwrap().is_some());
+    }
+
+    /// When the old FileRef still has other paths after unlinking the
+    /// overwritten one, `unlink_overwritten_path` must write the
+    /// trimmed FileRef back and NOT cascade: no blocks removed, no
+    /// blobs dead, and `path_index[key]` still points at the new
+    /// file_hash.
+    #[test]
+    fn unlink_overwritten_path_preserves_fileref_when_other_paths_remain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = RedbStore::open(&tmp.path().join("unlink_keep.redb")).unwrap();
+
+        let chunk_x = Hash::from("13401111");
+        let chunk_z = Hash::from("13402222");
+        let old_file = Hash::from("13403333");
+        let new_file = Hash::from("13404444");
+
+        let blob_x = PathBuf::from("x/xx/xxxx");
+        let blob_z = PathBuf::from("z/zz/zzzz");
+        let pos = Position {
+            offset: 0,
+            size: 4096,
+        };
+
+        // Old FileRef owns two paths: "key" (being overwritten) and
+        // "backup" (kept). chunk X is its sole chunk.
+        let old_fileref = FileRef {
+            chunkmetas: vec![ChunkMeta {
+                hash: chunk_x.clone(),
+                size: 4096,
+            }],
+            paths: HashSet::from([PathBuf::from("key"), PathBuf::from("backup")]),
+        };
+        let mut blockref_x = BlockRef::new();
+        blockref_x.references.insert(old_file.clone(), pos.clone());
+
+        let mut plain = PlainIndex::new_empty();
+        plain.files.insert(old_file.clone(), old_fileref);
+        plain.blocks.insert(chunk_x.clone(), blockref_x);
+
+        let mut blob = BlobIndex::default();
+        blob.add_chunk_location(&chunk_x, &BlobBlockLocation::new(blob_x, pos.clone()));
+
+        store
+            .populate_from_indexes(&plain, &blob, &TagIndex::new())
+            .unwrap();
+
+        // Simulate the new write repointing path_index["key"].
+        let new_fileref = FileRef {
+            chunkmetas: vec![ChunkMeta {
+                hash: chunk_z.clone(),
+                size: 4096,
+            }],
+            paths: HashSet::from([PathBuf::from("key")]),
+        };
+        store
+            .put_object(
+                &new_file,
+                &new_fileref,
+                "key",
+                &[(chunk_z.clone(), BlobBlockLocation::new(blob_z, pos.clone()))],
+                &[(chunk_z.clone(), new_file.clone(), pos.clone())],
+            )
+            .unwrap();
+
+        // Unlink "key" from the old FileRef. "backup" remains, so no
+        // cascade should fire.
+        let stats = store.unlink_overwritten_path(&old_file, "key").unwrap();
+        assert_eq!(stats.blocks_removed, 0);
+        assert_eq!(stats.chunks_removed, 0);
+        assert!(stats.blobs_dead.is_empty());
+
+        // path_index["key"] still points at the new file_hash.
+        assert_eq!(
+            store.get_file_hash_by_path("key").unwrap().unwrap(),
+            new_file
+        );
+        // path_index["backup"] still points at the old file_hash.
+        assert_eq!(
+            store.get_file_hash_by_path("backup").unwrap().unwrap(),
+            old_file
+        );
+
+        // The old FileRef survives with only "backup".
+        let surviving_old = store.get_fileref(&old_file).unwrap().unwrap();
+        assert_eq!(surviving_old.paths.len(), 1);
+        assert!(surviving_old.paths.contains(&PathBuf::from("backup")));
+
+        // chunk X is still referenced by the old FileRef via "backup",
+        // so its blockref and blob location survive.
+        let blockref = store.get_blockref(&chunk_x).unwrap().unwrap();
+        assert!(blockref.references.contains_key(&old_file));
+        assert!(store.get_blob_location(&chunk_x).unwrap().is_some());
     }
 
     #[test]
