@@ -438,8 +438,9 @@ fn resolve_path(
 async fn delete_file_cascade(
     state: &ServeState,
     file_hash: &crate::hash::Hash,
+    path: &str,
 ) -> Result<crate::serve::redb_store::DeleteStats, BluError> {
-    let stats = state.redb.delete_object_index(file_hash)?;
+    let stats = state.redb.delete_object_index(file_hash, path)?;
 
     // Delete fully-dead blob files from the backend. The redb
     // transaction has already committed, so the index is consistent
@@ -880,12 +881,14 @@ async fn put_object_handler(
 /// The caller must already hold `ServeState::write_mutex`.
 async fn put_object_full(state: &ServeState, key: &str, body: &[u8]) -> Result<Hash, BluError> {
     // Overwrite: if the path already exists, cascade-delete the old
-    // FileRef before writing the new one. The old file's chunks are
-    // decremented in block_index and removed from blob_index when
-    // unreferenced; the blob files themselves are reclaimed later by
-    // the index flush.
+    // file's reference to this path before writing the new one. The
+    // old file's chunks are decremented in block_index and removed
+    // from blob_index when unreferenced; the blob files themselves
+    // are reclaimed later by the index flush. Only the single path
+    // is removed from the old FileRef; if another path still
+    // references the same content, the old FileRef and blobs survive.
     if let Some(old_file_hash) = state.redb.get_file_hash_by_path(key)? {
-        delete_file_cascade(state, &old_file_hash).await?;
+        delete_file_cascade(state, &old_file_hash, key).await?;
     }
     put_object_inner(state, key, body).await
 }
@@ -1035,7 +1038,7 @@ async fn delete_object_handler(
         }
     };
 
-    match delete_file_cascade(s, &file_hash).await {
+    match delete_file_cascade(s, &file_hash, &key).await {
         Ok(_) => {
             schedule_flush(state.0.clone()).await;
             StatusCode::NO_CONTENT.into_response()
@@ -3378,6 +3381,134 @@ mod test {
 
         assert_eq!(body_a, body_b, "both GETs must return identical bytes");
         assert_eq!(body_a, file_data, "GET must match original data");
+    }
+
+    /// Two paths with identical content (same file_hash) share a
+    /// single FileRef. Deleting one path must NOT delete the FileRef,
+    /// the blob, or the other path's ability to GET the content.
+    /// Deleting the second (last) path must then cascade and drop the
+    /// blob from the backend.
+    #[tokio::test]
+    async fn delete_dedup_path_preserves_other_path_then_last_drops_blob() {
+        let state = empty_state();
+        let redb = state.redb.clone();
+        let app = test_router(state);
+
+        let file_data: Vec<u8> = (0..512u32).map(|i| (i % 256) as u8).collect();
+
+        // PUT the same content to two paths.
+        for path in &["/testvault/original.bin", "/testvault/duplicate.bin"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri(*path)
+                        .body(Body::from(file_data.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        // Both paths resolve to the same file_hash.
+        let hash_a = redb.get_file_hash_by_path("original.bin").unwrap().unwrap();
+        let hash_b = redb
+            .get_file_hash_by_path("duplicate.bin")
+            .unwrap()
+            .unwrap();
+        assert_eq!(hash_a, hash_b, "both paths must share one file hash");
+
+        // The FileRef must have two paths.
+        let fileref = redb.get_fileref(&hash_a).unwrap().unwrap();
+        assert_eq!(
+            fileref.paths.len(),
+            2,
+            "FileRef must have two paths before delete"
+        );
+
+        // Delete one path.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/original.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // The deleted path is gone.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/original.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // The surviving path still resolves and returns correct data.
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/testvault/duplicate.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_bytes(response.into_body()).await;
+        assert_eq!(body, file_data, "surviving path must return correct data");
+
+        // The FileRef must still exist with one path.
+        let surviving_ref = redb.get_fileref(&hash_a).unwrap().unwrap();
+        assert_eq!(
+            surviving_ref.paths.len(),
+            1,
+            "FileRef must have one path after deleting one of two"
+        );
+
+        // The blob location must still exist.
+        assert!(
+            redb.blob_count().unwrap() > 0,
+            "blob index must not be empty after deleting one of two paths"
+        );
+
+        // Delete the last path.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/testvault/duplicate.bin")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+        // The FileRef is now gone.
+        assert!(
+            redb.get_fileref(&hash_a).unwrap().is_none(),
+            "FileRef must be gone after deleting last path"
+        );
+
+        // The blob index is now empty (cascade deleted the chunk).
+        assert_eq!(
+            redb.blob_count().unwrap(),
+            0,
+            "blob index must be empty after deleting last path"
+        );
     }
 
     /// Stage 5f.6 (full): Flush after a router-driven PUT. PUT a file
