@@ -19,7 +19,8 @@ BIP39 mnemonic.
 
 ### Design constraints (non-negotiable)
 
-- Content-defined chunking (~512 KiB) with deduplication is preserved
+- Fixed-size chunking (~512 KiB) with deduplication is preserved
+  (content-defined chunking is aspirational future work, not implemented)
 - Chunks are packed into uniform ~64 MiB blobs
 - Blob sizes remain uniform regardless of source file sizes (small
   files aggregate, large files split)
@@ -94,8 +95,10 @@ interchange format.
   opens in milliseconds regardless of size.
 - Crash recovery. If the daemon restarts, in-memory indexes are gone
   and must be re-pulled from the backend. With redb, the local
-  database survives restarts. You only re-pull to sync deltas, not
-  to recover full state.
+  database survives restarts. On a returning machine the daemon
+  re-pulls the backend indexes and re-populates redb with a full
+  upsert overwrite (delta sync is aspirational future work, not yet
+  implemented).
 - No migration. Building on in-memory first means throwing away that
   code later. redb's API (`insert`, `get`, `range`) is not
   significantly harder than `HashMap::insert` and `HashMap::get`.
@@ -114,8 +117,9 @@ interchange format.
 **On startup (returning machine):**
 
 1. Open existing redb database (milliseconds)
-2. Pull index files from backend, diff against local state, apply
-   deltas
+2. Pull index files from backend and re-populate redb with the latest
+   state (full upsert overwrite; delta sync is future work, not
+   implemented today)
 
 **On writes:**
 
@@ -135,6 +139,19 @@ of index data. redb handles this without loading it all into resident
 memory (the OS page cache manages hot/cold pages). For vaults with
 tens of millions of entries, redb scales to the size of the local
 disk without changing the backend format or the local API.
+
+### Local-disk at-rest scope
+
+The local redb database (`.blu/serve.redb`) holds **plaintext**
+index state on the machine running `blu serve`: path names, chunk
+locations, tag membership. It is not encrypted at rest. The
+mnemonic-only recovery guarantee applies to the **backend**: anyone
+who controls the storage account sees only opaque ciphertext, and the
+mnemonic suffices to recover everything. Encrypting the local redb
+store is out of scope for this pass (it would need its own KEK or a
+passphrase-derived key, plus a re-encryption story across restarts).
+The local redb file is a rebuildable cache: deleting it loses nothing
+that cannot be reconstructed by re-pulling from the backend.
 
 ## 4. Read Path: Serving Files from Packed Blobs
 
@@ -170,7 +187,7 @@ byte range like `bytes=50000000-54000000`. The translation layer:
 1. Computes cumulative chunk offsets from the `Vec<ChunkMeta>` sizes
    (e.g., chunk 0 covers bytes 0-524287, chunk 1 covers
    524288-1048575, etc.)
-2. Identifies which chunks overlap the requested range (binary search
+2. Identifies which chunks overlap the requested range (linear scan
    on cumulative offsets)
 3. Fetches only those chunks (which means fetching their parent blobs,
    but the LRU cache makes sequential access fast)
@@ -348,11 +365,17 @@ domain-separation byte without changing the nonce length. Uniqueness
 is guaranteed because each blob gets a fresh DEK, so the `(DEK, index)`
 pair is never reused.
 
-The segment index is also passed as AEAD associated data (AAD) via
-`Payload { msg, aad: index.to_le_bytes() }`. This binds each
-ciphertext to its position: an attacker (or a bug) cannot reorder
-segments or splice a segment into a different index without failing
-authentication.
+The segment index and the v3 header fields are passed as AEAD
+associated data (AAD). The `SegmentAad` struct packs a 24-byte AAD
+value: `index_le(8) || segment_size_le(4) || segment_count_le(4) ||
+plaintext_len_le(8)`. This binds each ciphertext to its position and
+to the negotiated header: an attacker (or a bug) cannot reorder
+segments, splice a segment into a different index, or substitute a
+header with altered `segment_size`, `segment_count`, or
+`plaintext_len` without failing authentication. Tampering with any
+header field invalidates the tags on every segment, so a corrupt
+header fails fast at the first segment rather than at a downstream
+slice.
 
 ### Padding rule
 
@@ -407,6 +430,24 @@ not built in v3; v3's prefix fetch is no worse than v2 in the worst
 case and strictly better for front-loaded access patterns. Revisit if
 random-seek latency on cold caches proves unacceptable for large
 blobs.
+
+### Range-fetch metadata tradeoff
+
+v3's prefix fetch issues HTTP byte-range requests against individual
+blobs (`Range: bytes=0..(up_to_seg+1)*(S+16)`). A request-observing
+storage provider therefore sees the upper bound of the fetched byte
+range, which reveals the requesting chunk's position in the
+compressed stream and thus a coarse view of where in the blob the
+plaintext lives. v2 whole-blob fetch avoids this entirely: every
+request fetches the entire blob, so the provider learns nothing about
+which chunk is being read. This is an accepted tradeoff: the leak is
+limited to byte offsets within a single opaque blob, reveals nothing
+about the source file's logical structure or content, and sequential
+streaming (the primary `blu serve` use case) naturally walks the
+prefix front-to-back so the offsets carry no seek signal. A
+request-observing provider is a stronger adversary than the
+storage-provider-with-account-access considered in section 10; see
+section 10 for the full traffic-analysis threat model.
 
 ### Recommendation
 
