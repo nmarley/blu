@@ -19,6 +19,8 @@ mod pull;
 mod read_index;
 mod restore_files;
 mod search;
+#[cfg(test)]
+mod smoke;
 mod status;
 mod sync;
 mod tagger;
