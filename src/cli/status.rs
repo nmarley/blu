@@ -8,7 +8,6 @@
 /// - [ ] Display files which are in the PlainIndex but not encrypted
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use crate::block::PlainIndex;
 use crate::cli::clapargs::{StatusArgs, StatusCheckType};
@@ -17,6 +16,7 @@ use crate::cli::output::FileDisplay;
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::{self, Hash};
+use crate::ignore::walk_files_with_sizes;
 
 // 1 GB? (before they ruined the abbreviation)
 const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
@@ -336,39 +336,5 @@ impl std::fmt::Display for FileUpdatedPaths {
 }
 
 fn get_files_and_sizes<P: AsRef<Path>>(dir: P) -> Vec<(PathBuf, u64)> {
-    WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| {
-            // here, e = Result<walkdir::DirEntry>
-            let e = match e.ok() {
-                Some(elem) => elem,
-                None => return None,
-            };
-
-            // remove non-files
-            if !e.path().is_file() {
-                return None;
-            }
-
-            // get file size from metadata
-            let md = match e.metadata().ok() {
-                Some(elem) => elem,
-                None => return None,
-            };
-            let file_size = md.len();
-
-            // strip leading ./
-            let path = e.path().to_path_buf();
-            let path = path
-                .strip_prefix("./")
-                .unwrap_or_else(|_| &path)
-                .to_path_buf();
-
-            // ignore files in .blu dir
-            if path.starts_with(".blu/") {
-                return None;
-            }
-            Some((path, file_size))
-        })
-        .collect::<Vec<(PathBuf, u64)>>()
+    walk_files_with_sizes(dir)
 }

@@ -46,6 +46,8 @@ pub mod error;
 pub mod format;
 /// wrapper around Vec<u8> for cryptographic hashes
 pub mod hash;
+/// filesystem walking with `.bluignore` support
+pub mod ignore;
 /// serialization + compression + encryption for indexes
 pub mod io;
 /// key management (generation, loading, storage)

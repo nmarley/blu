@@ -30,7 +30,7 @@ simplelog = "0.12"
 suffix = "1.3"
 tempfile = "3"
 thiserror = "2.0"
-walkdir = "2"
+ignore = "0.4"
 # todo: s3 feature
 # note: consider non-rustls not supported. Not a fan of openssl
 aws-config = "1"

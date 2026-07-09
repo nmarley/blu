@@ -5,13 +5,13 @@ use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::error::BluError;
 use crate::format::datetime_format;
 use crate::hash::{Hash, SHA2_512};
+use crate::ignore::walk_files;
 use crate::io::{gen_std_enc_serde, Position};
 
 use super::blockref::BlockRef;
@@ -75,19 +75,12 @@ impl PlainIndex {
 
         match path.as_ref() {
             p if p.is_file() => {
-                // add file element
+                // Explicit single-file paths override .bluignore (git-style).
                 self.hash_and_add_file(p, chunk_size)?;
             }
             p if p.is_dir() => {
-                // walk dir and add each file element
-                for entry in WalkDir::new(p)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| !e.path().starts_with(".blu/"))
-                    .filter(|e| !e.path().starts_with("./.blu/"))
-                    .filter(|e| e.path().is_file())
-                {
-                    self.hash_and_add_file(entry.path(), chunk_size)?;
+                for entry in walk_files(p) {
+                    self.hash_and_add_file(&entry, chunk_size)?;
                 }
             }
             p => {
