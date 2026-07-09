@@ -116,6 +116,21 @@ impl AgentState {
         self.kek_dir.as_deref()
     }
 
+    /// Backdate unlock and activity timestamps for deterministic timeout tests.
+    #[cfg(test)]
+    fn backdate_times(&mut self, unlocked_by: Duration, activity_by: Duration) {
+        if let Some(at) = self.unlocked_at.as_mut() {
+            *at = Instant::now()
+                .checked_sub(unlocked_by)
+                .expect("unlocked_by exceeds Instant range");
+        }
+        if let Some(at) = self.last_activity.as_mut() {
+            *at = Instant::now()
+                .checked_sub(activity_by)
+                .expect("activity_by exceeds Instant range");
+        }
+    }
+
     /// The public key, if unlocked.
     pub fn public_key(&self) -> Option<&str> {
         self.public_key.as_deref()
@@ -447,8 +462,9 @@ mod test {
 
     #[test]
     fn idle_timeout_locks_agent() {
+        let idle = Duration::from_secs(60);
         let config = AgentConfig {
-            timeout_idle: Duration::from_millis(1),
+            timeout_idle: idle,
             timeout_max: Duration::from_secs(3600),
             ..AgentConfig::default()
         };
@@ -456,49 +472,47 @@ mod test {
         unlock_test_state(&mut state);
         assert!(state.is_unlocked());
 
-        // Sleep past the idle timeout
-        std::thread::sleep(Duration::from_millis(10));
+        state.backdate_times(Duration::from_secs(1), idle + Duration::from_secs(1));
         assert!(state.check_timeouts());
         assert!(!state.is_unlocked());
     }
 
     #[test]
     fn max_timeout_locks_agent() {
+        let max = Duration::from_secs(60);
         let config = AgentConfig {
             timeout_idle: Duration::from_secs(3600),
-            timeout_max: Duration::from_millis(1),
+            timeout_max: max,
             ..AgentConfig::default()
         };
         let mut state = AgentState::with_config(config);
         unlock_test_state(&mut state);
         assert!(state.is_unlocked());
 
-        std::thread::sleep(Duration::from_millis(10));
+        state.backdate_times(max + Duration::from_secs(1), Duration::from_secs(1));
         assert!(state.check_timeouts());
         assert!(!state.is_unlocked());
     }
 
     #[test]
     fn touch_resets_idle_timer() {
+        let idle = Duration::from_secs(60);
         let config = AgentConfig {
-            timeout_idle: Duration::from_millis(50),
+            timeout_idle: idle,
             timeout_max: Duration::from_secs(3600),
             ..AgentConfig::default()
         };
         let mut state = AgentState::with_config(config);
         unlock_test_state(&mut state);
 
-        // Sleep 30ms, then touch (resets idle)
-        std::thread::sleep(Duration::from_millis(30));
+        // Activity would have expired; touch resets the idle timer.
+        state.backdate_times(Duration::from_secs(30), idle + Duration::from_secs(1));
         state.touch();
-
-        // Sleep another 30ms (total 60ms since unlock, but only 30ms since touch)
-        std::thread::sleep(Duration::from_millis(30));
         assert!(!state.check_timeouts());
         assert!(state.is_unlocked());
 
-        // Now sleep past idle
-        std::thread::sleep(Duration::from_millis(60));
+        // Past idle again after the touch.
+        state.backdate_times(Duration::from_secs(30), idle + Duration::from_secs(1));
         assert!(state.check_timeouts());
         assert!(!state.is_unlocked());
     }

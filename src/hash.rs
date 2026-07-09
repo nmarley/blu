@@ -31,7 +31,7 @@ impl std::fmt::Debug for Hash {
                 f,
                 "Hash {{ code: {}, digest: {} }}",
                 mh.code(),
-                &hex::encode(mh.digest())
+                hex::encode(mh.digest())
             ),
             Err(_) => write!(f, "Hash {{ raw: {} }}", hex::encode(&self.0)),
         }
@@ -40,7 +40,7 @@ impl std::fmt::Debug for Hash {
 
 impl std::fmt::Display for Hash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let _ = write!(f, "{}", &hex::encode(&self.0));
+        let _ = write!(f, "{}", hex::encode(&self.0));
         Ok(())
     }
 }
