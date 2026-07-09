@@ -62,7 +62,7 @@ pub async fn run() -> Result<(), BluError> {
             // likely won't ever happen ...
             return Err(BluError::Internal(format!(
                 "fatal: unable to get absolute path for {:?}",
-                &blu_basedir
+                blu_basedir
             )));
         }
     };
@@ -71,7 +71,7 @@ pub async fn run() -> Result<(), BluError> {
     if let Err(e) = env::set_current_dir(&abspath) {
         return Err(BluError::Internal(format!(
             "unable to chdir to '{:?}': {}",
-            &abspath, e
+            abspath, e
         )));
     }
 

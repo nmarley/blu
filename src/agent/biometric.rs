@@ -275,6 +275,7 @@ mod test {
     #[test]
     fn seed_encrypt_decrypt_with_device_key() {
         // Test the encrypt/decrypt logic without touching the Keychain
+        use crate::keys::dek::Dek;
         use crate::keys::mnemonic;
         use rand::RngCore;
 
