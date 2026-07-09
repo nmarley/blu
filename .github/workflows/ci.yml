@@ -8,6 +8,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  version:
+    name: version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check crate version vs tags
+        run: bash scripts/check-version.sh
+
   test:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
