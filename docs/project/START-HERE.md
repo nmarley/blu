@@ -2,8 +2,8 @@
 
 Last updated: 2026-07-09
 
-Version: **0.5.0** (pre-release dogfood / late-alpha). Crate version and
-docs use 0.5.0; there is no separate public v0.1.0-alpha tag story.
+Version: **0.7.0** (pre-release dogfood / late-alpha). Crate version and
+docs use 0.7.0; latest prior release tag is `v0.6.3`.
 
 ## Overall Assessment
 

@@ -4,7 +4,7 @@ Encrypted, deduplicated file archival CLI written in Rust.
 
 > "Not your keys, not your secrets ..."
 
-**Status:** 0.5.0 pre-release (dogfood / late-alpha quality). Breaking
+**Status:** 0.7.0 pre-release (dogfood / late-alpha quality). Breaking
 changes are expected.
 
 ## Why
@@ -81,7 +81,7 @@ blu serve --bind 127.0.0.1:7777
 Vault config lives at `.blu/config.toml` (created by `blu init`):
 
 ```toml
-blu_version = "0.5.0"
+blu_version = "0.7.0"
 default_backend = "default"
 
 [encryption]

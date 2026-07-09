@@ -7,26 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-07-09
+## [0.7.0] - 2026-07-09
 
-Pre-release dogfood surface. Breaking changes remain expected.
+Pre-release dogfood surface after `v0.6.3`. Breaking changes remain expected.
+Prior tags `v0.1.1` through `v0.6.3` exist without Keep a Changelog entries.
 
 ### Added
 
-- Envelope encryption with PQ hybrid user keys (ML-KEM-768 + X25519)
-  and ChaCha20-Poly1305 bulk data
-- BIP39 24-word global identity (`identity init` / `show` / `recover`)
-- Agent daemon with unlock/lock, macOS Touch ID gating when available
-- Content-addressed chunking, local and Amazon S3 backends
-- Named multi-backend config with `backend mirror` and `backend diff`
-- v3 segmented AEAD blob format with prefix-fetch reads; v2 readable;
+- v3 segmented AEAD blob format with prefix-fetch reads; v2 still readable;
   `defrag-blobs --upgrade-format` for migration
 - `blu serve` local S3-compatible HTTP API over the encrypted vault
-- Full delete cascade and blob defrag / repack
 - `.bluignore` (gitignore-style) for add, sync, and status walks
 - `blu doctor` vault health diagnostics
+- Full delete cascade through the index and storage backend
+- Blob defrag / repack with optional `--scrub`
+- Vault summary on `status`
 - End-to-end vault pipeline smoke tests
 - GitHub Actions CI on `macos-15` and `ubuntu-24.04`
+- Fast crate-vs-tag version check (`scripts/check-version.sh`, optional
+  pre-push hook)
 
 ### Changed
 
@@ -34,7 +33,7 @@ Pre-release dogfood surface. Breaking changes remain expected.
 - Scrypt work factor pinned to a minimum of 18 for identity files
 - Plumbing commands (`write-index`, `encrypt-files`, `read-index`)
   hidden from help; obsolete `debug-index` removed
-- `security-framework` is a macOS-only dependency
+- Project docs reorganized under `docs/`
 
 ### Security
 
