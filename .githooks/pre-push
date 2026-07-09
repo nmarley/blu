@@ -1,0 +1,46 @@
+#! /bin/bash
+# Fast pre-push: Cargo.toml vs tags only (no cargo build).
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+bash "${ROOT}/scripts/check-version.sh"
+
+cargo_version_at() {
+    local commit="$1"
+    git show "${commit}:Cargo.toml" | awk '
+        /^\[package\]/ { in_pkg = 1; next }
+        /^\[/ { in_pkg = 0 }
+        in_pkg && /^version[[:space:]]*=/ {
+            if (match($0, /"[0-9]+\.[0-9]+\.[0-9]+"/)) {
+                print substr($0, RSTART + 1, RLENGTH - 2)
+                exit
+            }
+        }
+    '
+}
+
+zero="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_ref" in
+        refs/tags/v[0-9]*)
+            if [[ "$local_sha" == "$zero" ]]; then
+                continue
+            fi
+            tag_ver="${local_ref#refs/tags/v}"
+            cargo_ver="$(cargo_version_at "$local_sha")"
+            if [[ -z "$cargo_ver" ]]; then
+                echo "pre-push: could not parse Cargo.toml version at ${local_sha}" >&2
+                exit 1
+            fi
+            if [[ "$cargo_ver" != "$tag_ver" ]]; then
+                echo "pre-push: tag v${tag_ver} != Cargo.toml ${cargo_ver} at ${local_sha}" >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+exit 0

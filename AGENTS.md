@@ -10,10 +10,22 @@ cargo test                   # all tests (inline #[cfg(test)] modules)
 cargo test -- --ignored      # include slow scrypt-based tests
 cargo clippy                 # lint (see allowed lints below)
 cargo fmt -- --check         # format check (max_width = 100)
+bash scripts/check-version.sh  # crate version vs latest v* tag
 ```
 
 CI: `.github/workflows/ci.yml` on push/PR (`macos-15`, `ubuntu-24.04`).
 No pre-commit hooks or codegen steps.
+
+Optional local pre-push hook (fast shell only, no cargo build). Runs
+`scripts/check-version.sh` and rejects `vX.Y.Z` tag pushes when the
+tagged commit's `Cargo.toml` version is not `X.Y.Z`:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+Version rules: `Cargo.toml` package version must be >= latest `v*` tag;
+a pushed `vX.Y.Z` tag must match `Cargo.toml` at that commit.
 
 ## Greenfield rules
 
