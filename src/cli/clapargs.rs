@@ -29,8 +29,10 @@ pub enum Action {
     /// Pull indexes from remote backend
     Pull(PullArgs),
     /// Write index (plumbing)
+    #[command(hide = true)]
     WriteIndex(WriteIndexArgs),
     /// Encrypt files in index (plumbing)
+    #[command(hide = true)]
     EncryptFiles(EncryptFilesArgs),
     /// Restore files from the index + encrypted data
     RestoreFiles(RestoreFilesArgs),
@@ -42,10 +44,8 @@ pub enum Action {
     /// Manipulate tags on files
     Tagger(TaggerArgs),
     /// Print (debug) the index (plumbing)
+    #[command(hide = true)]
     ReadIndex(ReadIndexArgs),
-    // #[command(hide = true)]
-    /// Probably old, needs removed at this point
-    DebugIndex(DebugIndexArgs),
     /// Defrag consolidates encrypted blob files
     DefragBlobs(DefragBlobsArgs),
     /// Delete data from index and mark associated encrypted blobs as deleted
@@ -205,10 +205,6 @@ pub enum IndexType {
     Blob,
     Tag,
 }
-
-#[allow(missing_docs)]
-#[derive(Parser, Debug, Clone)]
-pub struct DebugIndexArgs {}
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
