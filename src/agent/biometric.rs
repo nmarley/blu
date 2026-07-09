@@ -12,6 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{BluError, Result};
+#[cfg(target_os = "macos")]
 use crate::keys::dek::Dek;
 use crate::keys::mnemonic::Seed;
 
@@ -39,14 +40,8 @@ pub fn has_biometric_identity() -> bool {
 }
 
 /// Whether biometric unlock is available on this platform.
-#[cfg(target_os = "macos")]
 pub fn is_available() -> bool {
-    true
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn is_available() -> bool {
-    false
+    cfg!(target_os = "macos")
 }
 
 /// Set up biometric unlock: encrypt the seed with a random device key,
@@ -81,9 +76,9 @@ pub fn setup(seed: &Seed) -> Result<()> {
     Ok(())
 }
 
+/// Set up biometric unlock (no-op on non-macOS platforms).
 #[cfg(not(target_os = "macos"))]
 pub fn setup(_seed: &Seed) -> Result<()> {
-    // No-op on non-macOS platforms
     Ok(())
 }
 
@@ -119,6 +114,7 @@ pub fn unlock() -> Result<Seed> {
     Ok(Seed::from_bytes(seed_arr))
 }
 
+/// Unlock using biometrics (unavailable on non-macOS platforms).
 #[cfg(not(target_os = "macos"))]
 pub fn unlock() -> Result<Seed> {
     Err(BluError::Internal(
@@ -141,9 +137,9 @@ pub fn remove() -> Result<()> {
     Ok(())
 }
 
+/// Remove biometric data (encrypted seed file only on non-macOS).
 #[cfg(not(target_os = "macos"))]
 pub fn remove() -> Result<()> {
-    // Remove identity.enc if it exists (e.g. copied from macOS)
     if let Ok(path) = identity_enc_path() {
         let _ = fs::remove_file(path);
     }

@@ -43,7 +43,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
 
     // TODO: consider rayon for parallelizing this
     for file_hash in file_hashes {
-        info!("file_hash: {:?}", &file_hash.dbg_short(7));
+        info!("file_hash: {:?}", file_hash.dbg_short(7));
         let file_ref = files_map
             .get(file_hash)
             .ok_or_else(|| BluError::FileHashNotFound {
