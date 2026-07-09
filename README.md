@@ -1,178 +1,179 @@
-# blu - encrypted and de-duplicated file archival system, written in Rust
+# blu
+
+Encrypted, deduplicated file archival CLI written in Rust.
 
 > "Not your keys, not your secrets ..."
 
----
+**Status:** 0.5.0 pre-release (dogfood / late-alpha quality). Breaking
+changes are expected.
 
-**Open Source Release**
+## Why
 
-This project was born from a compelling insight shared by Balaji in an interview: someday the "cloud will burst," meaning state actors could potentially access any secrets stored in traditional cloud services like S3 or Google Drive. True privacy requires encrypting your data with keys that you--and only you--control.
-
-While I initially explored commercial applications for this, I believe the most impactful path forward is thru open source. Rather than keep this locked away (and collecting... ahem, Rust...), I'm excited to open it up as both a working solution and a demonstration of what's possible when we prioritize user-controlled encryption. The core functionality is solid, and I believe this project can serve as a foundation for others to build upon, whether for personal use, enterprise applications, or further research into decentralized + encrypted storage solutions.
-
----
-
-Based on directories in the typical \*nix hierarchical file system (HFS), this will read all files in the directory, and encrypt, de-duplicate and archive to any of several configurable backends, including locally and cloud object storage such as Amazon s3.
-
-All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by [@FiloSottile](https://twitter.com/FiloSottile) and [@Benjojo12](https://twitter.com/Benjojo12).
+Cloud storage is convenient until someone else can read it. blu encrypts
+your files with keys only you control, deduplicates content-addressed
+chunks, and stores opaque blobs on local disk or Amazon S3. A local agent
+can cache unlock state (with macOS Touch ID when available).
 
 ## Features
 
-- **Encryption-Centric Design**: Developed with the premise of "own your encryption keys", ensuring data privacy against potential cloud breaches.
-- **Cryptographic Hashing**: Files are uniquely identified using cryptographic hashes rather than filenames, enhancing data integrity and security.
-- **Intelligent De-duplication**: Implemented chunking to de-duplicate files based on contiguous byte sequences, optimizing storage efficiency.
-- **Robust Encryption**: Utilizes the age encryption scheme with age keys (X25519) for reliable asymmetric encryption.
-- **Storage Flexibility**: Equipped with a modular backend, supporting local filesystem and Amazon S3.
-- **Comprehensive Metadata Handling**: Stores plaintext metadata, including filenames and tags, locally. Metadata uploads are encrypted to ensure confidentiality.
-- **Integrated Tagging System**: Includes a tagging system and tag index, allowing users to organize and locate their data efficiently.
-- **Remote Index Sync**: Push and pull encrypted indexes to/from the backend, enabling access from multiple machines.
+- **Post-quantum hybrid identity**: BIP39 24-word mnemonic derives an
+  ML-KEM-768 + X25519 user key (`age1pq...`)
+- **Envelope encryption**: UK wraps KEK (age asymmetric); KEK wraps
+  per-blob DEKs; bulk data is ChaCha20-Poly1305
+- **v3 segmented AEAD blobs**: fixed-size segments with prefix-fetch
+  reads (v2 still readable; upgrade via `defrag-blobs --upgrade-format`)
+- **Content-addressed storage**: chunk + multihash dedup across files
+- **Named multi-backend config**: local and S3, with mirror/diff
+- **Agent daemon**: unlock once, zeroize on lock; biometric gate on macOS
+- **`blu serve`**: S3-compatible localhost API over the encrypted vault
+- **`.bluignore`**: gitignore-style exclusion during add/sync/status
+- **`blu doctor`**: vault health checks (config, keys, indexes, blobs)
 
-## Quick Start
-
-### Initialize a new vault
-
-```sh
-# Create a new blu vault with passphrase-protected key
-blu init /path/to/your/data
-
-# Or without passphrase (for automation, not recommended for sensitive data)
-blu init --no-passphrase /path/to/your/data
-```
-
-### Sync files (add + encrypt)
+## Quick start
 
 ```sh
-# Sync all files in the vault directory
+# 1. Create a global identity (once per machine / user)
+blu identity init
+
+# 2. Unlock the agent (Touch ID or passphrase)
+blu unlock
+
+# 3. Initialize a vault in a directory
+blu init ~/Archives/photos
+
+# 4. Copy or create files under the vault, then sync
+cd ~/Archives/photos
 blu sync
 
-# Sync specific paths
-blu sync ./documents ./photos
-
-# Sync and push indexes to remote backend
-blu sync --push
-```
-
-### List files
-
-```sh
-# List all indexed files
+# 5. Inspect
+blu status
 blu ls
-
-# With filter
-blu list-files --filter "*.pdf"
+blu doctor
 ```
 
-### Restore files
+Optional: put a `.bluignore` at the vault root (gitignore syntax). The
+`.blu/` and `.git/` directories are always skipped.
+
+### Restore
 
 ```sh
-# Restore files by path pattern
 blu restore-files --path "photos/*.jpg" --to /tmp/restored
-
-# Restore all files
 blu restore-files --all --to /tmp/restored
-
-# Restore by hash prefix
 blu restore-files --file-hashes abc123
 ```
 
-### Remote Index Sync
+### Pull indexes on another machine
 
 ```sh
-# Push indexes to remote after sync
-blu sync --push
-
-# Pull indexes from remote (e.g., on a different machine)
+# Indexes are pushed automatically after vault-changing commands.
 blu pull --force
 ```
 
-### Search
+### Local S3-compatible API
 
 ```sh
-# Search for files by name or tag
-blu search passport
+blu serve --bind 127.0.0.1:7777
+# Point any S3 client at http://127.0.0.1:7777
 ```
 
 ## Configuration
 
-The configuration is stored in `.blu/config.toml`:
+Vault config lives at `.blu/config.toml` (created by `blu init`):
 
 ```toml
 blu_version = "0.5.0"
+default_backend = "default"
 
 [encryption]
-pq_recipient = "age1pq..."  # Your post-quantum hybrid public key
+pq_recipient = "age1pq..."  # your post-quantum hybrid public key
 
-[backend]
+[backends.default]
 type = "local"
 path = ".blu/data"
 
-# Or for S3:
-# [backend]
+# Example additional backend:
+# [backends.s3-prod]
 # type = "s3"
 # bucket = "my-bucket"
 # prefix = "backups/photos"
 # region = "us-east-1"
 ```
 
-## S3 Backend
+AWS credentials for S3 come from the environment
+(`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`) or IAM roles, not from
+the config file.
 
-To use S3 as a backend, edit your config:
-
-```toml
-[backend]
-type = "s3"
-bucket = "your-bucket-name"
-prefix = "optional/prefix"
-region = "us-east-1"
+```sh
+blu backend add cold --type s3 --bucket my-bucket --region us-east-1
+blu backend mirror --from default --to cold
+blu backend diff --from default --to cold
 ```
 
-AWS credentials are loaded from the environment (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IAM roles.
+## Security model
 
-## Security
+| Layer | Mechanism |
+|-------|-----------|
+| Identity | 24-word BIP39 mnemonic → PQ hybrid UK (ML-KEM-768 + X25519) |
+| Identity at rest | `~/.blu/identity.age` (age scrypt, N_log_n ≥ 18) |
+| KEK | One per vault under `.blu/keys/`, wrapped to your PQ recipient |
+| DEK | One per blob/index; ChaCha20-Poly1305 bulk encryption |
+| Indexes | gzip + CBOR (ciborium) + envelope encryption |
 
-- **Key Management**: Your private key lives at `~/.blu/identity.age` (one copy, shared across all vaults). Back it up securely! Without it, your data cannot be decrypted.
-- **Passphrase Protection**: By default, your private key is encrypted with a passphrase. Use `--no-passphrase` only for automation scenarios.
-- **No Key Escrow**: blu never stores or transmits your keys. You are solely responsible for key backup.
+- Private key material never leaves your machine (or the agent process).
+- There is no key escrow. Lose the mnemonic and identity file, lose the data.
+- macOS: agent can gate unlock with Touch ID via Keychain.
+- Linux: passphrase / mnemonic only (no biometric).
 
-## Commands Reference
+## Commands
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize a new blu vault |
-| `sync` | Add files and encrypt (combines add + encrypt-files) |
+| `identity init` / `show` / `recover` | Global BIP39 identity |
+| `unlock` / `lock` | Agent session |
+| `agent status` / `stop` | Agent daemon control |
+| `init` | Create a vault |
+| `sync` | Add paths and encrypt |
+| `status` | Working-tree vs index |
+| `doctor` | Vault health diagnostics |
 | `ls` / `list-files` | List indexed files |
-| `restore-files` | Restore files from encrypted archive |
-| `pull` | Pull indexes from remote backend |
-| `search` | Search files by name or tag |
-| `status` | Show vault status |
-| `add` | Add files to index (plumbing) |
-| `encrypt-files` | Encrypt indexed files (plumbing) |
-| `tagger` | Manage tags on files |
+| `search` | Search filenames and tags |
+| `restore-files` | Decrypt files out of the vault |
+| `delete-files` | Remove from index and cascade blobs |
+| `defrag-blobs` | Repack partially-dead blobs; `--upgrade-format` for v2→v3 |
+| `pull` | Pull indexes from a backend |
+| `tagger` | Add/remove tags |
+| `backend` | add / list / remove / set-default / mirror / diff |
+| `serve` | Localhost S3-compatible API |
+| `add` | Index only (no encrypt) |
 
-## Global Options
+Global options: `--bludir <path>` (like `git -C`), `--no-passphrase`.
 
-| Option | Description |
-|--------|-------------|
-| `--bludir <path>` | Target folder for blu to operate in (like `git -C`) |
-| `--no-passphrase` | Don't prompt for passphrase (fail if key is encrypted) |
-
-## Building from Source
+## Build and test
 
 ```sh
-cargo build --release
-```
-
-## Running Tests
-
-```sh
+cargo build --release   # binary: target/release/blu
 cargo test
+cargo clippy
+cargo fmt -- --check
 ```
+
+CI runs on `macos-15` and `ubuntu-24.04` (build, test, clippy, fmt).
+
+## Design docs
+
+- `docs/design/ENVELOPE_ENCRYPTION_DESIGN.md` — key hierarchy
+- `docs/design/BLU_SERVE_DESIGN.md` — `blu serve` architecture
+- `docs/project/START-HERE.md` — living project status
+- `docs/project/ROADMAP.md` — milestones
+- `CHANGELOG.md` — release notes
 
 ## License
 
-This project is licensed under either of
+Licensed under either of
 
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   https://opensource.org/licenses/MIT)
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   https://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  https://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  https://www.apache.org/licenses/LICENSE-2.0)
+
+at your option.
