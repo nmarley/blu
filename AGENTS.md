@@ -12,7 +12,8 @@ cargo clippy                 # lint (see allowed lints below)
 cargo fmt -- --check         # format check (max_width = 100)
 ```
 
-No CI workflows, pre-commit hooks, or codegen steps exist yet.
+CI: `.github/workflows/ci.yml` on push/PR (`macos-15`, `ubuntu-24.04`).
+No pre-commit hooks or codegen steps.
 
 ## Greenfield rules
 
@@ -40,9 +41,11 @@ User Key (PQ hybrid: ML-KEM-768 + X25519, from BIP39 mnemonic)
 
 Only the top layer (UK wraps KEK) uses asymmetric crypto. Everything below is symmetric and already quantum-resistant.
 
-### File format (`src/v2format.rs`)
+### File format
 
-Files use magic `BLUB` (blob) or `BLUI` (index) followed by a wrapped DEK header and ChaCha20-Poly1305 encrypted payload.
+- Indexes (`BLUI`): v2 envelope, gzip + CBOR (ciborium) + ChaCha20-Poly1305
+- New blobs (`BLUB`): v3 segmented AEAD (`src/v3format.rs`); v2 still readable
+- Header parsing helpers also in `src/v2format.rs`
 
 ### Agent daemon (`src/agent/`)
 
@@ -63,7 +66,9 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 - `src/agent/` -- daemon lifecycle, Unix socket protocol, biometric (macOS Touch ID), memlock
 - `src/block/` -- chunking, block index, file references (deduplication layer)
 - `src/blob.rs` -- blob packing (multiple chunks into one encrypted blob)
+- `src/ignore.rs` -- `.bluignore` walking (`ignore` crate)
 - `src/v2format.rs` -- envelope-encrypted file format (header parsing, read/write)
+- `src/v3format.rs` -- v3 segmented AEAD blob format
 - `src/serve/` -- `blu serve` local daemon (HTTP server, redb index store, index sync)
 - `src/config.rs` -- vault config from `.blu/config.toml`
 - `src/storage/` -- `BackendKind` enum, `Local`, `AmazonS3`
@@ -80,7 +85,8 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 ## Testing
 
 - All tests are inline `#[cfg(test)]` modules (no `tests/` integration test directory)
-- `test/blu_secrets/` -- test age keypair (`blu.key`, `blu.pub`)
+- `src/cli/smoke.rs` -- end-to-end vault pipeline smokes (init/sync/restore/delete/doctor)
+- `test/blu_secrets/` -- classic age X25519 fixtures (`AGE-SECRET-KEY-1...` / `age1...`); not PQ; legacy/fixture use only
 - `test/blocks/` -- fixture directories for chunking/block tests (t1-t7)
 - `test/old/` -- legacy config format fixtures (t0-t6)
 - Some tests are `#[ignore]` because scrypt key derivation is slow; run with `cargo test -- --ignored`
@@ -88,10 +94,12 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 
 ## Design docs
 
-- `ENVELOPE_ENCRYPTION_DESIGN.md` -- canonical KEK/DEK design reference
+- `docs/design/ENVELOPE_ENCRYPTION_DESIGN.md` -- canonical KEK/DEK design reference
 - `docs/design/BLU_SERVE_DESIGN.md` -- `blu serve` local daemon design (S3-compatible API, redb index, segmented AEAD)
+- `docs/project/START-HERE.md` -- living project status
 - `docs/project/TODO.md` -- consolidated backlog
+- `CHANGELOG.md` -- release notes
 
 ## Platform
 
-macOS is the primary target. `security-framework` crate provides Touch ID / Keychain integration for biometric unlock. Linux falls back to passphrase/mnemonic (no biometric gating).
+macOS is the primary target. `security-framework` is a **macOS-only** Cargo dependency (Touch ID / Keychain). Linux falls back to passphrase/mnemonic (no biometric gating).

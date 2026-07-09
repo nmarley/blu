@@ -1,6 +1,6 @@
 # Priorities
 
-Ranked by impact for beta readiness. Updated 2026-05-16.
+Ranked by impact for beta readiness. Updated 2026-07-09.
 
 ## Completed
 
@@ -11,33 +11,32 @@ Ranked by impact for beta readiness. Updated 2026-05-16.
 4. [x] Remove dead config code
 5. [x] Guard divide-by-zero in status when `total_chunks == 0`
 6. [x] Replace joke panic message in `encrypt_files.rs` with proper BluError
-
-## Tier 1: Finish the Data Pipeline
-
 7. [x] Complete delete cascade (mutate BlobIndex, remove dead blobs
        from backends, full end-to-end)
 8. [x] Implement blob defragmentation (repack blobs with dead chunks)
+9. [x] Set up GitHub Actions CI (cargo build + test + clippy + fmt)
+10. [x] `.bluignore` support
+11. [x] `blu doctor` diagnostics (structural + blob presence)
+12. [x] README + changelog rewrite for 0.5.0 dogfood
+13. [x] End-to-end vault pipeline smoke tests
 
-## Tier 2: Test Coverage and CI
+## Open: broader CLI test coverage
 
-9. [ ] Set up GitHub Actions CI (cargo build + cargo test on push)
-10. [ ] encrypt command tests
-11. [ ] delete command tests
-12. [ ] sync command tests
-13. [ ] restore command tests
-14. [ ] list-files command tests
-15. [ ] status command tests
-16. [ ] search command tests
-17. [ ] backend command tests
-18. [ ] tag command tests
+14. [ ] encrypt command tests
+15. [ ] delete command tests
+16. [ ] sync command tests
+17. [ ] restore command tests
+18. [ ] list-files command tests
+19. [ ] status command tests
+20. [ ] search command tests
+21. [ ] backend command tests
+22. [ ] tag command tests
 
-## Tier 3: Beta Readiness
+## Open: polish
 
-19. [ ] `blu doctor` diagnostics command
-
-## Tier 4: Polish
-
-20. [ ] Config validation (version compat, S3 fields, local path
+23. [ ] Config validation (version compat, S3 fields, local path
        existence)
-21. [ ] Feature-gate S3 and security-framework in Cargo.toml
-22. [ ] Persist the search index (constant exists, serde not wired up)
+24. [ ] Feature-gate S3 in Cargo.toml (security-framework is already
+       macOS-only)
+25. [ ] Persist the search index (constant exists, serde not wired up)
+26. [ ] Doctor: backend `list` + orphan detection / repair

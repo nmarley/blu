@@ -1,97 +1,65 @@
 # Envelope Encryption Design for blu
 
 Canonical design document for blu's encryption architecture. Covers
-key hierarchy, envelope encryption, agent protocol, multi-user access,
-key rotation, and recovery.
+key hierarchy, envelope encryption, agent protocol, multi-user access
+(planned), key rotation (planned), and recovery (planned).
+
+## Status as of 0.5.0
+
+**Shipped today:**
+
+- BIP39 **24-word** mnemonic identity (only length supported in code)
+- PQ hybrid user key only (ML-KEM-768 + X25519, `age1pq...`)
+- KEK store under `.blu/keys/` with versioned wrapped.age files
+- DEK wrap/unwrap via agent or local provider; bulk ChaCha20-Poly1305
+- v2 envelope for indexes (`BLUI`); v3 segmented AEAD for new blobs
+  (`BLUB`), v2 blobs still readable
+- Agent daemon, macOS biometric unlock path
+
+**Designed but not implemented** (sections below still describe intent;
+do not treat as shipped CLI):
+
+- Multi-user invite/accept/remove (`blu user *`)
+- KEK rotation CLI (`blu kek *`)
+- Recovery kit PDF (`blu recovery-kit *`)
+- `vault.toml` / `vault_id` UUID
+- Classic standalone X25519 UK (removed; PQ hybrid is the only UK)
 
 ## Overview
 
-This document describes blu's encryption architecture using envelope
-encryption with BIP39-based key derivation. The design supports
-multiple users, key rotation, and provides a secure recovery
-mechanism.
+blu uses envelope encryption with BIP39-based key derivation. The
+active user key is a post-quantum hybrid recipient. Multi-user access,
+KEK rotation, and recovery kits remain design goals for later releases.
 
 ## Goals
 
-1. **User-friendly key management** - BIP39 mnemonic that users can memorize or write down
-2. **Multi-user support** - Multiple users can access the same vault
-3. **Key rotation** - Rotate encryption keys without re-encrypting all data
-4. **Secure session management** - Daemon-based agent to avoid repeated passphrase entry
-5. **Recovery** - PDF "recovery kit" similar to 1Password
+1. **User-friendly key management** - BIP39 mnemonic users can write down
+2. **Multi-user support** (future) - Multiple users on one vault
+3. **Key rotation** (future) - Rotate KEK without re-encrypting all data
+4. **Secure session management** - Agent daemon to avoid repeated unlock
+5. **Recovery** (future) - Recovery kit similar to 1Password
 
 ## Key Hierarchy
 
 ```
-+------------------------------------------------------------------+
-|                         User Layer                                |
-+------------------------------------------------------------------+
-|                                                                   |
-|   BIP39 Mnemonic (12/15/18/21/24 words)                          |
-|         + Optional Passphrase ("25th word")                       |
-|                |                                                  |
-|                v                                                  |
-|   +----------------------+                                        |
-|   |   User Seed (512b)   |  BIP39 seed derivation                |
-|   +----------------------+  (PBKDF2-HMAC-SHA512, 2048 rounds)    |
-|                |                                                  |
-|                v                                                  |
-|   +----------------------+                                        |
-|   |  User Key (UK)       |  X25519 keypair derived from seed     |
-|   |  - Private (uk_priv) |  via HKDF-SHA256                      |
-|   |  - Public (uk_pub)   |                                        |
-|   +----------------------+                                        |
-|                                                                   |
-+------------------------------------------------------------------+
-                              |
-                              | UK encrypts KEK (via age)
-                              v
-+------------------------------------------------------------------+
-|                         Vault Layer                               |
-+------------------------------------------------------------------+
-|                                                                   |
-|   +---------------------------+                                   |
-|   | Key Encryption Key (KEK)  |  256-bit symmetric key            |
-|   +---------------------------+  One per vault, rotatable         |
-|                |                                                  |
-|                |  Stored as age file with multiple recipients:    |
-|                |  +------------------------------------------+    |
-|                |  | .blu/keys/kek_v1/wrapped.age             |    |
-|                |  |                                          |    |
-|                |  | age-encrypted to ALL authorized users:   |    |
-|                |  |   - age1alice...                         |    |
-|                |  |   - age1bob...                           |    |
-|                |  |   - age1charlie...                       |    |
-|                |  +------------------------------------------+    |
-|                |                                                  |
-+----------------|-------------------------------------------------+
-                 |
-                 | KEK wraps DEKs (ChaCha20-Poly1305)
-                 v
-+------------------------------------------------------------------+
-|                         Data Layer                                |
-+------------------------------------------------------------------+
-|                                                                   |
-|   +---------------------------+                                   |
-|   | Data Encryption Key (DEK) |  256-bit symmetric key            |
-|   +---------------------------+  One per blob file                |
-|                |                 One per index file               |
-|                |                                                  |
-|                |  Stored as header in each blob/index:            |
-|                |  +------------------------------------------+    |
-|                |  | File Structure:                          |    |
-|                |  |   [4 bytes]  Magic                       |    |
-|                |  |   [2 bytes]  Format version              |    |
-|                |  |   [2 bytes]  KEK version used            |    |
-|                |  |   [N bytes]  Encrypted DEK (wrapped)     |    |
-|                |  |   [...]      Encrypted data              |    |
-|                |  +------------------------------------------+    |
-|                |                                                  |
-|                v                                                  |
-|   +---------------------------+                                   |
-|   |    Encrypted Data         |  ChaCha20-Poly1305 with DEK      |
-|   +---------------------------+                                   |
-|                                                                   |
-+------------------------------------------------------------------+
+BIP39 Mnemonic (24 words) + optional passphrase ("25th word")
+        |
+        v
+  User Seed (512-bit, BIP39 PBKDF2-HMAC-SHA512)
+        |
+        +-- HKDF salt "blu-pq-v1"     -> HybridSeed -> ML-KEM-768 + X25519 (UK)
+        +-- HKDF salt "blu-device-key-v1" -> Device Key (biometric seed wrap)
+        |
+        | UK (age1pq...) wraps KEK via age multi-recipient
+        v
+  KEK (256-bit symmetric, one per vault, versioned under .blu/keys/)
+        |
+        | KEK wraps DEK (ChaCha20-Poly1305)
+        v
+  DEK (one per blob / index)
+        |
+        v
+  Bulk data: ChaCha20-Poly1305 (v3 segmented AEAD for new blobs)
 ```
 
 ## Design Decisions
@@ -109,9 +77,9 @@ mechanism.
 
 ### 1. BIP39 Mnemonic & Seed Derivation
 
-**Mnemonic Generation:**
-- Support 12, 15, 18, 21, or 24 words (128-256 bits entropy)
-- Use standard BIP39 English wordlist (2048 words)
+**Mnemonic Generation (shipped):**
+- Fixed **24 words** only (`WORD_COUNT = 24` in code)
+- Standard BIP39 English wordlist (2048 words)
 - Optional passphrase (the "25th word") for additional security
 
 **Seed Derivation (BIP39 standard):**
@@ -119,16 +87,7 @@ mechanism.
 mnemonic + "mnemonic" + passphrase -> PBKDF2-HMAC-SHA512 (2048 rounds) -> 512-bit seed
 ```
 
-**User Key Derivation:**
-```
-seed -> HKDF-SHA256(
-    ikm = seed,
-    salt = "blu-x25519-v1",
-    info = ""  # No vault-specific binding at UK level
-) -> 32 bytes -> X25519 keypair
-```
-
-**Post-Quantum Key Derivation (added April 2026):**
+**User Key Derivation (PQ hybrid only, shipped):**
 ```
 seed -> HKDF-SHA256(
     ikm = seed,
@@ -136,6 +95,9 @@ seed -> HKDF-SHA256(
     info = ""
 ) -> 32 bytes -> HybridSeed -> SHAKE256 -> ML-KEM-768 + X25519 keypair
 ```
+
+There is no separate classic X25519 user key path. The hybrid key
+includes an X25519 component as part of the PQ hybrid construction.
 
 **Device Key Derivation (for biometric unlock):**
 ```
@@ -146,11 +108,12 @@ seed -> HKDF-SHA256(
 ) -> 32 bytes -> Device Key (encrypts seed in Keychain)
 ```
 
-Three distinct HKDF salts ensure domain separation between key types.
-All three key types are deterministically derived from the same BIP39
-seed, so recovering the mnemonic recovers everything.
+Two HKDF salts (`blu-pq-v1`, `blu-device-key-v1`) ensure domain
+separation. Both are derived from the same BIP39 seed, so recovering
+the mnemonic recovers everything.
 
-Note: UK is vault-independent. The same mnemonic = same UK = same identity across all vaults. This is intentional - your identity follows you.
+Note: UK is vault-independent. Same mnemonic = same identity across
+all vaults. That is intentional.
 
 ### 2. Key Encryption Key (KEK)
 
@@ -200,7 +163,7 @@ users = ["age1alice..."]
 **Properties:**
 - 256-bit symmetric key (ChaCha20-Poly1305)
 - One per blob file
-- One per index file (plain_index, blob_index, tag_index)
+- One per index file (`index.dat`, `blob_index.dat`, `tags.dat`)
 - Generated randomly when file is created
 - Wrapped by KEK and stored in file header
 
@@ -604,78 +567,64 @@ via age to authorized recipients).
 `.blu/invitations/` (future, not yet implemented) will hold pending
 multi-user invitations.
 
-`.blu/indexes/` contains encrypted index files (index.dat,
-blob_index.dat, tag_index.dat) in v2 format with per-file DEKs.
+`.blu/indexes/` contains encrypted index files (`index.dat`,
+`blob_index.dat`, `tags.dat`) in v2 envelope format with per-file DEKs
+(CBOR via ciborium, gzipped).
 
-`.blu/data/` contains encrypted blob files in v2 format, organized
-by content hash prefix (e.g. `a/ab/abcd...`).
+`.blu/data/` contains encrypted blob files (v3 segmented for new
+writes; v2 still readable), organized by content hash prefix
+(e.g. `a/ab/abcd...`).
 
 ### Per-User (`~/.blu/`)
 
-`~/.blu/identity.toml` holds public keys (X25519 and PQ) and
-creation metadata. Safe to share.
+`~/.blu/identity.toml` holds PQ public key and metadata (safe to share):
 
-`~/.blu/identity.age` is the age identity file (private key),
-optionally passphrase-encrypted.
+```toml
+pq_public_key = "age1pq..."
+created = "2026-07-09T12:00:00Z"
+biometric = true
+```
+
+`~/.blu/identity.age` is the age-encrypted PQ seed (scrypt, N_log_n ≥ 18),
+optionally passphrase-protected.
 
 `~/.blu/identity.enc` (when biometric is configured) holds the
-BIP39 seed encrypted with the device key, stored in the macOS
-Keychain with biometric access policy.
+BIP39 seed encrypted with the device key, with Keychain biometric policy
+on macOS.
 
 `~/.blu/agent.sock` and `~/.blu/agent.pid` are the agent daemon's
 Unix socket and PID file.
 
-`~/.blu/config.toml` holds user preferences (timeout profile,
-auto-start settings).
-
-**vault.toml:**
-```toml
-vault_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-created = "2024-01-15T10:00:00Z"
-blu_version = "0.5.0"
-```
-
-**~/.blu/config.toml:**
-```toml
-[agent]
-timeout_idle = "1h"      # Lock after 1 hour of inactivity
-timeout_max = "8h"       # Lock after 8 hours regardless
-auto_start = true        # Auto-start agent on first command
-
-[defaults]
-mnemonic_words = 24      # Default word count for new identities
-```
+`vault.toml` / `vault_id` are **not implemented**. Vault identity is
+the directory + config + KEK store.
 
 ## CLI Commands
 
-### Identity Management
+### Identity Management (shipped)
 
 ```bash
-# Generate new identity (creates mnemonic)
-blu identity init [--words 12|15|18|21|24]
-
-# Show public key
+blu identity init
 blu identity show
-
-# Recover identity from mnemonic
 blu identity recover
 ```
 
-### Vault Operations
+### Vault Operations (shipped)
 
 ```bash
-# Initialize new vault (uses current identity)
-blu init <path> [--backend local|s3] [--bucket <name>] [--region <region>]
-
-# Standard operations (unchanged, but now use agent)
+blu init <path>
+blu unlock / blu lock
 blu sync
 blu ls
 blu restore-files [--all] [--path <pattern>] [--to <dir>]
 blu pull [--force]
 blu status
+blu doctor
+blu delete-files --filter <s> | --all
+blu defrag-blobs [--upgrade-format]
+blu serve
 ```
 
-### User Management
+### User Management (future, not shipped)
 
 ```bash
 # List users with access to vault
@@ -691,7 +640,7 @@ blu user accept --vault <path-or-uri>
 blu user remove <public-key>
 ```
 
-### Key Management
+### Key Management (future, not shipped)
 
 ```bash
 # Show KEK status

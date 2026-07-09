@@ -5,9 +5,9 @@
 blu is an encrypted storage platform. The archival CLI (`blu sync`,
 `blu restore-files`, etc.) is one frontend. `blu serve` is a second
 frontend: a local translation layer that presents decrypted,
-de-obfuscated files to any client while the real backend (S3, GCS,
-Azure, Ceph, or any object store) holds only opaque, uniform,
-content-addressed encrypted blobs.
+de-obfuscated files to any client while the real backend (Local or
+Amazon S3 today; other object stores are roadmap) holds only opaque,
+uniform, content-addressed encrypted blobs.
 
 The threat model: a state-level attacker who compromises or subpoenas
 the storage provider sees only uniformly-sized opaque blobs with
@@ -56,9 +56,9 @@ Any S3 client           Any filesystem client
              - DEK wrap/unwrap over Unix socket
                    |
                    v
-           BackendKind (S3 / Local / GCS / Azure / Ceph / ...)
-             - only ciphertext crosses this boundary
-             - all blobs are ~64 MiB, content-addressed, opaque
+            BackendKind (Local / AmazonS3; more backends planned)
+              - only ciphertext crosses this boundary
+              - all blobs are ~64 MiB, content-addressed, opaque
 ```
 
 `blu serve` is a long-running local process (like the agent daemon).
@@ -206,14 +206,14 @@ playback has a comfortable buffer.
 For random seeks, the worst case is fetching a new 64 MiB blob to
 serve a single 512 KiB chunk. On a decent connection, that is a few
 seconds of latency per seek. Not ideal, but workable for personal use.
-The segmented AEAD optimization (section 5) addresses this for the
-future.
+The segmented AEAD design (section 5) is **shipped for new writes**
+(v3 format with prefix-fetch). v2 whole-blob blobs remain readable.
 
 ## 5. Segmented AEAD
 
-### The problem with whole-blob encryption
+### The problem with whole-blob encryption (v2)
 
-Currently, each blob is encrypted as a single AEAD ciphertext:
+v2 blobs are encrypted as a single AEAD ciphertext:
 
 ```
 compress(chunk1 || chunk2 || ... || chunkN) -> encrypt_as_one_unit -> blob
@@ -449,16 +449,14 @@ request-observing provider is a stronger adversary than the
 storage-provider-with-account-access considered in section 10; see
 section 10 for the full traffic-analysis threat model.
 
-### Recommendation
+### Status (shipped)
 
-Segmented AEAD is a future optimization, not a prerequisite for
-`blu serve`. Phase 1 launches with whole-blob fetch and LRU caching
-(current v2 format, zero metadata leakage, full-blob download on
-cache miss). Phase 3 introduces fixed-size segmented AEAD for
-reduced latency on random access without compromising the metadata
-guarantees. The existing `EncBlobReader` LRU cache makes Phase 1
-entirely usable for sequential streaming (video playback, file
-downloads).
+New blob writes use v3 fixed-size segmented AEAD with counter-derived
+nonces and header fields bound into segment AAD. `EncBlobReader`
+prefix-fetches only the segments covering a chunk. v2 blobs remain
+readable (whole-blob fetch). Upgrade path:
+`blu defrag-blobs --upgrade-format`. Random-access latency benchmarks
+(v2 vs v3) are still open.
 
 ## 6. Write Path: Ingesting Files Through the Translation Layer
 
@@ -686,16 +684,11 @@ phase.
 - Index flush strategy (periodic + on-demand)
 - Push updated indexes to backend
 
-### Phase 3: Segmented AEAD (v3 format)
+### Phase 3: Segmented AEAD (v3 format) — DONE
 
-- Fixed-size segments with no in-blob metadata (as described in
-  section 5)
-- Compressed-byte-offset field added to `BlobIndex` entries
-- Byte-range S3 GET for individual segments
-- v3 format writer + reader, v2 backward compat
-- `blu defrag-blobs --upgrade-format` for migration
-- Dramatic improvement in random-access latency with zero metadata
-  leakage to the storage provider
+Shipped: fixed-size segments, `compressed_end` on blob index entries,
+byte-range backend reads, v3 writer/reader with v2 read compat,
+`defrag-blobs --upgrade-format`. Remaining: latency benchmarks.
 
 ### Phase 4: Additional interfaces
 

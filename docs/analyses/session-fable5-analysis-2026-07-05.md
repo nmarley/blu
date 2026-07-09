@@ -1,5 +1,9 @@
 # blu-serve plan and design architecture review
 
+> **HISTORICAL / ARCHIVE-ONLY (2026-07-09).** Session transcript dump,
+> not living design. Prefer `docs/design/BLU_SERVE_DESIGN.md` and
+> `docs/plans/PLAN-blu-serve.md` for current architecture.
+
 **Session ID:** ses_0cb0005c2ffeSLgDV4NiXYWoUI
 **Created:** 7/5/2026, 6:16:58 PM
 **Updated:** 7/5/2026, 6:31:02 PM

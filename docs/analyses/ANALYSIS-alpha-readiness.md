@@ -1,5 +1,10 @@
 # Alpha Readiness Analysis
 
+> **HISTORICAL / SUPERSEDED (2026-07-09).** The critical bincode index
+> issue was fixed by migrating to ciborium (CBOR). Do not treat this
+> document as open work without re-validating claims against current
+> code. Kept for session archaeology only.
+
 Date: 2026-05-18
 
 ## Summary
