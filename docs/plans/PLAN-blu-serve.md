@@ -97,20 +97,5 @@ by mutating this file.
 
 ## Open items (deferred)
 
-The following remain open and were deferred out of the serve-hardening
-pass:
-
-- Stage 6g (benchmarks): v2 vs v3 random-access latency has not been
-  measured. The v3 prefix-fetch read path is correct by construction
-  and round-trip tested, but no benchmark numbers exist yet.
-- Delta sync: `index_sync::sync_from_backend` re-populates redb with a
-  full upsert overwrite on every startup. Computing and applying only
-  the deltas against the existing redb state is future work; the
-  current path is correct but does redundant work on returning
-  machines.
-- redb at-rest encryption: `.blu/serve.redb` holds plaintext index
-  state on the local machine. Encrypting it (and the re-encryption
-  story across restarts) is out of scope for this pass.
-- Crash-atomic index-push WAL: the debounced index flush is not atomic
-  with respect to crashes between blob uploads and the index push. A
-  write-ahead log would close this gap; not built in this pass.
+Durable backlog lives in `docs/project/TODO.md` under
+"`blu serve` (deferred from hardening)". Do not track progress here.

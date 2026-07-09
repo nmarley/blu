@@ -36,6 +36,26 @@ Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
 - [ ] Streaming index I/O instead of loading full index into memory
       (memory-mapped files or streaming reads)
 
+## `blu serve` (deferred from hardening)
+
+Correctness and crypto bugs from the serve review are fixed. These
+remain open by design:
+
+- [ ] v2 vs v3 random-access latency benchmarks (prefix-fetch path is
+      correct and tested; no measured numbers yet)
+- [ ] Delta sync on returning machines (`sync_from_backend` currently
+      does a full upsert re-populate of redb; compute/apply deltas only)
+- [ ] Encrypt `.blu/serve.redb` at rest (today it holds plaintext index
+      state on the local disk; accepted tradeoff for now)
+- [ ] Crash-atomic index-push WAL (debounced flush can leave a window
+      between blob upload/redb commit and encrypted index push to the
+      backend)
+
+Related doctor follow-up (needs storage API first):
+
+- [ ] Backend `list` + orphan blob detection / repair in `blu doctor`
+      (same item as under Storage Backends)
+
 ## UX
 
 - [x] `.bluignore` file (similar to `.gitignore`)
