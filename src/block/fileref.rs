@@ -9,7 +9,9 @@ use crate::error::BluError;
 /// of chunks read from a fs::File) and filesystem references to it (filenames)
 #[derive(PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct FileRef {
+    /// Ordered list of chunk hashes and sizes that make up this file
     pub chunkmetas: Vec<ChunkMeta>,
+    /// Set of filesystem paths that share this exact content
     pub paths: HashSet<PathBuf>,
 }
 
@@ -37,6 +39,8 @@ impl Ord for FileRef {
 }
 
 impl FileRef {
+    /// Create a new FileRef with the given chunkmetas and an empty
+    /// paths set.
     pub fn new(f: Vec<ChunkMeta>) -> Self {
         Self {
             chunkmetas: f,
@@ -44,6 +48,8 @@ impl FileRef {
         }
     }
 
+    /// Return any one path from the paths set, or an error if the set
+    /// is empty.
     pub fn get_a_path(&self) -> Result<PathBuf, BluError> {
         self.paths
             .iter()
@@ -52,6 +58,7 @@ impl FileRef {
             .ok_or_else(|| BluError::IndexCorrupted("fileref has no paths".into()))
     }
 
+    /// Compute the total file size in bytes by summing all chunk sizes.
     pub fn total_size(&self) -> u64 {
         self.chunkmetas
             .iter()

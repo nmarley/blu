@@ -4,11 +4,13 @@ mod chunkmeta;
 mod fileref;
 mod index;
 
-use chunkmeta::ChunkMeta;
-use fileref::FileRef;
-
+pub(crate) use blockref::BlockRef;
+pub use chunkerator::chunk_bytes;
 pub use chunkerator::Chunkerator;
+pub use chunkmeta::ChunkMeta;
+pub use fileref::FileRef;
 pub use index::PlainIndex;
+pub use index::CURRENT_INDEX_VERSION;
 pub use index::INDEX_FILENAME;
 
 /// Block size in bytes, most filesystems use 4k blocks
