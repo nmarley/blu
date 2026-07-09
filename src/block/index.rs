@@ -21,7 +21,8 @@ use super::FileRef;
 
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
-const CURRENT_INDEX_VERSION: &str = "0.2.1";
+/// Current plain-index schema version written by blu.
+pub const CURRENT_INDEX_VERSION: &str = "0.2.1";
 
 /// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
 /// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed

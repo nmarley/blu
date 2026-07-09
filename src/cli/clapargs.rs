@@ -54,6 +54,8 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+    /// Run vault health diagnostics
+    Doctor(DoctorArgs),
     /// Start local HTTP server (S3-compatible API for the vault)
     Serve(ServeArgs),
 
@@ -276,6 +278,10 @@ pub struct StatusArgs {
     #[arg(long = "type")]
     pub status_check_type: Option<StatusCheckType>,
 }
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct DoctorArgs {}
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
