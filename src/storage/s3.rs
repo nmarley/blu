@@ -89,6 +89,38 @@ impl AmazonS3 {
         Ok(body.into_bytes().to_vec())
     }
 
+    /// Read the byte range `[start, end)` (end exclusive) of the object
+    /// at the given path.
+    ///
+    /// HTTP `Range` is inclusive on both ends, so the request uses
+    /// `bytes={start}-{end-1}`. S3 clamps the upper bound to the object
+    /// size, so a window past EOF returns the available tail. An empty
+    /// window (`end <= start`) returns an empty vector without a
+    /// request.
+    pub async fn read_range(&self, path: &Path, start: u64, end: u64) -> Result<Vec<u8>, BluError> {
+        if end <= start {
+            return Ok(Vec::new());
+        }
+        let key = self.path_to_key(path);
+
+        let object = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .range(format!("bytes={}-{}", start, end - 1))
+            .send()
+            .await
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
+
+        let body = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| BluError::S3Error(e.to_string()))?;
+        Ok(body.into_bytes().to_vec())
+    }
+
     /// Write data to a content-addressed path derived from the hash.
     pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         let path = super::path_for(hash)?;
@@ -187,5 +219,50 @@ impl AmazonS3 {
             .await
             .map_err(|e| BluError::S3Error(e.to_string()))?;
         Ok(body.into_bytes().to_vec())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::hash::multihash;
+
+    /// Live S3 range-read test. Ignored by default because it needs a
+    /// real bucket and credentials. Run with:
+    ///
+    /// ```sh
+    /// BLU_TEST_S3_BUCKET=my-bucket cargo test --  \
+    ///     --ignored s3_read_range_live
+    /// ```
+    ///
+    /// Optional: `BLU_TEST_S3_PREFIX`, `AWS_REGION`. Uses the ambient
+    /// AWS credential chain (profile, env, or instance role).
+    #[tokio::test]
+    #[ignore = "requires live S3 bucket and credentials"]
+    async fn s3_read_range_live() {
+        let bucket =
+            std::env::var("BLU_TEST_S3_BUCKET").expect("set BLU_TEST_S3_BUCKET to run this test");
+        let prefix = std::env::var("BLU_TEST_S3_PREFIX").ok();
+        let region = std::env::var("AWS_REGION").ok();
+
+        let backend = AmazonS3::new(&bucket, prefix.as_deref(), region.as_deref()).await;
+
+        let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        let hash = Hash::from(multihash(&data).to_bytes());
+        let path = backend.write_data(&hash, &data).await.unwrap();
+
+        // Interior window returns exactly the requested bytes.
+        let window = backend.read_range(&path, 1000, 2000).await.unwrap();
+        assert_eq!(window, &data[1000..2000]);
+
+        // End past EOF clamps to the object tail.
+        let tail = backend.read_range(&path, 4000, 1_000_000).await.unwrap();
+        assert_eq!(tail, &data[4000..]);
+
+        // Empty window issues no request and returns empty.
+        let empty = backend.read_range(&path, 10, 10).await.unwrap();
+        assert!(empty.is_empty());
+
+        backend.delete(&path).await.unwrap();
     }
 }

@@ -127,6 +127,43 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
     Ok(DekProvider::Agent { client, kek_dir })
 }
 
+/// Push the local index files to a backend, resolved by optional name.
+///
+/// Resolves the backend the same way every command does: the named
+/// backend if `backend_name` is `Some`, otherwise the config's default
+/// backend. Reuses an already-initialized backend when the caller
+/// passes one via `backend`, avoiding a redundant client construction.
+///
+/// This is the shared seam that keeps index-push behavior uniform
+/// across every index-modifying CLI command. Pushing is not optional:
+/// the backend is the source of truth, so a push failure is a hard
+/// error with a message that makes clear the local indexes are already
+/// written and only the remote copy is behind.
+pub async fn push_indexes_or_fail(
+    cfg: &Config,
+    backend_name: Option<&str>,
+    backend: Option<&crate::storage::BackendKind>,
+) -> Result<()> {
+    let resolved_name = backend_name.unwrap_or(&cfg.default_backend);
+
+    let owned;
+    let backend = match backend {
+        Some(b) => b,
+        None => {
+            owned = cfg.init_named_backend(resolved_name).await?;
+            &owned
+        }
+    };
+
+    cfg.push_indexes(backend).await.map_err(|e| {
+        BluError::Internal(format!(
+            "Local indexes updated, but push to backend `{}` failed: {}. \
+             Re-run when the backend is reachable.",
+            resolved_name, e
+        ))
+    })
+}
+
 /// Load just the config (for commands that don't need encryption).
 pub fn load_config() -> Result<Config> {
     let dir = Path::new(".");
@@ -135,4 +172,94 @@ pub fn load_config() -> Result<Config> {
         eprintln!("Unable to read config file. Please create configuration via `init` subcommand");
         eprintln!("More info: {}", e);
     })
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Build a `Config` with a single local backend named `local`
+    /// pointing at `datadir`, with `basedir` set to `basedir`. The
+    /// backend path is absolute so it resolves independently of the
+    /// process working directory.
+    fn local_config(datadir: &Path, basedir: &Path) -> Config {
+        let toml_str = format!(
+            r#"
+            blu_version = "0.5.0"
+            default_backend = "local"
+
+            [backends.local]
+            type = "local"
+            path = "{}"
+            "#,
+            datadir.display()
+        );
+        let mut cfg: Config = toml::from_str(&toml_str).unwrap();
+        cfg.set_basedir(basedir.to_path_buf());
+        cfg
+    }
+
+    #[tokio::test]
+    async fn push_indexes_or_fail_uploads_local_indexes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let basedir = tmp.path().join("vault");
+        let cfg = local_config(&datadir, &basedir);
+
+        // Write local index files into the vault's idxdir.
+        let idxdir = cfg.idxdir();
+        std::fs::create_dir_all(&idxdir).unwrap();
+        std::fs::write(idxdir.join("index.dat"), b"plain-bytes").unwrap();
+        std::fs::write(idxdir.join("blob_index.dat"), b"blob-bytes").unwrap();
+        std::fs::write(idxdir.join("tags.dat"), b"tag-bytes").unwrap();
+
+        // Push via the shared helper (resolves the default backend).
+        push_indexes_or_fail(&cfg, None, None).await.unwrap();
+
+        // Each index must now exist under the backend datadir at the
+        // `indexes/` prefix, byte-for-byte.
+        assert_eq!(
+            std::fs::read(datadir.join("indexes/index.dat")).unwrap(),
+            b"plain-bytes"
+        );
+        assert_eq!(
+            std::fs::read(datadir.join("indexes/blob_index.dat")).unwrap(),
+            b"blob-bytes"
+        );
+        assert_eq!(
+            std::fs::read(datadir.join("indexes/tags.dat")).unwrap(),
+            b"tag-bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_indexes_or_fail_reports_hard_fail_message() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Place a regular file where the backend expects a directory
+        // parent, so the local backend's create_dir_all fails and the
+        // push errors out.
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, b"i am a file, not a directory").unwrap();
+        let datadir = blocker.join("data");
+        let basedir = tmp.path().join("vault");
+        let cfg = local_config(&datadir, &basedir);
+
+        let idxdir = cfg.idxdir();
+        std::fs::create_dir_all(&idxdir).unwrap();
+        std::fs::write(idxdir.join("index.dat"), b"plain-bytes").unwrap();
+
+        let err = push_indexes_or_fail(&cfg, None, None)
+            .await
+            .expect_err("push must fail when the backend is unwritable");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Local indexes updated, but push to backend `local` failed"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("Re-run when the backend is reachable"),
+            "unexpected error message: {msg}"
+        );
+    }
 }

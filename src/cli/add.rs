@@ -1,9 +1,9 @@
 use crate::cli::clapargs::AddArgs;
-use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 
 /// Add local files to the index
-pub fn add(args: AddArgs) -> Result<(), BluError> {
+pub async fn add(args: AddArgs) -> Result<(), BluError> {
     info!("Started add");
 
     if args.add_paths.is_empty() {
@@ -22,6 +22,10 @@ pub fn add(args: AddArgs) -> Result<(), BluError> {
     }
 
     cfg.write_plain_index(&plain_index, &keys)?;
+
+    // Sync the updated index to the backend so the source of truth is
+    // never behind the local working copy.
+    push_indexes_or_fail(&cfg, None, None).await?;
 
     Ok(())
 }

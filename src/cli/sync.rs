@@ -2,7 +2,7 @@
 
 use crate::blob::BlobBuffer;
 use crate::cli::clapargs::SyncArgs;
-use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 use crate::hash::{self, Hash};
 use itertools::Itertools;
@@ -93,12 +93,10 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
         cfg.write_blob_index(&blob_index, &keys)?;
     }
 
-    // Push indexes to remote if requested
-    if args.push {
-        println!("Pushing indexes to remote backend...");
-        cfg.push_indexes(&backend).await?;
-        println!("Indexes pushed successfully");
-    }
+    // Sync indexes to the backend. The backend is the source of truth,
+    // so this is not optional: the same backend that received the blobs
+    // must also receive the updated indexes.
+    push_indexes_or_fail(&cfg, args.backend.as_deref(), Some(&backend)).await?;
 
     // Print summary
     println!(

@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::blob::BlobBuffer;
 use crate::cli::clapargs::EncryptFilesArgs;
-use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 use crate::hash::{self, Hash};
 
@@ -43,7 +43,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
 
     // TODO: consider rayon for parallelizing this
     for file_hash in file_hashes {
-        info!("file_hash: {:?}", &file_hash.dbg_short(7));
+        info!("file_hash: {:?}", file_hash.dbg_short(7));
         let file_ref = files_map
             .get(file_hash)
             .ok_or_else(|| BluError::FileHashNotFound {
@@ -94,6 +94,10 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
             Ok(_) => println!("Wrote blob index!"),
             Err(e) => println!("Error writing blob index: {}", e),
         }
+
+        // New blobs were written to the backend; sync the indexes so the
+        // backend never holds blobs without a matching index.
+        push_indexes_or_fail(&cfg, None, Some(&backend)).await?;
     }
 
     Ok(())

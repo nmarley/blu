@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::blob::repack_blobs;
 use crate::cli::clapargs::DeleteFilesArgs;
-use crate::cli::helpers::{load_config_and_keys, LoadOptions};
+use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
@@ -173,6 +173,11 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     cfg.write_plain_index(&plain_index, &keys)?;
     cfg.write_tag_index(&tag_index, &keys)?;
     cfg.write_blob_index(&blob_index, &keys)?;
+
+    // Sync the indexes to the backend. Reuse the backend handle if one
+    // was initialized for blob deletion; otherwise the helper resolves
+    // it by name.
+    push_indexes_or_fail(&cfg, args.backend.as_deref(), backend.as_ref()).await?;
 
     println!(
         "Deleted {} file(s), removed {} unreferenced blocks, \

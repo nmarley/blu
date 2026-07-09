@@ -24,6 +24,10 @@ pub enum BluError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// redb database error
+    #[error("redb error: {0}")]
+    Redb(String),
+
     // -------------------------------------------------------------------------
     // Key management errors
     // -------------------------------------------------------------------------
@@ -220,6 +224,42 @@ impl From<std::path::StripPrefixError> for BluError {
 impl From<tokio::task::JoinError> for BluError {
     fn from(err: tokio::task::JoinError) -> Self {
         BluError::Internal(format!("task join failed: {}", err))
+    }
+}
+
+impl From<redb::Error> for BluError {
+    fn from(err: redb::Error) -> Self {
+        BluError::Redb(err.to_string())
+    }
+}
+
+impl From<redb::DatabaseError> for BluError {
+    fn from(err: redb::DatabaseError) -> Self {
+        BluError::Redb(err.to_string())
+    }
+}
+
+impl From<redb::TableError> for BluError {
+    fn from(err: redb::TableError) -> Self {
+        BluError::Redb(err.to_string())
+    }
+}
+
+impl From<redb::TransactionError> for BluError {
+    fn from(err: redb::TransactionError) -> Self {
+        BluError::Redb(err.to_string())
+    }
+}
+
+impl From<redb::CommitError> for BluError {
+    fn from(err: redb::CommitError) -> Self {
+        BluError::Redb(err.to_string())
+    }
+}
+
+impl From<redb::StorageError> for BluError {
+    fn from(err: redb::StorageError) -> Self {
+        BluError::Redb(err.to_string())
     }
 }
 

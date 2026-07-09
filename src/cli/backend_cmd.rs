@@ -324,6 +324,11 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
     let from_backend = cfg.init_named_backend(&args.from).await?;
     let to_backend = cfg.init_named_backend(&args.to).await?;
 
+    // The worker closure below takes ownership of `to_backend`; keep a
+    // cheap clone (BackendKind is Arc-backed) to push indexes to the
+    // destination after mirroring completes.
+    let to_backend_for_push = to_backend.clone();
+
     // Determine which blob paths to mirror
     let blob_paths_set: HashSet<PathBuf> = if let Some(ref tag) = args.tag {
         blob_paths_for_tag(tag, &cfg, &keys)?
@@ -526,13 +531,22 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
     }
 
     if failed > 0 {
-        Err(BluError::StorageError(format!(
+        return Err(BluError::StorageError(format!(
             "{} blob(s) failed to mirror",
             failed
-        )))
-    } else {
-        Ok(())
+        )));
     }
+
+    // A mirrored backend is useless without indexes, so push them to the
+    // destination after a real (non-dry-run) mirror completes. This makes
+    // the destination a complete, recoverable replica.
+    if !dry_run {
+        println!("Syncing indexes to \"{}\"...", args.to);
+        crate::cli::helpers::push_indexes_or_fail(&cfg, Some(&args.to), Some(&to_backend_for_push))
+            .await?;
+    }
+
+    Ok(())
 }
 
 /// Outcome of a single blob diff task.
