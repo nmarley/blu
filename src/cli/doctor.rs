@@ -443,11 +443,7 @@ mod tests {
     use age::Identity;
     use std::fs;
     use std::path::Path;
-    use std::sync::Mutex;
     use tempfile::tempdir;
-
-    // Serialize tests that chdir so they do not race.
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
 
     const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
                                   abandon abandon abandon abandon abandon abandon \
@@ -501,7 +497,6 @@ mod tests {
 
     #[tokio::test]
     async fn healthy_empty_vault_passes() {
-        let _guard = CWD_LOCK.lock().unwrap();
         let (_tmp, cfg, keys) = setup_vault();
         let report = diagnose(&cfg, &keys).await.unwrap();
         assert!(
@@ -521,7 +516,6 @@ mod tests {
 
     #[tokio::test]
     async fn missing_blob_path_fails() {
-        let _guard = CWD_LOCK.lock().unwrap();
         let (_tmp, cfg, keys) = setup_vault();
 
         let mut blob = BlobIndex::new();
@@ -549,7 +543,6 @@ mod tests {
 
     #[tokio::test]
     async fn corrupt_cross_ref_fails() {
-        let _guard = CWD_LOCK.lock().unwrap();
         let (tmp, cfg, keys) = setup_vault();
 
         let file_path = tmp.path().join("only.txt");

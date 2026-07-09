@@ -8,7 +8,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use age::Identity;
 use tempfile::tempdir;
@@ -23,9 +22,6 @@ use crate::hash::Hash;
 use crate::keys::kek::KekStore;
 use crate::keys::mnemonic;
 use crate::storage::BackendKind;
-
-// Serialize tests that touch shared process state.
-static SMOKE_LOCK: Mutex<()> = Mutex::new(());
 
 const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
                               abandon abandon abandon abandon abandon abandon \
@@ -180,7 +176,6 @@ fn list_paths(plain: &PlainIndex) -> HashSet<PathBuf> {
 
 #[tokio::test]
 async fn vault_pipeline_happy_path() {
-    let _guard = SMOKE_LOCK.lock().unwrap();
     let (tmp, cfg, keys) = setup_vault();
 
     // Small tree to sync
@@ -247,7 +242,6 @@ async fn vault_pipeline_happy_path() {
 
 #[tokio::test]
 async fn doctor_fails_on_missing_blob_after_sync() {
-    let _guard = SMOKE_LOCK.lock().unwrap();
     let (tmp, cfg, keys) = setup_vault();
 
     let f = tmp.path().join("solo.txt");
@@ -273,7 +267,6 @@ async fn doctor_fails_on_missing_blob_after_sync() {
 
 #[tokio::test]
 async fn bluignore_respected_during_sync_walk() {
-    let _guard = SMOKE_LOCK.lock().unwrap();
     let (tmp, cfg, keys) = setup_vault();
 
     fs::write(tmp.path().join(".bluignore"), "*.log\n").unwrap();
