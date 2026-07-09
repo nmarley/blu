@@ -9,17 +9,19 @@
 // define module exports at the end of the file, even after a test body
 #![allow(clippy::items_after_test_module)]
 
-//! Blu is an encrypted and de-duplicated file archival system.
+//! Blu is an encrypted, deduplicated file archival system.
 //!
 //! > "Not your keys, not your secrets ..."
 //!
-//! Based on directories in the typical \*nix hierarchical file system (HFS), this will read all
-//! files in the directory, and encrypt, de-duplicate and archive to any of several configurable
-//! backends, including locally and cloud object storage such as Amazon s3.
+//! Files are chunked, content-addressed, and stored as opaque encrypted blobs
+//! on a local filesystem or Amazon S3. Key hierarchy:
 //!
-//! All encryption in the project uses [rage](https://github.com/str4d/rage), based on age by
-//! [@FiloSottile](https://twitter.com/FiloSottile) and
-//! [@Benjojo12](https://twitter.com/Benjojo12).
+//! - **User key**: post-quantum hybrid (ML-KEM-768 + X25519) from a BIP39
+//!   mnemonic, used only to wrap the vault KEK via age
+//! - **KEK**: one per vault, wraps per-blob DEKs
+//! - **DEK / bulk data**: ChaCha20-Poly1305 (v3 segmented AEAD for new blobs)
+//!
+//! See the crate README and `docs/design/ENVELOPE_ENCRYPTION_DESIGN.md`.
 
 #[macro_use]
 extern crate log;
@@ -46,15 +48,21 @@ pub mod error;
 pub mod format;
 /// wrapper around Vec<u8> for cryptographic hashes
 pub mod hash;
+/// filesystem walking with `.bluignore` support
+pub mod ignore;
 /// serialization + compression + encryption for indexes
 pub mod io;
 /// key management (generation, loading, storage)
 pub mod keys;
 /// search index for filenames
 pub mod search;
+/// `blu serve` local daemon (HTTP server, redb index store, index sync)
+pub mod serve;
 /// storage backends and hash to path translation methods
 pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
 /// v2 file format: envelope encryption with KEK/DEK hierarchy
 pub mod v2format;
+/// v3 segmented AEAD blob format (fixed-size segments, prefix fetch)
+pub mod v3format;

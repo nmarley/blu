@@ -29,8 +29,10 @@ pub enum Action {
     /// Pull indexes from remote backend
     Pull(PullArgs),
     /// Write index (plumbing)
+    #[command(hide = true)]
     WriteIndex(WriteIndexArgs),
     /// Encrypt files in index (plumbing)
+    #[command(hide = true)]
     EncryptFiles(EncryptFilesArgs),
     /// Restore files from the index + encrypted data
     RestoreFiles(RestoreFilesArgs),
@@ -42,10 +44,8 @@ pub enum Action {
     /// Manipulate tags on files
     Tagger(TaggerArgs),
     /// Print (debug) the index (plumbing)
+    #[command(hide = true)]
     ReadIndex(ReadIndexArgs),
-    // #[command(hide = true)]
-    /// Probably old, needs removed at this point
-    DebugIndex(DebugIndexArgs),
     /// Defrag consolidates encrypted blob files
     DefragBlobs(DefragBlobsArgs),
     /// Delete data from index and mark associated encrypted blobs as deleted
@@ -54,6 +54,10 @@ pub enum Action {
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
     Status(StatusArgs),
+    /// Run vault health diagnostics
+    Doctor(DoctorArgs),
+    /// Start local HTTP server (S3-compatible API for the vault)
+    Serve(ServeArgs),
 
     /// Unlock the agent (start if needed, cache passphrase)
     Unlock,
@@ -100,10 +104,6 @@ pub struct SyncArgs {
     /// Force write indexes even if no changes
     #[arg(long)]
     pub force: bool,
-
-    /// Push indexes to remote backend after sync
-    #[arg(long)]
-    pub push: bool,
 
     /// Show verbose output
     #[arg(long, short)]
@@ -210,10 +210,6 @@ pub enum IndexType {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct DebugIndexArgs {}
-
-#[allow(missing_docs)]
-#[derive(Parser, Debug, Clone)]
 pub struct DefragBlobsArgs {
     /// Show what would be repacked without modifying anything
     #[arg(long, default_value = "false")]
@@ -222,6 +218,11 @@ pub struct DefragBlobsArgs {
     /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,
+
+    /// Rewrite all legacy v2 blobs into the v3 segmented format
+    /// instead of repacking partially-dead blobs
+    #[arg(long, default_value = "false")]
+    pub upgrade_format: bool,
 }
 
 #[allow(missing_docs)]
@@ -276,6 +277,23 @@ pub struct StatusArgs {
     #[clap(value_enum)]
     #[arg(long = "type")]
     pub status_check_type: Option<StatusCheckType>,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct DoctorArgs {}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct ServeArgs {
+    /// Bind address for the HTTP server (default: 127.0.0.1:7777)
+    #[arg(long)]
+    pub bind: Option<String>,
+
+    /// Number of decrypted blobs to keep in the in-memory LRU cache
+    /// (default: 10, ~64 MiB per entry at default chunk/blob sizing).
+    #[arg(long)]
+    pub cache_blobs: Option<usize>,
 }
 
 /// Type of status check to run. Deep means hash every file, shallow will use

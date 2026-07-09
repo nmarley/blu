@@ -62,7 +62,7 @@ pub async fn run() -> Result<(), BluError> {
             // likely won't ever happen ...
             return Err(BluError::Internal(format!(
                 "fatal: unable to get absolute path for {:?}",
-                &blu_basedir
+                blu_basedir
             )));
         }
     };
@@ -71,18 +71,18 @@ pub async fn run() -> Result<(), BluError> {
     if let Err(e) = env::set_current_dir(&abspath) {
         return Err(BluError::Internal(format!(
             "unable to chdir to '{:?}': {}",
-            &abspath, e
+            abspath, e
         )));
     }
 
     // TODO: Should key(s) be read and stored here in some kind of state or context?
 
     match args.action {
-        clapargs::Action::Add(a) => cli::add(a),
+        clapargs::Action::Add(a) => cli::add(a).await,
         clapargs::Action::Backend(a) => cli::backend(a).await,
-        clapargs::Action::DebugIndex(a) => cli::debug_index(a),
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a).await,
         clapargs::Action::DeleteFiles(a) => cli::delete_files(a).await,
+        clapargs::Action::Doctor(a) => cli::doctor(a).await,
         clapargs::Action::EncryptFiles(a) => cli::encrypt_files(a).await,
         clapargs::Action::Init(a) => cli::init(a),
         clapargs::Action::ListFiles(a) => cli::list_files(a),
@@ -93,8 +93,9 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
         clapargs::Action::Sync(a) => cli::sync(a).await,
-        clapargs::Action::Tagger(a) => cli::tagger(a),
+        clapargs::Action::Tagger(a) => cli::tagger(a).await,
         clapargs::Action::WriteIndex(a) => cli::write_index(a),
+        clapargs::Action::Serve(a) => blu::serve::serve(a.bind, a.cache_blobs).await,
         // These are dispatched above, before basedir resolution
         clapargs::Action::Agent(_)
         | clapargs::Action::AgentDaemon
