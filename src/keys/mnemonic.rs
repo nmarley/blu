@@ -133,6 +133,13 @@ pub fn derive_pq_recipient(seed: &Seed) -> Result<crate::keys::pq::PqRecipient> 
     Ok(crate::keys::pq::PqRecipient::new(pk))
 }
 
+/// Standard BIP39 test vector (24 words from all-zero entropy).
+#[cfg(test)]
+pub const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
+                                 abandon abandon abandon abandon abandon abandon \
+                                 abandon abandon abandon abandon abandon abandon \
+                                 abandon abandon abandon abandon abandon art";
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -161,12 +168,7 @@ mod test {
 
     #[test]
     fn parse_mnemonic_valid() {
-        // Standard BIP39 test vector (24 words from all-zero entropy)
-        let words = "abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon abandon \
-                      abandon abandon abandon abandon abandon art";
-        let m = parse_mnemonic(words).unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         assert_eq!(m.word_count(), 24);
     }
 
@@ -186,13 +188,7 @@ mod test {
 
     #[test]
     fn seed_derivation_deterministic() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
 
         let s1 = mnemonic_to_seed(&m, "");
         let s2 = mnemonic_to_seed(&m, "");
@@ -201,13 +197,7 @@ mod test {
 
     #[test]
     fn seed_differs_with_passphrase() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
 
         let s1 = mnemonic_to_seed(&m, "");
         let s2 = mnemonic_to_seed(&m, "my secret passphrase");
@@ -216,13 +206,7 @@ mod test {
 
     #[test]
     fn derive_device_key_deterministic() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let dk1 = derive_device_key(&seed).unwrap();
@@ -232,13 +216,7 @@ mod test {
 
     #[test]
     fn derive_pq_seed_deterministic() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let pq1 = derive_pq_seed(&seed).unwrap();
@@ -248,13 +226,7 @@ mod test {
 
     #[test]
     fn derive_pq_seed_differs_from_device_key() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let device_key = derive_device_key(&seed).unwrap();
@@ -264,13 +236,7 @@ mod test {
 
     #[test]
     fn derive_pq_identity_round_trip() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let identity = derive_pq_identity(&seed).unwrap();
@@ -286,13 +252,7 @@ mod test {
 
     #[test]
     fn derive_pq_identity_differs_by_passphrase() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
 
         let seed1 = mnemonic_to_seed(&m, "");
         let seed2 = mnemonic_to_seed(&m, "different");
@@ -304,13 +264,7 @@ mod test {
 
     #[test]
     fn derive_pq_recipient_bech32_starts_with_age1pq() {
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let recipient = derive_pq_recipient(&seed).unwrap();
@@ -324,13 +278,7 @@ mod test {
         use age::Recipient;
         use age_core::secrecy::ExposeSecret;
 
-        let m = parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon art",
-        )
-        .unwrap();
+        let m = parse_mnemonic(TEST_MNEMONIC).unwrap();
         let seed = mnemonic_to_seed(&m, "");
 
         let identity = derive_pq_identity(&seed).unwrap();

@@ -17,15 +17,10 @@ mod test {
     use crate::keys::mnemonic;
     use crate::keys::pq::{self, PqIdentity, PqRecipient};
 
-    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon art";
-
     #[test]
     fn full_pipeline_mnemonic_to_data() {
         // Step 1: BIP39 mnemonic -> seed
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "test-passphrase");
 
         // Step 2: Derive PQ identity and recipient
@@ -80,7 +75,7 @@ mod test {
     fn pq_recipient_string_round_trip_through_kek_metadata() {
         // Verify that PQ recipient strings survive serialization
         // through kek.toml metadata.
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
         let recipient_str = recipient.to_string();
@@ -98,7 +93,7 @@ mod test {
 
     #[test]
     fn pq_identity_bech32_deterministic_from_mnemonic() {
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
 
         let id1 = mnemonic::derive_pq_identity(&seed).unwrap();

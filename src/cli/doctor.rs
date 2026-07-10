@@ -445,20 +445,15 @@ mod tests {
     use std::path::Path;
     use tempfile::tempdir;
 
-    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon art";
-
     fn test_pq_recipient() -> String {
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         mnemonic::derive_pq_recipient(&seed).unwrap().to_string()
     }
 
     fn local_keys(cfg: &Config) -> DekProvider {
         let store = KekStore::new(&cfg.bludir());
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
         let (kek, version) = store

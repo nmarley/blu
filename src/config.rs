@@ -708,13 +708,7 @@ pub(crate) mod test {
         let vault = tmp.path().join("vault");
         fs::create_dir_all(vault.join(".blu")).unwrap();
 
-        let m = mnemonic::parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon art",
-        )
-        .unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
         let user = pq_recipient.to_string();
@@ -760,13 +754,7 @@ pub(crate) mod test {
         fs::create_dir_all(source_vault.join(".blu")).unwrap();
         fs::create_dir_all(dest_vault.join(".blu")).unwrap();
 
-        let m = mnemonic::parse_mnemonic(
-            "abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon abandon abandon abandon abandon abandon \
-             abandon abandon art",
-        )
-        .unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
         let user = pq_recipient.to_string();

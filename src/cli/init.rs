@@ -212,13 +212,8 @@ mod test {
     use age::Identity;
     use tempfile::tempdir;
 
-    const TEST_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon abandon \
-                                  abandon abandon abandon abandon abandon art";
-
     fn test_pq_recipient() -> String {
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
         pq_recipient.to_string()
@@ -249,7 +244,7 @@ mod test {
         let store = KekStore::new(&blu_dir);
         assert!(store.exists());
 
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
         let (_, version) = store
@@ -307,7 +302,7 @@ mod test {
         let store = KekStore::new(&blu_dir);
 
         // Derive PQ identity from the same mnemonic
-        let m = mnemonic::parse_mnemonic(TEST_MNEMONIC).unwrap();
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
         let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
 
