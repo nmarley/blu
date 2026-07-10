@@ -4284,18 +4284,18 @@ mod test {
     /// gets cleaned up.
     #[tokio::test]
     async fn stale_multipart_upload_reaped() {
-        use chrono::{Timelike, Utc};
+        use chrono::Utc;
 
         let state = empty_state();
 
-        // Insert a stale upload (created_at 2 hours ago).
+        // Insert a stale upload (created_at 2 hours ago). Subtract a
+        // Duration rather than mutating the hour field: with_hour wraps
+        // within the same calendar day, so near UTC midnight the age
+        // collapses to ~0 and the upload is not treated as stale.
         let stale_mpu = MultipartState {
             path: "stale.bin".to_string(),
             parts: Vec::new(),
-            created_at: Utc::now()
-                .naive_utc()
-                .with_hour(Utc::now().naive_utc().hour().saturating_sub(2))
-                .unwrap_or_else(|| Utc::now().naive_utc() - chrono::Duration::hours(2)),
+            created_at: Utc::now().naive_utc() - chrono::Duration::hours(2),
         };
         state
             .multipart_uploads
