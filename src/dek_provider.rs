@@ -450,7 +450,7 @@ mod test {
         let mut data = Vec::new();
         let region_sizes = [4000usize, 5000, 6000];
         for (i, &sz) in region_sizes.iter().enumerate() {
-            data.extend(std::iter::repeat(b'a' + i as u8).take(sz));
+            data.extend(std::iter::repeat_n(b'a' + i as u8, sz));
         }
         let mut endpoints = Vec::new();
         let mut acc = 0;

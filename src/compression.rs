@@ -114,7 +114,7 @@ mod test {
         let mut data = Vec::new();
         let region_sizes = [1000usize, 2000, 500, 3000];
         for (i, &sz) in region_sizes.iter().enumerate() {
-            data.extend(std::iter::repeat(b'a' + i as u8).take(sz));
+            data.extend(std::iter::repeat_n(b'a' + i as u8, sz));
         }
         let mut endpoints = Vec::new();
         let mut acc = 0;

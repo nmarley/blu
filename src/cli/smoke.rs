@@ -187,7 +187,7 @@ async fn vault_pipeline_happy_path() {
     fs::write(&b, b"bravo content for smoke test").unwrap();
 
     // sync
-    let (plain, blob) = sync_tree(&cfg, &keys, &[docs.clone()]).await;
+    let (plain, blob) = sync_tree(&cfg, &keys, std::slice::from_ref(&docs)).await;
     assert_eq!(plain.files_map_ref().len(), 2);
     assert!(blob.count_blob_files() >= 1);
     assert_eq!(
