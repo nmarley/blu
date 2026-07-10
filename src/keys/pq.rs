@@ -16,6 +16,8 @@ use age::DecryptError;
 use age_core::format::{FileKey, Stanza, FILE_KEY_BYTES};
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use base64::Engine;
+use bech32::primitives::decode::CheckedHrpstring;
+use bech32::{Checksum, Fe1024, Fe32, Hrp};
 
 use crate::error::{BluError, Result};
 use crate::keys::hpke;
@@ -35,6 +37,48 @@ const IDENTITY_HRP: &str = "age-secret-key-pq-";
 
 /// Expected size of the stanza body: 16-byte file key + 16-byte tag.
 const STANZA_BODY_SIZE: usize = FILE_KEY_BYTES + 16;
+
+/// Standard Bech32 checksum with a larger code length for age PQ keys.
+///
+/// A hybrid public key is 1216 bytes (~1959 encoded chars). The stock
+/// `Bech32` type caps `CODE_LENGTH` at 1023, so we use the same generator
+/// and residue with a higher limit.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum AgeBech32 {}
+
+impl Checksum for AgeBech32 {
+    type MidstateRepr = u32;
+    type CorrectionField = Fe1024;
+
+    const ROOT_GENERATOR: Self::CorrectionField = Fe1024::new([Fe32::P, Fe32::X]);
+    const ROOT_EXPONENTS: core::ops::RangeInclusive<usize> = 24..=26;
+    const CODE_LENGTH: usize = 4096;
+    const CHECKSUM_LENGTH: usize = 6;
+    const GENERATOR_SH: [u32; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    const TARGET_RESIDUE: u32 = 1;
+}
+
+fn encode_age_bech32(hrp: &str, data: &[u8]) -> String {
+    let hrp = Hrp::parse(hrp).expect("valid age HRP");
+    bech32::encode::<AgeBech32>(hrp, data).expect("age bech32 encode should not fail")
+}
+
+fn encode_age_bech32_upper(hrp: &str, data: &[u8]) -> String {
+    let hrp = Hrp::parse(hrp).expect("valid age HRP");
+    bech32::encode_upper::<AgeBech32>(hrp, data).expect("age bech32 encode should not fail")
+}
+
+fn decode_age_bech32(s: &str) -> Result<(String, Vec<u8>)> {
+    let checked = CheckedHrpstring::new::<AgeBech32>(s)
+        .map_err(|e| BluError::InvalidKeyFormat(format!("invalid age bech32: {}", e)))?;
+    Ok((checked.hrp().to_lowercase(), checked.byte_iter().collect()))
+}
 
 /// A post-quantum age recipient (public key).
 ///
@@ -59,34 +103,22 @@ impl PqRecipient {
     /// Encode as a bech32 string with HRP `age1pq`.
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
-        use bech32::{ToBase32, Variant};
-        bech32::encode(
-            RECIPIENT_HRP,
-            self.pk.as_bytes().to_base32(),
-            Variant::Bech32,
-        )
-        .expect("bech32 encode should not fail for valid data")
+        encode_age_bech32(RECIPIENT_HRP, self.pk.as_bytes())
     }
 }
 
 /// Parse a PQ recipient from a bech32 `age1pq...` string.
 pub fn parse_pq_recipient(s: &str) -> Result<PqRecipient> {
-    use bech32::FromBase32;
+    let (hrp, data) = decode_age_bech32(s)?;
 
-    let (hrp, data, _variant) = bech32::decode(s)
-        .map_err(|e| BluError::InvalidKeyFormat(format!("invalid PQ recipient: {}", e)))?;
-
-    if hrp.to_lowercase() != RECIPIENT_HRP {
+    if hrp != RECIPIENT_HRP {
         return Err(BluError::InvalidKeyFormat(format!(
             "expected HRP '{}', got '{}'",
             RECIPIENT_HRP, hrp
         )));
     }
 
-    let bytes = Vec::<u8>::from_base32(&data)
-        .map_err(|e| BluError::InvalidKeyFormat(format!("invalid PQ recipient data: {}", e)))?;
-
-    let pk = HybridPublicKey::from_bytes(&bytes)?;
+    let pk = HybridPublicKey::from_bytes(&data)?;
     Ok(PqRecipient::new(pk))
 }
 
@@ -140,43 +172,30 @@ impl PqIdentity {
 
     /// Encode as a bech32 string with HRP `AGE-SECRET-KEY-PQ-`.
     pub fn to_bech32(&self) -> String {
-        use bech32::{ToBase32, Variant};
-        let encoded = bech32::encode(
-            IDENTITY_HRP,
-            self.seed.as_bytes().to_base32(),
-            Variant::Bech32,
-        )
-        .expect("bech32 encode should not fail for valid data");
-        encoded.to_uppercase()
+        encode_age_bech32_upper(IDENTITY_HRP, self.seed.as_bytes())
     }
 }
 
 /// Parse a PQ identity from a bech32 `AGE-SECRET-KEY-PQ-...` string.
 pub fn parse_pq_identity(s: &str) -> Result<PqIdentity> {
-    use bech32::FromBase32;
+    let (hrp, data) = decode_age_bech32(s)?;
 
-    let (hrp, data, _variant) = bech32::decode(s)
-        .map_err(|e| BluError::InvalidKeyFormat(format!("invalid PQ identity: {}", e)))?;
-
-    if hrp.to_lowercase() != IDENTITY_HRP {
+    if hrp != IDENTITY_HRP {
         return Err(BluError::InvalidKeyFormat(format!(
             "expected HRP '{}', got '{}'",
             IDENTITY_HRP, hrp
         )));
     }
 
-    let bytes = Vec::<u8>::from_base32(&data)
-        .map_err(|e| BluError::InvalidKeyFormat(format!("invalid PQ identity data: {}", e)))?;
-
-    if bytes.len() != 32 {
+    if data.len() != 32 {
         return Err(BluError::InvalidKeyFormat(format!(
             "PQ identity seed must be 32 bytes, got {}",
-            bytes.len()
+            data.len()
         )));
     }
 
     let mut seed_bytes = [0u8; 32];
-    seed_bytes.copy_from_slice(&bytes);
+    seed_bytes.copy_from_slice(&data);
     Ok(PqIdentity::new(HybridSeed::new(seed_bytes)))
 }
 

@@ -24,8 +24,8 @@
 //! ```
 
 use ml_kem::array::Array;
-use ml_kem::kem::{Decapsulate, Encapsulate};
-use ml_kem::{EncodedSizeUser, KemCore, MlKem768, MlKem768Params};
+use ml_kem::kem::{Decapsulate, Encapsulate, FromSeed};
+use ml_kem::{EncapsulationKey768, KeyExport, MlKem768};
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -203,18 +203,16 @@ fn combiner(ss_pq: &[u8], ss_t: &[u8], ct_t: &[u8], ek_t: &[u8]) -> [u8; SHARED_
 pub fn public_key_from_seed(seed: &HybridSeed) -> HybridPublicKey {
     let mut expanded = expand_seed(seed);
 
-    let d_bytes: [u8; 32] = expanded[0..32].try_into().unwrap();
-    let z_bytes: [u8; 32] = expanded[32..64].try_into().unwrap();
+    let seed_pq: [u8; 64] = expanded[0..64].try_into().unwrap();
     let t_bytes: [u8; 32] = expanded[64..96].try_into().unwrap();
 
-    let d_arr = Array::try_from(d_bytes.as_slice()).expect("d is 32 bytes");
-    let z_arr = Array::try_from(z_bytes.as_slice()).expect("z is 32 bytes");
-    let (_, ek) = MlKem768::generate_deterministic(&d_arr, &z_arr);
+    let seed_arr = Array::try_from(seed_pq.as_slice()).expect("seed is 64 bytes");
+    let (_, ek) = MlKem768::from_seed(&seed_arr);
 
     let sk_t = X25519StaticSecret::from(t_bytes);
     let pk_t = X25519PublicKey::from(&sk_t);
 
-    let ek_bytes = ek.as_bytes();
+    let ek_bytes = ek.to_bytes();
     let mut pk = [0u8; HYBRID_PK_SIZE];
     pk[..MLKEM_EK_SIZE].copy_from_slice(ek_bytes.as_ref());
     pk[MLKEM_EK_SIZE..].copy_from_slice(pk_t.as_bytes());
@@ -230,10 +228,9 @@ pub fn public_key_from_seed(seed: &HybridSeed) -> HybridPublicKey {
 pub fn encapsulate(pk: &HybridPublicKey) -> Result<(HybridCiphertext, [u8; SHARED_SECRET_SIZE])> {
     let ek_arr = Array::try_from(pk.mlkem_ek_bytes())
         .map_err(|_| BluError::InvalidKeyFormat("bad ML-KEM EK length".into()))?;
-    let mlkem_ek = ml_kem::kem::EncapsulationKey::<MlKem768Params>::from_bytes(&ek_arr);
-    let (ct_pq, ss_pq) = mlkem_ek
-        .encapsulate(&mut OsRng)
-        .map_err(|_| BluError::EncryptionFailed("ML-KEM-768 encapsulate failed".into()))?;
+    let mlkem_ek = EncapsulationKey768::new(&ek_arr)
+        .map_err(|_| BluError::InvalidKeyFormat("bad ML-KEM EK".into()))?;
+    let (ct_pq, ss_pq) = mlkem_ek.encapsulate();
 
     let eph_secret = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
     let eph_public = X25519PublicKey::from(&eph_secret);
@@ -261,13 +258,11 @@ pub fn encapsulate(pk: &HybridPublicKey) -> Result<(HybridCiphertext, [u8; SHARE
 pub fn decapsulate(seed: &HybridSeed, ct: &HybridCiphertext) -> Result<[u8; SHARED_SECRET_SIZE]> {
     let mut expanded = expand_seed(seed);
 
-    let d_bytes: [u8; 32] = expanded[0..32].try_into().unwrap();
-    let z_bytes: [u8; 32] = expanded[32..64].try_into().unwrap();
+    let seed_pq: [u8; 64] = expanded[0..64].try_into().unwrap();
     let t_bytes: [u8; 32] = expanded[64..96].try_into().unwrap();
 
-    let d_arr = Array::try_from(d_bytes.as_slice()).expect("d is 32 bytes");
-    let z_arr = Array::try_from(z_bytes.as_slice()).expect("z is 32 bytes");
-    let (dk, _ek) = MlKem768::generate_deterministic(&d_arr, &z_arr);
+    let seed_arr = Array::try_from(seed_pq.as_slice()).expect("seed is 64 bytes");
+    let (dk, _ek) = MlKem768::from_seed(&seed_arr);
 
     let sk_t = X25519StaticSecret::from(t_bytes);
     let pk_t = X25519PublicKey::from(&sk_t);
@@ -276,9 +271,7 @@ pub fn decapsulate(seed: &HybridSeed, ct: &HybridCiphertext) -> Result<[u8; SHAR
 
     let ct_pq_ref = Array::try_from(&ct.as_bytes()[..MLKEM_CT_SIZE])
         .map_err(|_| BluError::DecryptionFailed("bad ML-KEM ciphertext length".into()))?;
-    let ss_pq = dk
-        .decapsulate(&ct_pq_ref)
-        .map_err(|_| BluError::DecryptionFailed("ML-KEM-768 decapsulate failed".into()))?;
+    let ss_pq = dk.decapsulate(&ct_pq_ref);
 
     let ct_t_bytes: [u8; 32] = ct.as_bytes()[MLKEM_CT_SIZE..].try_into().unwrap();
     let ct_t_pk = X25519PublicKey::from(ct_t_bytes);
