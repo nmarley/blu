@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-10
+
+### Changed
+
+- User-global state moves from `~/.blu/` to XDG Base Directory paths on
+  all platforms (including macOS). Defaults: config
+  `~/.config/blu`, data `~/.local/share/blu`, state
+  `~/.local/state/blu`, runtime `$XDG_RUNTIME_DIR/blu` (state-dir
+  fallback when runtime is unset). Identity, agent socket/PID, and
+  agent config are resolved via `src/user_paths.rs`. Vault-local
+  `.blu/` is unchanged. No migration from `~/.blu/`; re-run
+  `blu identity init` or recover if you still have files there.
+
 ## [0.7.0] - 2026-07-09
 
 Pre-release dogfood surface after `v0.6.3`. Breaking changes remain expected.

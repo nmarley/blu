@@ -61,7 +61,16 @@ Only the top layer (UK wraps KEK) uses asymmetric crypto. Everything below is sy
 
 ### Agent daemon (`src/agent/`)
 
-Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/agent.sock` using length-prefixed JSON-RPC 2.0. The daemon holds decrypted keys in mlock'd memory and zeroizes on drop.
+Started via hidden `blu __agent-daemon` subcommand. Communicates over
+`$XDG_RUNTIME_DIR/blu/agent.sock` (falls back to `$XDG_STATE_HOME/blu/`
+when runtime dir is unset) using length-prefixed JSON-RPC 2.0. PID file
+is `$XDG_STATE_HOME/blu/agent.pid`. The daemon holds decrypted keys in
+mlock'd memory and zeroizes on drop.
+
+User-global paths (identity, agent, agent config) are resolved by
+`src/user_paths.rs` via XDG Base Directory on all platforms (including
+macOS). Defaults: `~/.config/blu`, `~/.local/share/blu`,
+`~/.local/state/blu`. Vault-local state remains under project `.blu/`.
 
 ### Storage backends (`src/storage/`)
 
@@ -83,6 +92,7 @@ Started via hidden `blu __agent-daemon` subcommand. Communicates over `~/.blu/ag
 - `src/v3format.rs` -- v3 segmented AEAD blob format
 - `src/serve/` -- `blu serve` local daemon (HTTP server, redb index store, index sync)
 - `src/config.rs` -- vault config from `.blu/config.toml`
+- `src/user_paths.rs` -- XDG paths for user-global identity/agent state
 - `src/storage/` -- `BackendKind` enum, `Local`, `AmazonS3`
 - `src/io.rs` -- `EncryptedSerializable` trait (serialize + compress + encrypt for indexes)
 

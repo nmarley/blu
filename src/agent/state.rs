@@ -208,7 +208,7 @@ impl AgentState {
     }
 
     /// Unlock the agent by decrypting the global identity file
-    /// (`~/.blu/identity.age`) with the given passphrase.
+    /// (`$XDG_DATA_HOME/blu/identity.age`) with the given passphrase.
     ///
     /// The identity file contains a PQ hybrid seed encoded as a
     /// bech32 `AGE-SECRET-KEY-PQ-` string, optionally encrypted

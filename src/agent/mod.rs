@@ -8,8 +8,9 @@
 //! # Architecture
 //!
 //! The agent runs as a background daemon (forked from the main `blu`
-//! binary via `blu __agent-daemon`). It listens on a Unix socket at
-//! `~/.blu/agent.sock` and writes its PID to `~/.blu/agent.pid`.
+//! binary via `blu __agent-daemon`). It listens on a Unix socket under
+//! `$XDG_RUNTIME_DIR/blu/` (state-dir fallback) and writes its PID under
+//! `$XDG_STATE_HOME/blu/`.
 //!
 //! The CLI auto-starts the agent on first use and communicates via
 //! the socket for all crypto operations.

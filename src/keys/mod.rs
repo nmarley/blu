@@ -1,9 +1,9 @@
 //! Key management for blu.
 //!
 //! This module handles loading, storing, and managing encryption keys.
-//! The PQ hybrid seed lives at `~/.blu/identity.age` (optionally
-//! passphrase-encrypted via age scrypt) and is resolved at runtime by
-//! [`global_identity_path`].
+//! The PQ hybrid seed lives at `$XDG_DATA_HOME/blu/identity.age`
+//! (optionally passphrase-encrypted via age scrypt) and is resolved at
+//! runtime by [`global_identity_path`].
 
 /// Data Encryption Key (DEK) generation, wrapping, and data encryption.
 pub mod dek;
@@ -29,16 +29,12 @@ use crate::age::{passphrase_decrypt, passphrase_encrypt};
 use crate::error::{BluError, Result};
 use crate::keys::hybrid_kem::HybridSeed;
 use crate::keys::pq::{parse_pq_identity, PqIdentity};
-
-/// Default filename for the identity (private key) file.
-const IDENTITY_FILENAME: &str = "identity.age";
+use crate::user_paths::{self, UserPaths};
 
 /// Return the canonical path to the global identity file
-/// (`~/.blu/identity.age`).
+/// (`$XDG_DATA_HOME/blu/identity.age`).
 pub fn global_identity_path() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| BluError::Internal("could not determine home directory".to_string()))?;
-    Ok(home.join(".blu").join(IDENTITY_FILENAME))
+    Ok(UserPaths::resolve()?.identity_age)
 }
 
 /// Save a PQ hybrid seed to a file, optionally encrypted with a
@@ -62,10 +58,7 @@ pub fn save_pq_seed<P: AsRef<Path>>(
         None => bytes.to_vec(),
     };
 
-    if let Some(parent) = path.as_ref().parent() {
-        fs::create_dir_all(parent)?;
-    }
-
+    user_paths::ensure_parent(path.as_ref())?;
     fs::write(path, data)?;
     Ok(())
 }

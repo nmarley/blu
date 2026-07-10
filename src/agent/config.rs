@@ -1,8 +1,8 @@
 //! Agent configuration: timeout profiles and user preferences.
 //!
-//! The agent reads its configuration from `~/.blu/config.toml`. If
-//! the file does not exist, sensible defaults are used (the "balanced"
-//! profile).
+//! The agent reads its configuration from
+//! `$XDG_CONFIG_HOME/blu/config.toml`. If the file does not exist,
+//! sensible defaults are used (the "balanced" profile).
 //!
 //! ```toml
 //! [agent]
@@ -19,8 +19,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{BluError, Result};
+use crate::user_paths::UserPaths;
 
-/// Top-level structure for `~/.blu/config.toml`.
+/// Top-level structure for `$XDG_CONFIG_HOME/blu/config.toml`.
 #[derive(Debug, Deserialize, Serialize)]
 struct ConfigFile {
     #[serde(default)]
@@ -139,7 +140,7 @@ impl AgentConfig {
         }
     }
 
-    /// Load the agent config from `~/.blu/config.toml`.
+    /// Load the agent config from `$XDG_CONFIG_HOME/blu/config.toml`.
     ///
     /// If the file does not exist, returns the default (balanced) config.
     /// If the file exists but is malformed, returns an error.
@@ -159,7 +160,7 @@ impl AgentConfig {
         };
 
         let file: ConfigFile = toml::from_str(&content)
-            .map_err(|e| BluError::InvalidConfig(format!("~/.blu/config.toml: {}", e)))?;
+            .map_err(|e| BluError::InvalidConfig(format!("{}: {}", path.display(), e)))?;
 
         Self::from_section(&file.agent)
     }
@@ -192,11 +193,9 @@ impl AgentConfig {
     }
 }
 
-/// Resolve the path to `~/.blu/config.toml`.
+/// Resolve the path to `$XDG_CONFIG_HOME/blu/config.toml`.
 fn config_path() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| BluError::Internal("could not determine home directory".into()))?;
-    Ok(home.join(".blu").join("config.toml"))
+    Ok(UserPaths::resolve()?.config_toml)
 }
 
 /// Parse a human-friendly duration string.

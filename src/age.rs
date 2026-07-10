@@ -1,7 +1,7 @@
 //! Passphrase-based encryption helpers using the age crate.
 //!
 //! These functions protect the global identity file
-//! (`~/.blu/identity.age`) with scrypt-derived keys. They are not
+//! (`$XDG_DATA_HOME/blu/identity.age`) with scrypt-derived keys. They are not
 //! part of the data encryption path (which uses the KEK/DEK envelope
 //! scheme via `DekProvider`).
 //!

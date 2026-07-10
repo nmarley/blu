@@ -1,7 +1,7 @@
 //! CLI handlers for `blu identity init`, `blu identity show`, and
 //! `blu identity recover`.
 //!
-//! Identity is global (per user, lives in `~/.blu/`), not per-vault.
+//! Identity is global (per user, under XDG data home), not per-vault.
 
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -15,8 +15,9 @@ use crate::cli::clapargs::{IdentityArgs, IdentityCommand, IdentityInitArgs, Iden
 use crate::error::BluError;
 use crate::keys;
 use crate::keys::mnemonic;
+use crate::user_paths::{self, UserPaths};
 
-/// Identity metadata, stored in `~/.blu/identity.toml`.
+/// Identity metadata, stored in `$XDG_DATA_HOME/blu/identity.toml`.
 ///
 /// This file is safe to share; it contains only the public key
 /// and creation date.
@@ -31,7 +32,7 @@ pub struct IdentityMeta {
     pub biometric: bool,
 }
 
-/// Load the global identity metadata from `~/.blu/identity.toml`.
+/// Load the global identity metadata from `$XDG_DATA_HOME/blu/identity.toml`.
 ///
 /// Returns `None` if no global identity exists.
 pub fn load_global_identity() -> Result<Option<IdentityMeta>, BluError> {
@@ -44,7 +45,7 @@ pub fn load_global_identity() -> Result<Option<IdentityMeta>, BluError> {
     Ok(Some(meta))
 }
 
-/// Path to the global identity age file (`~/.blu/identity.age`).
+/// Path to the global identity age file (`$XDG_DATA_HOME/blu/identity.age`).
 pub fn global_identity_age_path() -> Result<PathBuf, BluError> {
     identity_age_path()
 }
@@ -58,23 +59,12 @@ pub fn identity(args: IdentityArgs) -> Result<(), BluError> {
     }
 }
 
-/// Resolve the `~/.blu/` directory, creating it if needed.
-fn global_blu_dir() -> Result<PathBuf, BluError> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| BluError::Internal("could not determine home directory".into()))?;
-    let dir = home.join(".blu");
-    if !dir.exists() {
-        fs::create_dir_all(&dir)?;
-    }
-    Ok(dir)
-}
-
 fn identity_toml_path() -> Result<PathBuf, BluError> {
-    Ok(global_blu_dir()?.join("identity.toml"))
+    Ok(UserPaths::resolve()?.identity_toml)
 }
 
 fn identity_age_path() -> Result<PathBuf, BluError> {
-    Ok(global_blu_dir()?.join("identity.age"))
+    Ok(UserPaths::resolve()?.identity_age)
 }
 
 fn identity_init(args: IdentityInitArgs) -> Result<(), BluError> {
@@ -270,6 +260,7 @@ fn save_identity_meta(
     };
     let toml_str =
         toml::to_string_pretty(&meta).map_err(|e| BluError::SerializationError(e.to_string()))?;
+    user_paths::ensure_parent(toml_path)?;
     fs::write(toml_path, toml_str)?;
     Ok(())
 }

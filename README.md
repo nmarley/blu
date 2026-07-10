@@ -114,7 +114,7 @@ blu backend diff --from default --to cold
 | Layer | Mechanism |
 |-------|-----------|
 | Identity | 24-word BIP39 mnemonic → PQ hybrid UK (ML-KEM-768 + X25519) |
-| Identity at rest | `~/.blu/identity.age` (age scrypt, N_log_n ≥ 18) |
+| Identity at rest | `$XDG_DATA_HOME/blu/identity.age` (age scrypt, N_log_n ≥ 18) |
 | KEK | One per vault under `.blu/keys/`, wrapped to your PQ recipient |
 | DEK | One per blob/index; ChaCha20-Poly1305 bulk encryption |
 | Indexes | gzip + CBOR (ciborium) + envelope encryption |

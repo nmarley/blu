@@ -4,9 +4,9 @@
 //! subcommand). It:
 //!
 //! 1. Cleans up any stale socket/PID files
-//! 2. Binds a Unix domain socket at `~/.blu/agent.sock`
+//! 2. Binds a Unix domain socket at the XDG runtime path
 //! 3. Sets socket permissions to 0600 (owner-only)
-//! 4. Writes its PID to `~/.blu/agent.pid`
+//! 4. Writes its PID to the XDG state path
 //! 5. Accepts connections and dispatches JSON-RPC requests
 //! 6. On shutdown: zeroizes secrets, removes socket and PID file
 
@@ -26,6 +26,7 @@ use crate::agent::paths::AgentPaths;
 use crate::agent::protocol::{self, Method};
 use crate::agent::state::AgentState;
 use crate::error::{BluError, Result};
+use crate::user_paths;
 
 /// Run the agent daemon. This function does not return under normal
 /// operation; it runs until it receives a shutdown request or signal.
@@ -38,6 +39,9 @@ pub fn run_daemon(paths: &AgentPaths) -> Result<()> {
 
     // Clean up stale files from a previous run
     cleanup_stale(paths);
+
+    // Ensure the runtime directory exists before binding the socket
+    user_paths::ensure_parent(&paths.socket)?;
 
     // Bind the Unix socket
     let listener = UnixListener::bind(&paths.socket).map_err(|e| {
@@ -572,7 +576,7 @@ mod test {
     #[test]
     fn daemon_status_and_shutdown() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         // Status: should be locked
@@ -621,7 +625,7 @@ mod test {
     #[test]
     fn daemon_unlock_lock_cycle() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         // Unlock with a PQ seed
@@ -695,7 +699,7 @@ mod test {
     #[test]
     fn daemon_wrap_unwrap_dek_round_trip() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         // Unlock via PQ seed
@@ -797,7 +801,7 @@ mod test {
     #[test]
     fn daemon_reloads_kek_when_kek_dir_changes() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         let seed = test_seed();
@@ -882,7 +886,7 @@ mod test {
     #[test]
     fn daemon_unlock_missing_params() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         // unlock RPC with missing passphrase -> INVALID_PARAMS
@@ -926,7 +930,7 @@ mod test {
     #[test]
     fn daemon_unlock_with_pq_seed() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         let seed = test_seed();
@@ -972,7 +976,7 @@ mod test {
     #[test]
     fn daemon_unlock_with_pq_seed_loads_kek() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let handle = start_test_daemon(&paths);
 
         let seed = test_seed();

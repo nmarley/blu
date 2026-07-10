@@ -20,7 +20,7 @@ mod test {
     fn agent_dek_provider_v2_round_trip() {
         let tmp = tempdir().unwrap();
         let tmp_path = tmp.keep();
-        let paths = AgentPaths::from_base(&tmp_path).unwrap();
+        let paths = AgentPaths::from_base(&tmp_path);
         let paths_for_daemon = paths.clone();
 
         let handle = std::thread::spawn(move || {

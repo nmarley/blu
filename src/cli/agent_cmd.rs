@@ -18,7 +18,7 @@ pub fn agent(args: AgentArgs) -> Result<(), BluError> {
 /// Unlock the agent: try biometric first, then fall back to passphrase.
 ///
 /// Neither path requires being inside a blu repository. The identity
-/// lives at `~/.blu/identity.age` and the agent resolves it directly.
+/// lives under XDG data home and the agent resolves it directly.
 pub fn unlock() -> Result<(), BluError> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
@@ -63,8 +63,8 @@ fn try_biometric_unlock(client: &AgentClient) -> Result<(), BluError> {
 
 /// Unlock using the global identity file + passphrase.
 ///
-/// No vault config is needed; the agent resolves `~/.blu/identity.age`
-/// itself. This means `blu agent unlock` works from any directory.
+/// No vault config is needed; the agent resolves the global identity
+/// file itself. This means `blu unlock` works from any directory.
 fn unlock_with_passphrase(client: &AgentClient) -> Result<(), BluError> {
     // Try without passphrase first (unencrypted key file)
     match client.unlock("") {

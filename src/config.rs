@@ -16,13 +16,14 @@ pub mod backend;
 
 /// Encryption configuration for a blu vault.
 ///
-/// The identity (private key) lives at `~/.blu/identity.age` and is
-/// resolved at runtime; it is not stored in the vault config.
+/// The identity (private key) lives at
+/// `$XDG_DATA_HOME/blu/identity.age` and is resolved at runtime; it is
+/// not stored in the vault config.
 ///
 /// Only the PQ recipient is stored. The KEK is wrapped exclusively
 /// with the post-quantum hybrid key (ML-KEM-768 + X25519). The
-/// PQ public key is recorded in `~/.blu/identity.toml` (global
-/// identity metadata) and copied into each vault config.
+/// PQ public key is recorded in `$XDG_DATA_HOME/blu/identity.toml`
+/// (global identity metadata) and copied into each vault config.
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Eq, Default)]
 pub struct EncryptionConfig {
     /// Post-quantum hybrid recipient (mlkem768x25519).

@@ -1,9 +1,10 @@
 //! Biometric (Touch ID) unlock support.
 //!
 //! On macOS, the seed is encrypted with a random device key and saved
-//! to `~/.blu/identity.enc`. The device key is stored in the macOS
-//! Keychain with biometric access control, so retrieving it requires
-//! Touch ID (or the login password on machines without Touch ID).
+//! to `$XDG_DATA_HOME/blu/identity.enc`. The device key is stored in
+//! the macOS Keychain with biometric access control, so retrieving it
+//! requires Touch ID (or the login password on machines without Touch
+//! ID).
 //!
 //! On other platforms, all functions are stubs that return errors or
 //! no-ops.
@@ -15,9 +16,7 @@ use crate::error::{BluError, Result};
 #[cfg(target_os = "macos")]
 use crate::keys::dek::Dek;
 use crate::keys::mnemonic::Seed;
-
-/// Filename for the biometric-encrypted seed.
-const IDENTITY_ENC_FILENAME: &str = "identity.enc";
+use crate::user_paths::UserPaths;
 
 /// macOS Keychain service name.
 #[cfg(target_os = "macos")]
@@ -27,11 +26,9 @@ const KEYCHAIN_SERVICE: &str = "com.blu.agent";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "device-key";
 
-/// Resolve the path to `~/.blu/identity.enc`.
+/// Resolve the path to `$XDG_DATA_HOME/blu/identity.enc`.
 fn identity_enc_path() -> Result<PathBuf> {
-    let home = dirs::home_dir()
-        .ok_or_else(|| BluError::Internal("could not determine home directory".into()))?;
-    Ok(home.join(".blu").join(IDENTITY_ENC_FILENAME))
+    Ok(UserPaths::resolve()?.identity_enc)
 }
 
 /// Whether a biometric-encrypted identity exists on disk.
@@ -45,8 +42,8 @@ pub fn is_available() -> bool {
 }
 
 /// Set up biometric unlock: encrypt the seed with a random device key,
-/// write `~/.blu/identity.enc`, and store the device key in the
-/// platform keychain with biometric access control.
+/// write `$XDG_DATA_HOME/blu/identity.enc`, and store the device key in
+/// the platform keychain with biometric access control.
 #[cfg(target_os = "macos")]
 pub fn setup(seed: &Seed) -> Result<()> {
     use rand::RngCore;
@@ -61,9 +58,7 @@ pub fn setup(seed: &Seed) -> Result<()> {
 
     // Write encrypted seed to disk
     let enc_path = identity_enc_path()?;
-    if let Some(parent) = enc_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    crate::user_paths::ensure_parent(&enc_path)?;
     fs::write(&enc_path, &encrypted)?;
 
     // Store device key in Keychain with Touch ID protection
@@ -83,8 +78,8 @@ pub fn setup(_seed: &Seed) -> Result<()> {
 }
 
 /// Unlock using biometrics: retrieve the device key from the platform
-/// keychain (triggering Touch ID), decrypt `~/.blu/identity.enc`, and
-/// return the seed.
+/// keychain (triggering Touch ID), decrypt the biometric identity file,
+/// and return the seed.
 #[cfg(target_os = "macos")]
 pub fn unlock() -> Result<Seed> {
     let enc_path = identity_enc_path()?;
@@ -235,10 +230,14 @@ mod test {
     use super::*;
 
     #[test]
-    fn identity_enc_path_is_under_home() {
+    fn identity_enc_path_matches_user_paths_seam() {
         let path = identity_enc_path().unwrap();
-        assert!(path.to_string_lossy().contains(".blu"));
-        assert!(path.to_string_lossy().ends_with("identity.enc"));
+        let expected = UserPaths::resolve().unwrap().identity_enc;
+        assert_eq!(path, expected);
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("identity.enc")
+        );
     }
 
     #[test]

@@ -21,7 +21,7 @@ pub struct AgentClient {
 }
 
 impl AgentClient {
-    /// Create a new client using the default agent paths (`~/.blu/`).
+    /// Create a new client using the default XDG agent paths.
     pub fn new() -> Result<Self> {
         let paths = AgentPaths::resolve()?;
         Ok(Self { paths })
@@ -133,7 +133,7 @@ impl AgentClient {
 
     /// Unlock the agent with a passphrase.
     ///
-    /// The agent resolves the global identity file (`~/.blu/identity.age`)
+    /// The agent resolves the global identity file (`identity.age`)
     /// itself. Returns the public key on success.
     pub fn unlock(&self, passphrase: &str) -> Result<String> {
         let resp = self.request(
@@ -298,7 +298,7 @@ mod test {
         // Keep the tempdir so it is not removed while the daemon runs.
         // Tests are short-lived so this is fine.
         let tmp_path = tmp.keep();
-        let paths = AgentPaths::from_base(&tmp_path).unwrap();
+        let paths = AgentPaths::from_base(&tmp_path);
         let paths_for_daemon = paths.clone();
 
         let handle = std::thread::spawn(move || {
@@ -350,7 +350,7 @@ mod test {
     #[test]
     fn is_running_returns_false_when_no_socket() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         let client = AgentClient::with_paths(paths);
         assert!(!client.is_running());
     }

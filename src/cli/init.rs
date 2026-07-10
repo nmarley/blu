@@ -105,7 +105,7 @@ pub fn init(args: InitArgs) -> Result<(), BluError> {
 
     println!("Initializing blu repository in {}", abs_path.display());
 
-    // Resolve the identity from global ~/.blu/identity.toml.
+    // Resolve the identity from global identity.toml (XDG data home).
     let global_meta = load_global_identity()?;
 
     let meta = global_meta.ok_or_else(|| {
@@ -143,7 +143,7 @@ pub fn init(args: InitArgs) -> Result<(), BluError> {
         }
     }
 
-    println!("Using global identity from ~/.blu/identity.toml");
+    println!("Using global identity");
     println!(
         "PQ key: {}...",
         &pq_recipient_str[..40.min(pq_recipient_str.len())]

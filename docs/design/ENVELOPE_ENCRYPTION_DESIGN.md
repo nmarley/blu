@@ -214,8 +214,8 @@ Offset  Size    Field
                                |    - Lock vault        |
                                +------------------------+
                                         |
-                               Socket: ~/.blu/agent.sock
-                               PID:    ~/.blu/agent.pid
+                               Socket: $XDG_RUNTIME_DIR/blu/agent.sock
+                               PID:    $XDG_STATE_HOME/blu/agent.pid
 ```
 
 **Protocol (JSON-RPC 2.0 over Unix socket):**
@@ -359,11 +359,12 @@ Offset  Size    Field
 
 **User Identity:**
 
-Each user has a global identity (not per-vault):
+Each user has a global identity (not per-vault), under XDG data home:
 ```
-~/.blu/
+$XDG_DATA_HOME/blu/   # default: ~/.local/share/blu/
   identity.toml       # User's public key for sharing
-  identity.age        # User's encrypted private key (optional backup)
+  identity.age        # User's encrypted private key
+  identity.enc        # Biometric-wrapped seed (macOS, optional)
 ```
 
 **identity.toml:**
@@ -575,9 +576,19 @@ multi-user invitations.
 writes; v2 still readable), organized by content hash prefix
 (e.g. `a/ab/abcd...`).
 
-### Per-User (`~/.blu/`)
+### Per-User (XDG)
 
-`~/.blu/identity.toml` holds PQ public key and metadata (safe to share):
+Resolved by `src/user_paths.rs` on all platforms (including macOS):
+
+| Path | Default | Contents |
+|------|---------|----------|
+| `$XDG_CONFIG_HOME/blu` | `~/.config/blu` | agent `config.toml` |
+| `$XDG_DATA_HOME/blu` | `~/.local/share/blu` | identity files |
+| `$XDG_STATE_HOME/blu` | `~/.local/state/blu` | `agent.pid` |
+| `$XDG_RUNTIME_DIR/blu` | (state fallback) | `agent.sock` |
+
+`$XDG_DATA_HOME/blu/identity.toml` holds PQ public key and metadata
+(safe to share):
 
 ```toml
 pq_public_key = "age1pq..."
@@ -585,15 +596,16 @@ created = "2026-07-09T12:00:00Z"
 biometric = true
 ```
 
-`~/.blu/identity.age` is the age-encrypted PQ seed (scrypt, N_log_n ≥ 18),
-optionally passphrase-protected.
+`$XDG_DATA_HOME/blu/identity.age` is the age-encrypted PQ seed
+(scrypt, N_log_n ≥ 18), optionally passphrase-protected.
 
-`~/.blu/identity.enc` (when biometric is configured) holds the
-BIP39 seed encrypted with the device key, with Keychain biometric policy
-on macOS.
+`$XDG_DATA_HOME/blu/identity.enc` (when biometric is configured) holds
+the BIP39 seed encrypted with the device key, with Keychain biometric
+policy on macOS.
 
-`~/.blu/agent.sock` and `~/.blu/agent.pid` are the agent daemon's
-Unix socket and PID file.
+`$XDG_RUNTIME_DIR/blu/agent.sock` and `$XDG_STATE_HOME/blu/agent.pid`
+are the agent daemon's Unix socket and PID file. When
+`$XDG_RUNTIME_DIR` is unset, the socket falls back to the state dir.
 
 `vault.toml` / `vault_id` are **not implemented**. Vault identity is
 the directory + config + KEK store.
@@ -755,7 +767,7 @@ Recommendation: Default to 24 words. Storage cost is minimal, security benefit i
 1. User runs: blu identity init --words 24
 2. Agent starts, generates mnemonic, derives UK
 3. User shown recovery phrase, prompted to save it
-4. identity.toml written to ~/.blu/
+4. identity.toml written to $XDG_DATA_HOME/blu/
 
 5. User runs: blu init /data/photos --backend s3 --bucket my-bucket
 6. CLI generates vault_id (UUID)

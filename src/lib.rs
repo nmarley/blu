@@ -62,6 +62,8 @@ pub mod serve;
 pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
+/// XDG Base Directory paths for user-global state
+pub mod user_paths;
 /// v2 file format: envelope encryption with KEK/DEK hierarchy
 pub mod v2format;
 /// v3 segmented AEAD blob format (fixed-size segments, prefix fetch)

@@ -1,49 +1,52 @@
 //! Resolve paths for the agent's socket and PID file.
 //!
-//! All agent state lives under `~/.blu/`. This module provides a
-//! single struct that resolves and exposes those paths.
+//! Socket and PID locations come from [`crate::user_paths::UserPaths`]
+//! (XDG runtime + state). This module keeps the agent-facing helpers
+//! (read/write PID, cleanup) in one place.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{BluError, Result};
-
-const BLU_USER_DIR: &str = ".blu";
-const SOCKET_FILENAME: &str = "agent.sock";
-const PID_FILENAME: &str = "agent.pid";
+use crate::error::Result;
+use crate::user_paths::{self, UserPaths};
 
 /// Resolved paths for agent socket and PID file.
 #[derive(Debug, Clone)]
 pub struct AgentPaths {
-    /// Directory containing agent files (`~/.blu/`).
-    pub dir: PathBuf,
-    /// Unix socket path (`~/.blu/agent.sock`).
+    /// Unix socket path (`$XDG_RUNTIME_DIR/blu/agent.sock`, or state fallback).
     pub socket: PathBuf,
-    /// PID file path (`~/.blu/agent.pid`).
+    /// PID file path (`$XDG_STATE_HOME/blu/agent.pid`).
     pub pid_file: PathBuf,
 }
 
 impl AgentPaths {
-    /// Resolve agent paths under the user's home directory.
-    ///
-    /// Creates `~/.blu/` if it does not exist.
+    /// Resolve agent paths from the process XDG environment.
     pub fn resolve() -> Result<Self> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| BluError::Internal("could not determine home directory".into()))?;
-        Self::from_base(&home)
+        Ok(Self::from_user_paths(&UserPaths::resolve()?))
     }
 
-    /// Resolve agent paths under a specified base directory.
+    /// Build agent paths from a fully resolved [`UserPaths`].
+    pub fn from_user_paths(paths: &UserPaths) -> Self {
+        Self {
+            socket: paths.agent_socket.clone(),
+            pid_file: paths.agent_pid.clone(),
+        }
+    }
+
+    /// Resolve agent paths under a temporary base (tests).
     ///
-    /// Useful for testing. Creates the directory if it does not exist.
-    pub fn from_base(base: &Path) -> Result<Self> {
-        let dir = base.join(BLU_USER_DIR);
-        fs::create_dir_all(&dir)?;
-        Ok(Self {
-            socket: dir.join(SOCKET_FILENAME),
-            pid_file: dir.join(PID_FILENAME),
-            dir,
-        })
+    /// Builds XDG-style subdirs under `base` (`config`, `data`, `state`,
+    /// `runtime`) so socket and PID land in separate dirs, matching
+    /// production layout. Does not create directories.
+    pub fn from_base(base: &Path) -> Self {
+        let paths = UserPaths::from_bases(
+            &base.join("config"),
+            &base.join("data"),
+            &base.join("state"),
+            &base.join("runtime"),
+            true,
+        );
+        Self::from_user_paths(&paths)
     }
 
     /// Check whether the agent socket file exists on disk.
@@ -59,8 +62,9 @@ impl AgentPaths {
             .and_then(|s| s.trim().parse::<u32>().ok())
     }
 
-    /// Write a PID to the PID file.
+    /// Write a PID to the PID file, creating the parent directory if needed.
     pub fn write_pid(&self, pid: u32) -> Result<()> {
+        user_paths::ensure_parent(&self.pid_file)?;
         fs::write(&self.pid_file, pid.to_string())?;
         Ok(())
     }
@@ -75,40 +79,64 @@ impl AgentPaths {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
     #[test]
-    fn resolve_creates_dir() {
+    fn resolve_layout() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
-        assert!(paths.dir.exists());
-        assert_eq!(paths.socket, tmp.path().join(".blu/agent.sock"));
-        assert_eq!(paths.pid_file, tmp.path().join(".blu/agent.pid"));
+        let paths = AgentPaths::from_base(tmp.path());
+        assert_eq!(paths.socket, tmp.path().join("runtime/agent.sock"));
+        assert_eq!(paths.pid_file, tmp.path().join("state/agent.pid"));
+        assert!(!paths.socket.parent().unwrap().exists());
+        assert!(!paths.pid_file.parent().unwrap().exists());
     }
 
     #[test]
     fn pid_round_trip() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         paths.write_pid(12345).unwrap();
         assert_eq!(paths.read_pid(), Some(12345));
+        let mode = fs::metadata(paths.pid_file.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]
     fn read_pid_missing_file() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         assert_eq!(paths.read_pid(), None);
     }
 
     #[test]
     fn cleanup_removes_files() {
         let tmp = tempdir().unwrap();
-        let paths = AgentPaths::from_base(tmp.path()).unwrap();
+        let paths = AgentPaths::from_base(tmp.path());
         paths.write_pid(1).unwrap();
+        user_paths::ensure_parent(&paths.socket).unwrap();
         fs::write(&paths.socket, "placeholder").unwrap();
         paths.cleanup();
         assert!(!paths.socket.exists());
         assert!(!paths.pid_file.exists());
+    }
+
+    #[test]
+    fn from_user_paths_maps_socket_and_pid() {
+        let tmp = tempdir().unwrap();
+        let up = UserPaths::from_bases(
+            &tmp.path().join("c"),
+            &tmp.path().join("d"),
+            &tmp.path().join("s"),
+            &tmp.path().join("r"),
+            true,
+        );
+        let paths = AgentPaths::from_user_paths(&up);
+        assert_eq!(paths.socket, up.agent_socket);
+        assert_eq!(paths.pid_file, up.agent_pid);
     }
 }
