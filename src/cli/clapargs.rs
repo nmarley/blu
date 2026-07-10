@@ -24,6 +24,8 @@ pub enum Action {
     Add(AddArgs),
     /// Initialize a new blu vault
     Init(InitArgs),
+    /// Open an existing vault from a remote backend
+    Open(OpenArgs),
     /// Sync files: add to index and encrypt (combines add + encrypt-files)
     Sync(SyncArgs),
     /// Pull indexes from remote backend
@@ -85,6 +87,47 @@ pub struct InitArgs {
     pub dir: String,
 
     /// Do not encrypt the private key with a passphrase
+    #[arg(long)]
+    pub no_passphrase: bool,
+}
+
+/// Open an existing vault whose indexes and KEK store live on a backend.
+///
+/// Creates a local `.blu/` pointing at the given backend, then pulls
+/// the UK-wrapped KEK store and encrypted indexes. Does not generate a
+/// new KEK. Requires a global identity (`blu identity recover`).
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct OpenArgs {
+    /// Directory to open the vault into (created if missing)
+    #[arg(long, default_value = ".")]
+    pub dir: String,
+
+    /// Backend type (local, s3)
+    #[arg(long = "type")]
+    pub backend_type: String,
+
+    /// Path for local backends
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// S3 bucket name
+    #[arg(long)]
+    pub bucket: Option<String>,
+
+    /// S3 key prefix
+    #[arg(long)]
+    pub prefix: Option<String>,
+
+    /// AWS region
+    #[arg(long)]
+    pub region: Option<String>,
+
+    /// Name for the backend in config
+    #[arg(long, default_value = "default")]
+    pub backend_name: String,
+
+    /// Do not prompt for passphrase (fail if identity is encrypted)
     #[arg(long)]
     pub no_passphrase: bool,
 }

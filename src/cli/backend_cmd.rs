@@ -537,11 +537,12 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
         )));
     }
 
-    // A mirrored backend is useless without indexes, so push them to the
-    // destination after a real (non-dry-run) mirror completes. This makes
-    // the destination a complete, recoverable replica.
+    // A mirrored backend is useless without indexes and the UK-wrapped
+    // KEK store, so push them to the destination after a real
+    // (non-dry-run) mirror completes. push_indexes also uploads keys,
+    // making the destination a complete, recoverable replica.
     if !dry_run {
-        println!("Syncing indexes to \"{}\"...", args.to);
+        println!("Syncing indexes and KEK store to \"{}\"...", args.to);
         crate::cli::helpers::push_indexes_or_fail(&cfg, Some(&args.to), Some(&to_backend_for_push))
             .await?;
     }

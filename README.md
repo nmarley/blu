@@ -54,7 +54,7 @@ blu doctor
 Optional: put a `.bluignore` at the vault root (gitignore syntax). The
 `.blu/` and `.git/` directories are always skipped.
 
-### Restore
+### Restore files (same machine)
 
 ```sh
 blu restore-files --path "photos/*.jpg" --to /tmp/restored
@@ -62,10 +62,38 @@ blu restore-files --all --to /tmp/restored
 blu restore-files --file-hashes abc123
 ```
 
-### Pull indexes on another machine
+### Restore on a new machine
+
+Vault-changing commands push encrypted indexes **and** the UK-wrapped
+KEK store to the backend. On a fresh machine you need only your
+mnemonic, backend location, and AWS credentials:
 
 ```sh
-# Indexes are pushed automatically after vault-changing commands.
+# 1. Recover identity from the 24-word mnemonic
+blu identity recover
+
+# 2. Open the vault from S3 (writes local .blu/, pulls keys + indexes)
+blu open --type s3 \
+  --bucket my-bucket \
+  --prefix backups/photos \
+  --region us-east-1 \
+  --dir ~/Archives/photos
+
+# 3. Unlock and restore
+cd ~/Archives/photos
+blu unlock
+blu ls
+blu restore-files --all --to /tmp/restored
+```
+
+If the backend was created before KEK push existed, run any index-pushing
+command once on the **original** machine (for example `blu sync`) so
+`keys/kek.toml` is published, then retry `blu open`.
+
+### Pull indexes (existing local vault)
+
+```sh
+# Indexes and KEK store are pushed after vault-changing commands.
 blu pull --force
 ```
 
@@ -115,12 +143,14 @@ blu backend diff --from default --to cold
 |-------|-----------|
 | Identity | 24-word BIP39 mnemonic → PQ hybrid UK (ML-KEM-768 + X25519) |
 | Identity at rest | `$XDG_DATA_HOME/blu/identity.age` (age scrypt, N_log_n ≥ 18) |
-| KEK | One per vault under `.blu/keys/`, wrapped to your PQ recipient |
+| KEK | One per vault under `.blu/keys/`, age-wrapped to your PQ recipient; also pushed to the backend |
 | DEK | One per blob/index; ChaCha20-Poly1305 bulk encryption |
-| Indexes | gzip + CBOR (ciborium) + envelope encryption |
+| Indexes | gzip + CBOR (ciborium) + envelope encryption; pushed with the KEK store |
 
 - Private key material never leaves your machine (or the agent process).
-- There is no key escrow. Lose the mnemonic and identity file, lose the data.
+- The backend holds only ciphertext (blobs, indexes, UK-wrapped KEK).
+- There is no key escrow. Lose the mnemonic, lose the data.
+
 - macOS: agent can gate unlock with Touch ID via Keychain.
 - Linux: passphrase / mnemonic only (no biometric).
 
@@ -132,6 +162,7 @@ blu backend diff --from default --to cold
 | `unlock` / `lock` | Agent session |
 | `agent status` / `stop` | Agent daemon control |
 | `init` | Create a vault |
+| `open` | Open an existing vault from a backend |
 | `sync` | Add paths and encrypt |
 | `status` | Working-tree vs index |
 | `doctor` | Vault health diagnostics |

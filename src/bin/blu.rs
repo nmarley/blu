@@ -36,6 +36,7 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::Identity(a) => return cli::identity(a.clone()),
         clapargs::Action::Lock => return cli::lock(),
         clapargs::Action::Unlock => return cli::unlock(),
+        clapargs::Action::Open(a) => return cli::open(a.clone()).await,
         clapargs::Action::AgentDaemon => {
             let paths = blu::agent::AgentPaths::resolve()?;
             return blu::agent::run_daemon(&paths);
@@ -47,7 +48,7 @@ pub async fn run() -> Result<(), BluError> {
         Some(dir) => dir,
         None => {
             match args.action {
-                // init can run without all these other checks ...
+                // init can run without an existing repository
                 clapargs::Action::Init(a) => return cli::init(a),
                 _ => {
                     return Err(BluError::NotARepository);
@@ -101,6 +102,7 @@ pub async fn run() -> Result<(), BluError> {
         | clapargs::Action::AgentDaemon
         | clapargs::Action::Identity(_)
         | clapargs::Action::Lock
+        | clapargs::Action::Open(_)
         | clapargs::Action::Unlock => {
             unreachable!()
         }

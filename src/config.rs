@@ -336,10 +336,11 @@ impl Config {
         PathBuf::from("indexes").join(&self.tag_index_filename)
     }
 
-    /// Push local indexes to the remote backend.
+    /// Push local indexes and KEK store to the remote backend.
     ///
-    /// This uploads the encrypted index files to the backend, making them
-    /// accessible from other machines with the same key.
+    /// Uploads encrypted index files and the UK-wrapped KEK store so
+    /// another machine with the same identity can open the vault from
+    /// the backend alone.
     pub async fn push_indexes(&self, backend: &BackendKind) -> Result<(), BluError> {
         // Read local index data (synchronous fs reads are fast)
         let plain = self.read_local_index(&self.plain_index_filename);
@@ -348,13 +349,20 @@ impl Config {
 
         // Upload all indexes concurrently
         let (r_plain, r_blob, r_tag) = tokio::join!(
-            self.push_one_index(backend, plain, self.remote_plain_index_path(), "plain"),
-            self.push_one_index(backend, blob, self.remote_blob_index_path(), "blob"),
-            self.push_one_index(backend, tag, self.remote_tag_index_path(), "tag"),
+            self.push_one_file(
+                backend,
+                plain,
+                self.remote_plain_index_path(),
+                "plain index"
+            ),
+            self.push_one_file(backend, blob, self.remote_blob_index_path(), "blob index"),
+            self.push_one_file(backend, tag, self.remote_tag_index_path(), "tag index"),
         );
         r_plain?;
         r_blob?;
         r_tag?;
+
+        self.push_kek_store(backend).await?;
 
         Ok(())
     }
@@ -369,8 +377,8 @@ impl Config {
         }
     }
 
-    /// Push a single index file to the backend (no-op if data is None).
-    async fn push_one_index(
+    /// Push a single file to the backend (no-op if data is None).
+    async fn push_one_file(
         &self,
         backend: &BackendKind,
         data: Option<Vec<u8>>,
@@ -378,29 +386,71 @@ impl Config {
         label: &str,
     ) -> Result<(), BluError> {
         if let Some(data) = data {
-            info!("Pushing {} index to {:?}", label, remote_path);
+            info!("Pushing {} to {:?}", label, remote_path);
             backend.write_to_path(&remote_path, &data).await?;
         }
         Ok(())
     }
 
-    /// Pull indexes from the remote backend.
+    /// Push the local KEK store (`keys/kek.toml` + wrapped KEKs).
     ///
-    /// Downloads the encrypted index files from the backend
-    /// concurrently, overwriting local indexes.
+    /// No-op when no local KEK store exists. Objects are already
+    /// age-wrapped to authorized UKs; they are uploaded as opaque
+    /// ciphertext.
+    async fn push_kek_store(&self, backend: &BackendKind) -> Result<(), BluError> {
+        let store = crate::keys::kek::KekStore::new(&self.bludir());
+        if !store.exists() {
+            return Ok(());
+        }
+
+        let metadata = store.load_metadata()?;
+        let meta_local = self.bludir().join("keys/kek.toml");
+        let meta_bytes = fs::read(&meta_local)?;
+        self.push_one_file(
+            backend,
+            Some(meta_bytes),
+            PathBuf::from("keys/kek.toml"),
+            "kek metadata",
+        )
+        .await?;
+
+        for version in &metadata.versions {
+            let local = self
+                .bludir()
+                .join(format!("keys/kek_v{}/wrapped.age", version.version));
+            let remote = PathBuf::from(format!("keys/kek_v{}/wrapped.age", version.version));
+            if local.exists() {
+                let data = fs::read(&local)?;
+                self.push_one_file(
+                    backend,
+                    Some(data),
+                    remote,
+                    &format!("kek v{}", version.version),
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Pull indexes and KEK store from the remote backend.
+    ///
+    /// Downloads encrypted index files and the UK-wrapped KEK store,
+    /// overwriting local copies when present remotely.
     pub async fn pull_indexes(&self, backend: &BackendKind) -> Result<(), BluError> {
         let (r_plain, r_blob, r_tag) = tokio::join!(
-            self.pull_one_index(
+            self.pull_one_file(
                 backend,
                 self.remote_plain_index_path(),
                 self.idxdir().join(&self.plain_index_filename),
             ),
-            self.pull_one_index(
+            self.pull_one_file(
                 backend,
                 self.remote_blob_index_path(),
                 self.idxdir().join(&self.blob_index_filename),
             ),
-            self.pull_one_index(
+            self.pull_one_file(
                 backend,
                 self.remote_tag_index_path(),
                 self.idxdir().join(&self.tag_index_filename),
@@ -410,11 +460,13 @@ impl Config {
         r_blob?;
         r_tag?;
 
+        self.pull_kek_store(backend).await?;
+
         Ok(())
     }
 
-    /// Pull a single index from the backend if it exists remotely.
-    async fn pull_one_index(
+    /// Pull a single file from the backend if it exists remotely.
+    async fn pull_one_file(
         &self,
         backend: &BackendKind,
         remote_path: PathBuf,
@@ -426,8 +478,44 @@ impl Config {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&local_path, data)?;
-            info!("Pulled index {:?}", remote_path);
+            info!("Pulled {:?}", remote_path);
         }
+        Ok(())
+    }
+
+    /// Pull the KEK store from the backend.
+    ///
+    /// Fetches `keys/kek.toml` first (manifest of versions), then each
+    /// `keys/kek_vN/wrapped.age`. No-op when remote metadata is absent
+    /// (older backends that never published keys).
+    async fn pull_kek_store(&self, backend: &BackendKind) -> Result<(), BluError> {
+        let remote_meta = PathBuf::from("keys/kek.toml");
+        if !backend.exists(&remote_meta).await? {
+            return Ok(());
+        }
+
+        let meta_bytes = backend.read_from_path(&remote_meta).await?;
+        let metadata: crate::keys::kek::KekMetadata = toml::from_str(
+            std::str::from_utf8(&meta_bytes)
+                .map_err(|e| BluError::InvalidConfig(format!("remote kek.toml: {}", e)))?,
+        )
+        .map_err(|e| BluError::InvalidConfig(format!("remote kek.toml: {}", e)))?;
+
+        let local_meta = self.bludir().join("keys/kek.toml");
+        if let Some(parent) = local_meta.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&local_meta, &meta_bytes)?;
+        info!("Pulled {:?}", remote_meta);
+
+        for version in &metadata.versions {
+            let remote = PathBuf::from(format!("keys/kek_v{}/wrapped.age", version.version));
+            let local = self
+                .bludir()
+                .join(format!("keys/kek_v{}/wrapped.age", version.version));
+            self.pull_one_file(backend, remote, local).await?;
+        }
+
         Ok(())
     }
 }
@@ -590,5 +678,161 @@ pub(crate) mod test {
             "expected 'not found' error, got: {}",
             err
         );
+    }
+
+    /// Build a Config with a local backend at `datadir` and basedir `vault`.
+    fn local_backend_config(datadir: &std::path::Path, vault: &std::path::Path) -> Config {
+        let toml_str = format!(
+            r#"
+            blu_version = "0.7.0"
+            default_backend = "local"
+
+            [backends.local]
+            type = "local"
+            path = "{}"
+            "#,
+            datadir.display()
+        );
+        let mut cfg: Config = toml::from_str(&toml_str).unwrap();
+        cfg.set_basedir(vault.to_path_buf());
+        cfg
+    }
+
+    #[tokio::test]
+    async fn push_indexes_uploads_kek_store() {
+        use crate::keys::kek::KekStore;
+        use crate::keys::mnemonic;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu")).unwrap();
+
+        let m = mnemonic::parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
+        let user = pq_recipient.to_string();
+        let recipients: Vec<&dyn age::Recipient> = vec![&pq_recipient as &dyn age::Recipient];
+
+        let store = KekStore::new(&vault.join(".blu"));
+        store.init_with(&recipients, &[user]).unwrap();
+
+        let cfg = local_backend_config(&datadir, &vault);
+        let idxdir = cfg.idxdir();
+        fs::create_dir_all(&idxdir).unwrap();
+        fs::write(idxdir.join("index.dat"), b"plain").unwrap();
+
+        cfg.push_indexes(&cfg.init_storage_backend().await.unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs::read(datadir.join("indexes/index.dat")).unwrap(),
+            b"plain"
+        );
+        assert!(datadir.join("keys/kek.toml").exists());
+        assert!(datadir.join("keys/kek_v0/wrapped.age").exists());
+
+        let local_meta = fs::read(vault.join(".blu/keys/kek.toml")).unwrap();
+        let remote_meta = fs::read(datadir.join("keys/kek.toml")).unwrap();
+        assert_eq!(local_meta, remote_meta);
+
+        let local_wrapped = fs::read(vault.join(".blu/keys/kek_v0/wrapped.age")).unwrap();
+        let remote_wrapped = fs::read(datadir.join("keys/kek_v0/wrapped.age")).unwrap();
+        assert_eq!(local_wrapped, remote_wrapped);
+    }
+
+    #[tokio::test]
+    async fn pull_indexes_downloads_kek_store() {
+        use crate::keys::kek::KekStore;
+        use crate::keys::mnemonic;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let source_vault = tmp.path().join("source");
+        let dest_vault = tmp.path().join("dest");
+        fs::create_dir_all(source_vault.join(".blu")).unwrap();
+        fs::create_dir_all(dest_vault.join(".blu")).unwrap();
+
+        let m = mnemonic::parse_mnemonic(
+            "abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon abandon abandon abandon abandon abandon \
+             abandon abandon art",
+        )
+        .unwrap();
+        let seed = mnemonic::mnemonic_to_seed(&m, "");
+        let pq_recipient = mnemonic::derive_pq_recipient(&seed).unwrap();
+        let user = pq_recipient.to_string();
+        let recipients: Vec<&dyn age::Recipient> = vec![&pq_recipient as &dyn age::Recipient];
+
+        let store = KekStore::new(&source_vault.join(".blu"));
+        store.init_with(&recipients, &[user]).unwrap();
+
+        let source_cfg = local_backend_config(&datadir, &source_vault);
+        let idxdir = source_cfg.idxdir();
+        fs::create_dir_all(&idxdir).unwrap();
+        fs::write(idxdir.join("index.dat"), b"plain-index").unwrap();
+        fs::write(idxdir.join("blob_index.dat"), b"blob-index").unwrap();
+
+        let backend = source_cfg.init_storage_backend().await.unwrap();
+        source_cfg.push_indexes(&backend).await.unwrap();
+
+        let dest_cfg = local_backend_config(&datadir, &dest_vault);
+        dest_cfg.pull_indexes(&backend).await.unwrap();
+
+        assert_eq!(
+            fs::read(dest_vault.join(".blu/indexes/index.dat")).unwrap(),
+            b"plain-index"
+        );
+        assert_eq!(
+            fs::read(dest_vault.join(".blu/indexes/blob_index.dat")).unwrap(),
+            b"blob-index"
+        );
+
+        let source_meta = fs::read(source_vault.join(".blu/keys/kek.toml")).unwrap();
+        let dest_meta = fs::read(dest_vault.join(".blu/keys/kek.toml")).unwrap();
+        assert_eq!(source_meta, dest_meta);
+
+        let source_wrapped = fs::read(source_vault.join(".blu/keys/kek_v0/wrapped.age")).unwrap();
+        let dest_wrapped = fs::read(dest_vault.join(".blu/keys/kek_v0/wrapped.age")).unwrap();
+        assert_eq!(source_wrapped, dest_wrapped);
+
+        // Destination KEK store must be unwrapable with the same identity.
+        let pq_identity = mnemonic::derive_pq_identity(&seed).unwrap();
+        let dest_store = KekStore::new(&dest_vault.join(".blu"));
+        let (kek, version) = dest_store
+            .unwrap_current_kek_with(&[&pq_identity as &dyn age::Identity])
+            .unwrap();
+        assert_eq!(version, 0);
+        assert_eq!(kek.as_bytes().len(), 32);
+    }
+
+    #[tokio::test]
+    async fn pull_indexes_without_remote_kek_is_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu")).unwrap();
+
+        // Seed backend with indexes only (legacy shape, no keys/).
+        fs::create_dir_all(datadir.join("indexes")).unwrap();
+        fs::write(datadir.join("indexes/index.dat"), b"legacy").unwrap();
+
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+        cfg.pull_indexes(&backend).await.unwrap();
+
+        assert_eq!(
+            fs::read(vault.join(".blu/indexes/index.dat")).unwrap(),
+            b"legacy"
+        );
+        assert!(!vault.join(".blu/keys/kek.toml").exists());
     }
 }

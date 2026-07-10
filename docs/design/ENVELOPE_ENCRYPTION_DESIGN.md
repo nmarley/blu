@@ -11,6 +11,9 @@ key hierarchy, envelope encryption, agent protocol, multi-user access
 - BIP39 **24-word** mnemonic identity (only length supported in code)
 - PQ hybrid user key only (ML-KEM-768 + X25519, `age1pq...`)
 - KEK store under `.blu/keys/` with versioned wrapped.age files
+- KEK store pushed/pulled with indexes (`keys/kek.toml`,
+  `keys/kek_vN/wrapped.age` on the backend)
+- `blu open` bootstrap from backend (no new KEK; requires identity)
 - DEK wrap/unwrap via agent or local provider; bulk ChaCha20-Poly1305
 - v2 envelope for indexes (`BLUI`); v3 segmented AEAD for new blobs
   (`BLUB`), v2 blobs still readable
@@ -531,23 +534,25 @@ Save to PDF? [Y/n] y
 Saved to: blu-recovery-kit-2024-01-15.pdf
 ```
 
-**Recovery Process:**
+**Recovery Process (shipped):**
 
 ```bash
 $ blu identity recover
-Enter your recovery phrase (24 words):
-> abandon ability able about above absent guitar hero idea jazz kite lamp oak piano queen rain solar table tree uncle valve water xbox yard
+# enter 24 words (+ optional mnemonic passphrase)
 
-Enter passphrase (or press Enter for none):
-> ********
+$ blu open --type s3 --bucket my-bucket --prefix backups/photos \
+    --region us-east-1 --dir ~/Archives/photos
+# pulls UK-wrapped KEK store + encrypted indexes from the backend
 
-Deriving keys...
-Identity recovered!
-Public key: age1abc123...
-
-Your identity is now active. You can access any vaults
-where this identity was authorized.
+$ cd ~/Archives/photos
+$ blu unlock
+$ blu restore-files --all --to /tmp/restored
 ```
+
+Identity recovery alone is not enough: the vault KEK is random and
+stored age-wrapped under `keys/` on the backend. `blu open` pulls that
+store so the recovered UK can unwrap it. Backend location (bucket,
+prefix, region) is not secret and must be known out of band.
 
 ## File Structure
 
@@ -563,7 +568,9 @@ see Global below.
 `.blu/keys/` contains the KEK store: `kek.toml` (metadata with
 version history and authorized users) and `kek_vN/wrapped.age`
 directories (one per KEK version, each containing the KEK encrypted
-via age to authorized recipients).
+via age to authorized recipients). The same layout is pushed to the
+backend under `keys/` so a fresh machine can recover with only the
+mnemonic and backend location (`blu open`).
 
 `.blu/invitations/` (future, not yet implemented) will hold pending
 multi-user invitations.
@@ -624,6 +631,7 @@ blu identity recover
 
 ```bash
 blu init <path>
+blu open --type s3 --bucket <b> [--prefix <p>] [--region <r>] [--dir <path>]
 blu unlock / blu lock
 blu sync
 blu ls
