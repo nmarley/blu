@@ -12,11 +12,12 @@ use crate::blob::BlobBlockLocation;
 use crate::cli::clapargs::RestoreFilesArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::compression::decompress;
-use crate::dek_provider::{decrypt_envelope, DekProvider};
+use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, DekProvider};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
 use crate::storage;
+use crate::v3format;
 
 /// Progress event sent from prefetch workers to the progress consumer.
 enum PrefetchEvent {
@@ -371,21 +372,11 @@ async fn prefetch_blobs(
 
                     let bytes = raw.len() as u64;
 
-                    let decrypted = match decrypt_envelope(&raw, &k) {
+                    let decompressed = match decrypt_blob_to_plaintext(&raw, &k) {
                         Ok(d) => d,
                         Err(e) => {
                             let msg =
                                 format!("error decrypting blob {}: {}", blob_path.display(), e);
-                            let _ = tx.send(PrefetchEvent::Failed(msg)).await;
-                            return;
-                        }
-                    };
-
-                    let decompressed = match decompress(&decrypted) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            let msg =
-                                format!("error decompressing blob {}: {}", blob_path.display(), e);
                             let _ = tx.send(PrefetchEvent::Failed(msg)).await;
                             return;
                         }
@@ -479,4 +470,83 @@ fn get_cached_bytes<'a>(
     })?;
     let pos = &location.position;
     Ok(&full_data[pos.offset..pos.offset + pos.size])
+}
+
+/// Decrypt and decompress a whole blob file into plaintext chunk packing.
+///
+/// Handles both v2 (single AEAD box) and v3 (segmented AEAD). Matches
+/// the full-blob path used by [`crate::blob::EncBlobReader`] so restore
+/// can open vaults written by current sync/encrypt.
+fn decrypt_blob_to_plaintext(raw: &[u8], keys: &DekProvider) -> Result<Vec<u8>, BluError> {
+    match v3format::peek_version(raw) {
+        Some(v3format::FORMAT_VERSION_V3) => {
+            let (header, _) = v3format::read_header(raw)?;
+            let last_seg = header.segment_count.saturating_sub(1);
+            decrypt_envelope_segmented_prefix(raw, last_seg, keys)
+        }
+        _ => {
+            let decrypted = decrypt_envelope(raw, keys)?;
+            decompress(&decrypted).map_err(|e| {
+                BluError::DecryptionFailed(format!("decompress after v2 decrypt: {}", e))
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::compression::compress;
+    use crate::dek_provider::{encrypt_envelope, encrypt_envelope_segmented};
+    use crate::keys::kek::Kek;
+    use crate::v2format::FileType;
+
+    fn local_keys() -> DekProvider {
+        DekProvider::Local {
+            kek: Kek::generate(),
+            kek_version: 0,
+        }
+    }
+
+    #[test]
+    fn decrypt_blob_to_plaintext_v2() {
+        let keys = local_keys();
+        let plain = b"hello v2 restore path";
+        let compressed = compress(plain).unwrap();
+        let raw = encrypt_envelope(&compressed, FileType::Blob, &keys).unwrap();
+        assert_eq!(v3format::peek_version(&raw), Some(2));
+
+        let out = decrypt_blob_to_plaintext(&raw, &keys).unwrap();
+        assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn decrypt_blob_to_plaintext_v3() {
+        let keys = local_keys();
+        let plain = b"hello v3 restore path that is a bit longer for segments";
+        let compressed = compress(plain).unwrap();
+        let raw = encrypt_envelope_segmented(&compressed, 64, &keys).unwrap();
+        assert_eq!(
+            v3format::peek_version(&raw),
+            Some(v3format::FORMAT_VERSION_V3)
+        );
+
+        let out = decrypt_blob_to_plaintext(&raw, &keys).unwrap();
+        assert_eq!(out, plain);
+    }
+
+    #[test]
+    fn decrypt_blob_to_plaintext_v3_rejects_wrong_kek() {
+        let keys_write = local_keys();
+        let keys_read = local_keys();
+        let compressed = compress(b"secret").unwrap();
+        let raw = encrypt_envelope_segmented(&compressed, 64, &keys_write).unwrap();
+
+        let err = decrypt_blob_to_plaintext(&raw, &keys_read).unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("decrypt")
+                || err.to_string().to_lowercase().contains("fail"),
+            "unexpected error: {err}"
+        );
+    }
 }
