@@ -24,7 +24,6 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -44,7 +43,7 @@ impl Kek {
     /// Generate a new random KEK using the OS CSPRNG.
     pub fn generate() -> Self {
         let mut bytes = [0u8; KEK_SIZE];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         Self { bytes }
     }
 
@@ -550,10 +549,8 @@ mod test {
     fn pq_wrap_unwrap_round_trip() {
         use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
         use crate::keys::pq::{PqIdentity, PqRecipient};
-        use rand::RngCore;
-
         let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        rand::fill(&mut seed_bytes);
         let seed = HybridSeed::new(seed_bytes);
 
         let recipient = PqRecipient::new(public_key_from_seed(&seed));
@@ -570,14 +567,12 @@ mod test {
     fn pq_store_init_and_unwrap() {
         use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
         use crate::keys::pq::{PqIdentity, PqRecipient};
-        use rand::RngCore;
-
         let tmp = tempdir().unwrap();
         let blu_dir = tmp.path().join(".blu");
         fs::create_dir_all(&blu_dir).unwrap();
 
         let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        rand::fill(&mut seed_bytes);
         let seed = HybridSeed::new(seed_bytes);
 
         let recipient = PqRecipient::new(public_key_from_seed(&seed));
@@ -603,12 +598,10 @@ mod test {
     fn pq_wrong_identity_fails() {
         use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed};
         use crate::keys::pq::{PqIdentity, PqRecipient};
-        use rand::RngCore;
-
         let mut s1 = [0u8; 32];
         let mut s2 = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut s1);
-        rand::rngs::OsRng.fill_bytes(&mut s2);
+        rand::fill(&mut s1);
+        rand::fill(&mut s2);
 
         let recipient1 = PqRecipient::new(public_key_from_seed(&HybridSeed::new(s1)));
         let identity2 = PqIdentity::new(HybridSeed::new(s2));

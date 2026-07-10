@@ -46,11 +46,9 @@ pub fn is_available() -> bool {
 /// the platform keychain with biometric access control.
 #[cfg(target_os = "macos")]
 pub fn setup(seed: &Seed) -> Result<()> {
-    use rand::RngCore;
-
     // Generate a random 256-bit device key
     let mut device_key_bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut device_key_bytes);
+    rand::fill(&mut device_key_bytes);
 
     // Encrypt the seed with the device key
     let dek = Dek::from_bytes(&device_key_bytes)?;
@@ -276,14 +274,13 @@ mod test {
         // Test the encrypt/decrypt logic without touching the Keychain
         use crate::keys::dek::Dek;
         use crate::keys::mnemonic;
-        use rand::RngCore;
 
         let m = mnemonic::generate_mnemonic().unwrap();
         let seed = mnemonic::mnemonic_to_seed(&m, "");
 
         // Simulate what setup() does
         let mut device_key = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut device_key);
+        rand::fill(&mut device_key);
 
         let dek = Dek::from_bytes(&device_key).unwrap();
         let encrypted = dek.encrypt_data(seed.as_bytes()).unwrap();

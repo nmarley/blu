@@ -20,7 +20,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use chrono::NaiveDateTime;
-use rand::RngCore;
+
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::signal::unix::{signal, SignalKind};
@@ -1316,7 +1316,7 @@ async fn create_multipart(state: &ServeState, bucket: &str, key: &str) -> axum::
 /// Generate a random 16-byte hex upload_id (32 ASCII chars).
 fn generate_upload_id() -> String {
     let mut bytes = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::fill(&mut bytes);
     hex::encode(bytes)
 }
 

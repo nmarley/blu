@@ -19,7 +19,7 @@
 //! use a recovery kit.
 
 use hkdf::Hkdf;
-use rand::RngCore;
+
 use sha2::Sha256;
 use zeroize::ZeroizeOnDrop;
 
@@ -72,7 +72,7 @@ impl DerivedKey {
 /// Uses the OS CSPRNG for 256 bits of entropy (24 words).
 pub fn generate_mnemonic() -> Result<bip39::Mnemonic> {
     let mut entropy = [0u8; 32]; // 256 bits = 24 words
-    rand::rngs::OsRng.fill_bytes(&mut entropy);
+    rand::fill(&mut entropy);
     let mnemonic = bip39::Mnemonic::from_entropy(&entropy)
         .map_err(|e| BluError::Internal(format!("mnemonic generation failed: {}", e)))?;
     entropy.iter_mut().for_each(|b| *b = 0); // zeroize
@@ -286,7 +286,7 @@ mod test {
 
         // Wrap a file key
         let file_key = age_core::format::FileKey::init_with_mut(|fk| {
-            rand::rngs::OsRng.fill_bytes(fk);
+            rand::fill(fk);
         });
 
         let (stanzas, labels) = recipient.wrap_file_key(&file_key).unwrap();

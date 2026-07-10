@@ -218,13 +218,11 @@ pub fn open_base(
 mod test {
     use super::*;
     use crate::keys::hybrid_kem::{public_key_from_seed, HybridSeed, HYBRID_CT_SIZE};
-    use rand::RngCore;
-
     const AGE_INFO: &[u8] = b"age-encryption.org/mlkem768x25519";
 
     fn random_seed() -> HybridSeed {
         let mut bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         HybridSeed::new(bytes)
     }
 

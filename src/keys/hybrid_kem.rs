@@ -26,7 +26,6 @@
 use ml_kem::array::Array;
 use ml_kem::kem::{Decapsulate, Encapsulate, FromSeed};
 use ml_kem::{EncapsulationKey768, KeyExport, MlKem768};
-use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519StaticSecret};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -232,7 +231,7 @@ pub fn encapsulate(pk: &HybridPublicKey) -> Result<(HybridCiphertext, [u8; SHARE
         .map_err(|_| BluError::InvalidKeyFormat("bad ML-KEM EK".into()))?;
     let (ct_pq, ss_pq) = mlkem_ek.encapsulate();
 
-    let eph_secret = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
+    let eph_secret = x25519_dalek::EphemeralSecret::random();
     let eph_public = X25519PublicKey::from(&eph_secret);
     let recipient_x25519 = X25519PublicKey::from(pk.x25519_pk_bytes());
     let ss_t = eph_secret.diffie_hellman(&recipient_x25519);
@@ -290,11 +289,10 @@ pub fn decapsulate(seed: &HybridSeed, ct: &HybridCiphertext) -> Result<[u8; SHAR
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::RngCore;
 
     fn random_seed() -> HybridSeed {
         let mut bytes = [0u8; SEED_SIZE];
-        OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         HybridSeed::new(bytes)
     }
 

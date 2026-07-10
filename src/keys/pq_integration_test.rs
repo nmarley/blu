@@ -8,14 +8,12 @@
 mod test {
     use std::io::{Read, Write};
 
-    use age::{Identity, Recipient};
-    use rand::RngCore;
-
     use crate::keys::dek::{self, Dek};
     use crate::keys::hybrid_kem::{self, HybridSeed};
     use crate::keys::kek::KekStore;
     use crate::keys::mnemonic;
     use crate::keys::pq::{self, PqIdentity, PqRecipient};
+    use age::{Identity, Recipient};
 
     #[test]
     fn full_pipeline_mnemonic_to_data() {
@@ -109,7 +107,7 @@ mod test {
         // then decrypt it. This exercises the age crate's
         // Encryptor/Decryptor with our custom Recipient/Identity.
         let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        rand::fill(&mut seed_bytes);
         let seed = HybridSeed::new(seed_bytes);
 
         let recipient = PqRecipient::new(hybrid_kem::public_key_from_seed(&seed));

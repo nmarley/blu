@@ -12,7 +12,7 @@
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
-use rand::RngCore;
+
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::error::{BluError, Result};
@@ -73,7 +73,7 @@ impl Dek {
     /// Generate a new random DEK using the OS CSPRNG.
     pub fn generate() -> Self {
         let mut bytes = [0u8; DEK_SIZE];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         Self { bytes }
     }
 
@@ -104,7 +104,7 @@ impl Dek {
         let cipher = ChaCha20Poly1305::new(kek.as_bytes().into());
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        rand::fill(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher
@@ -153,7 +153,7 @@ impl Dek {
         let cipher = ChaCha20Poly1305::new((&self.bytes).into());
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
-        rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+        rand::fill(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
 
         let ciphertext = cipher

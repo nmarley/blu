@@ -415,7 +415,6 @@ impl AgentState {
 #[cfg(test)]
 mod test {
     use super::*;
-    use rand::RngCore;
 
     fn test_seed() -> HybridSeed {
         HybridSeed::new([42u8; 32])
@@ -613,7 +612,7 @@ mod test {
 
         // Create a PQ seed and unlock with it
         let mut seed_bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut seed_bytes);
+        rand::fill(&mut seed_bytes);
         let seed = HybridSeed::new(seed_bytes);
         let recipient = PqRecipient::new(public_key_from_seed(&seed));
         state.unlock_with_pq_seed(seed).unwrap();

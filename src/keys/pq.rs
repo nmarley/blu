@@ -246,11 +246,9 @@ mod test {
     use age::Identity;
     use age::Recipient;
     use age_core::secrecy::ExposeSecret;
-    use rand::RngCore;
-
     fn random_seed() -> HybridSeed {
         let mut bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         HybridSeed::new(bytes)
     }
 
@@ -296,7 +294,7 @@ mod test {
 
         // Create a file key
         let file_key = FileKey::init_with_mut(|fk| {
-            rand::rngs::OsRng.fill_bytes(fk);
+            rand::fill(fk);
         });
 
         // Wrap
@@ -359,7 +357,7 @@ mod test {
         let identity2 = PqIdentity::new(seed2);
 
         let file_key = FileKey::init_with_mut(|fk| {
-            rand::rngs::OsRng.fill_bytes(fk);
+            rand::fill(fk);
         });
 
         let (stanzas, _) = recipient.wrap_file_key(&file_key).unwrap();
@@ -414,7 +412,7 @@ mod test {
         let recipient = PqRecipient::new(public_key_from_seed(&seed));
 
         let file_key = FileKey::init_with_mut(|fk| {
-            rand::rngs::OsRng.fill_bytes(fk);
+            rand::fill(fk);
         });
 
         let (stanzas, _) = recipient.wrap_file_key(&file_key).unwrap();
