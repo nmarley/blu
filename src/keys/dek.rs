@@ -105,10 +105,10 @@ impl Dek {
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, self.bytes.as_ref())
+            .encrypt(&nonce, self.bytes.as_ref())
             .map_err(|e| BluError::EncryptionFailed(format!("DEK wrap: {}", e)))?;
 
         // nonce || ciphertext+tag
@@ -133,11 +133,12 @@ impl Dek {
         }
 
         let (nonce_bytes, ciphertext_and_tag) = wrapped.split_at(NONCE_SIZE);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes)
+            .map_err(|_| BluError::DecryptionFailed("DEK unwrap: bad nonce length".into()))?;
 
         let cipher = ChaCha20Poly1305::new(kek.as_bytes().into());
         let mut plaintext = cipher
-            .decrypt(nonce, ciphertext_and_tag)
+            .decrypt(&nonce, ciphertext_and_tag)
             .map_err(|_| BluError::DecryptionFailed("DEK unwrap: authentication failed".into()))?;
 
         let dek = Self::from_bytes(&plaintext)?;
@@ -154,10 +155,10 @@ impl Dek {
 
         let mut nonce_bytes = [0u8; NONCE_SIZE];
         rand::fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let ciphertext = cipher
-            .encrypt(nonce, data)
+            .encrypt(&nonce, data)
             .map_err(|e| BluError::EncryptionFailed(format!("DEK encrypt: {}", e)))?;
 
         let mut output = Vec::with_capacity(NONCE_SIZE + ciphertext.len());
@@ -180,11 +181,12 @@ impl Dek {
         }
 
         let (nonce_bytes, ciphertext_and_tag) = data.split_at(NONCE_SIZE);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce = Nonce::try_from(nonce_bytes)
+            .map_err(|_| BluError::DecryptionFailed("DEK decrypt: bad nonce length".into()))?;
 
         let cipher = ChaCha20Poly1305::new((&self.bytes).into());
         cipher
-            .decrypt(nonce, ciphertext_and_tag)
+            .decrypt(&nonce, ciphertext_and_tag)
             .map_err(|_| BluError::DecryptionFailed("DEK decrypt: authentication failed".into()))
     }
 
@@ -209,7 +211,7 @@ impl Dek {
         let cipher = ChaCha20Poly1305::new((&self.bytes).into());
 
         let nonce_bytes = segment_nonce(index);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let aad_bytes = aad.aad_bytes(index);
         let payload = Payload {
@@ -218,7 +220,7 @@ impl Dek {
         };
 
         cipher
-            .encrypt(nonce, payload)
+            .encrypt(&nonce, payload)
             .map_err(|e| BluError::EncryptionFailed(format!("DEK encrypt_segment: {}", e)))
     }
 
@@ -245,7 +247,7 @@ impl Dek {
         let cipher = ChaCha20Poly1305::new((&self.bytes).into());
 
         let nonce_bytes = segment_nonce(index);
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
 
         let aad_bytes = aad.aad_bytes(index);
         let payload = Payload {
@@ -253,7 +255,7 @@ impl Dek {
             aad: &aad_bytes,
         };
 
-        cipher.decrypt(nonce, payload).map_err(|_| {
+        cipher.decrypt(&nonce, payload).map_err(|_| {
             BluError::DecryptionFailed("DEK decrypt_segment: authentication failed".into())
         })
     }

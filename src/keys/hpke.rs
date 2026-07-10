@@ -166,11 +166,11 @@ pub fn seal_base(
     let (key, base_nonce) = key_schedule_base(&shared_secret, info);
 
     let cipher = ChaCha20Poly1305::new((&key).into());
-    let nonce = AeadNonce::from_slice(&base_nonce);
+    let nonce = AeadNonce::from(base_nonce);
 
     let ct = cipher
         .encrypt(
-            nonce,
+            &nonce,
             chacha20poly1305::aead::Payload {
                 msg: plaintext,
                 aad,
@@ -201,11 +201,11 @@ pub fn open_base(
     let (key, base_nonce) = key_schedule_base(&shared_secret, info);
 
     let cipher = ChaCha20Poly1305::new((&key).into());
-    let nonce = AeadNonce::from_slice(&base_nonce);
+    let nonce = AeadNonce::from(base_nonce);
 
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             chacha20poly1305::aead::Payload {
                 msg: ciphertext,
                 aad,
