@@ -186,7 +186,14 @@ cargo build --release   # binary: target/release/blu
 cargo test
 cargo clippy
 cargo fmt -- --check
+
+# Install into ~/.cargo/bin (re-ad-hoc-codesigns on macOS)
+bash scripts/install-local.sh
 ```
+
+`install-local.sh` is `cargo install --path . --force` plus, on Darwin,
+`codesign -s -` so a fresh install is not SIGKILL'd by taskgated for an
+invalid linker-signed copy. Ensure `~/.cargo/bin` is on your `PATH`.
 
 CI runs on `macos-15` and `ubuntu-24.04` (build, test, clippy, fmt).
 

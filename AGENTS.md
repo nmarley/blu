@@ -11,6 +11,7 @@ cargo test -- --ignored      # include slow scrypt-based tests
 cargo clippy                 # lint (see allowed lints below)
 cargo fmt -- --check         # format check (max_width = 100)
 bash scripts/check-version.sh  # crate version vs latest v* tag
+bash scripts/install-local.sh  # cargo install --path . --force (+ macOS codesign)
 ```
 
 CI: `.github/workflows/ci.yml` on push/PR (`macos-15`, `ubuntu-24.04`).
