@@ -149,7 +149,7 @@ pub struct SyncArgs {
     pub force: bool,
 
     /// Show verbose output
-    #[arg(long, short)]
+    #[arg(long)]
     pub verbose: bool,
 
     /// Use a specific named backend instead of the default
@@ -476,7 +476,7 @@ pub struct BackendMirrorArgs {
     pub tag: Option<String>,
 
     /// Number of concurrent transfers
-    #[arg(short, long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
     pub jobs: u16,
 }
 
@@ -492,7 +492,7 @@ pub struct BackendDiffArgs {
     pub to: String,
 
     /// Number of concurrent checks
-    #[arg(short, long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
+    #[arg(long, default_value = "16", value_parser = clap::value_parser!(u16).range(1..))]
     pub jobs: u16,
 }
 
