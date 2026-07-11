@@ -162,7 +162,7 @@ pub async fn open(args: OpenArgs) -> Result<(), BluError> {
     println!("Vault open. Next:");
     println!("  blu unlock");
     println!("  blu ls");
-    println!("  blu restore-files --all --to <dir>");
+    println!("  blu restore --all --to <dir>");
 
     Ok(())
 }

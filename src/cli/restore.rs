@@ -9,7 +9,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::blob::BlobBlockLocation;
-use crate::cli::clapargs::RestoreFilesArgs;
+use crate::cli::clapargs::RestoreArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::compression::decompress;
 use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, DekProvider};
@@ -31,9 +31,9 @@ enum PrefetchEvent {
     Failed(String),
 }
 
-/// Restore plain-text files from the archive, requires index + necessary encrypted blobs
-pub async fn restore_files(args: RestoreFilesArgs) -> Result<(), BluError> {
-    info!("Started restore_files util");
+/// Materialize plaintext files from the catalog and encrypted blobs.
+pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
+    info!("Started restore");
 
     // Validate arguments
     if args.file_hashes.is_empty() && args.path.is_none() && !args.all {

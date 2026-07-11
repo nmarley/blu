@@ -19,7 +19,7 @@ mod list_files;
 mod open;
 mod pull;
 mod read_index;
-mod restore_files;
+mod restore;
 mod search;
 #[cfg(test)]
 mod smoke;
@@ -44,7 +44,7 @@ pub use list_files::list_files;
 pub use open::{open, open_vault, OpenVaultParams};
 pub use pull::pull;
 pub use read_index::read_index;
-pub use restore_files::restore_files;
+pub use restore::restore;
 pub use search::search;
 pub use status::status;
 pub use tagger::tagger;

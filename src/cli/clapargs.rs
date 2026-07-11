@@ -36,8 +36,8 @@ pub enum Action {
     /// Encrypt files in index (plumbing)
     #[command(hide = true)]
     EncryptFiles(EncryptFilesArgs),
-    /// Restore files from the index + encrypted data
-    RestoreFiles(RestoreFilesArgs),
+    /// Materialize plaintext from the catalog and encrypted blobs
+    Restore(RestoreArgs),
     /// List files in the index, optionally filtered
     ListFiles(ListFilesArgs),
     /// List files (alias for list-files)
@@ -184,7 +184,7 @@ pub struct EncryptFilesArgs {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct RestoreFilesArgs {
+pub struct RestoreArgs {
     /// Restore files by hash prefix
     #[arg(long)]
     pub file_hashes: Vec<String>,

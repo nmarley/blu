@@ -90,7 +90,7 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::Ls(a) => cli::list_files(a),
         clapargs::Action::Pull(a) => cli::pull(a).await,
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
-        clapargs::Action::RestoreFiles(a) => cli::restore_files(a).await,
+        clapargs::Action::Restore(a) => cli::restore(a).await,
         clapargs::Action::Search(a) => cli::search(a),
         clapargs::Action::Status(a) => cli::status(a),
         clapargs::Action::Backup(a) => cli::backup(a).await,
