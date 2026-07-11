@@ -92,7 +92,7 @@ pub async fn run() -> Result<(), BluError> {
         clapargs::Action::ReadIndex(a) => cli::read_index(a),
         clapargs::Action::Restore(a) => cli::restore(a).await,
         clapargs::Action::Search(a) => cli::search(a),
-        clapargs::Action::Status(a) => cli::status(a),
+        clapargs::Action::Status(a) => cli::status(a).await,
         clapargs::Action::Backup(a) => cli::backup(a).await,
         clapargs::Action::Tagger(a) => cli::tagger(a).await,
         clapargs::Action::WriteIndex(a) => cli::write_index(a),

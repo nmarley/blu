@@ -1,54 +1,39 @@
-/// Status check utility, similar to `git status`.
-///
-/// Two modes: shallow (filesystem metadata only) and deep (hash every file).
-/// Deep is the default for vaults under 1 GiB; shallow kicks in above that.
-/// Force either with `--type`.
-///
-/// TODO:
-/// - [ ] Display files which are in the PlainIndex but not encrypted
-use std::collections::{HashMap, HashSet};
+//! Vault status: working tree vs catalog vs remote.
+//!
+//! Answers three questions:
+//! 1. What local files are not yet in the catalog?
+//! 2. What catalog entries are not checked out on disk?
+//! 3. Is the local catalog in sync with, ahead of, behind, or diverged
+//!    from the remote?
+
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::block::PlainIndex;
 use crate::cli::clapargs::{StatusArgs, StatusCheckType};
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::cli::output::FileDisplay;
+use crate::config::backend::BackendConfig;
+use crate::config::{CatalogRemoteState, Config};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::{self, Hash};
 use crate::ignore::walk_files_with_sizes;
 
-// 1 GB? (before they ruined the abbreviation)
+/// Cap long file lists so status stays readable on large vaults.
+const MAX_LISTED_PATHS: usize = 20;
+
+/// Default to shallow path/size checks above this working-tree size.
 const SHALLOW_CHECK_BYTE_COUNT: u64 = 1024 * 1024 * 1024;
 
-/// Show the local status of the blu vault
-pub fn status(args: StatusArgs) -> Result<(), BluError> {
+/// Show working tree vs catalog vs remote.
+pub async fn status(args: StatusArgs) -> Result<(), BluError> {
     let dir = Path::new(".");
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
-    let index = cfg.load_plain_index(&keys)?;
+    let index = cfg.load_plain_index_or_default(&keys);
 
-    // TODO:
-    // show files existing in FS but not in index ...
-    //   note: Does this mean scanning entire dir every time? Or do we do a short version where we
-    //   don't read EVERY file but instead match up expected paths and then only show new ones? And
-    //   then could have a --deep or some kind of arg to deep scan entire dir and hash every file?
-    // show existing in index but not in FS ... (or moved?)
-
-    // Walk files in fs dir (all regular files -- Walkdir on the main bludir)
-    // check in paths index for each filename. If a filename exists that's not in the index,
-    // report. But what about renamed files? Or files w/swapped names? Do we really not want to
-    // report them?
-    //
-    // Note: this is really only an issue due to regular path-based filesystems, in a content-based
-    // system this wouldn't be an issue b/c each entry (each new file) would have a content hash.
-    // Would be an attribute accessible on the file as well, even if paths must be used to
-    // reference them (it shouldn't be required).
-    // TODO?
-
-    let files_list = get_files_and_sizes(dir);
-    // select deep or shallow check type based on cmd-line arg (explicit) or blu
-    // dir size (implicit / variable)
-    let current_dir_size = files_list.iter().fold(0, |acc, elem| acc + elem.1);
+    let files_list = walk_files_with_sizes(dir);
+    let current_dir_size = files_list.iter().fold(0u64, |acc, elem| acc + elem.1);
     let status_check_type = match args.status_check_type {
         Some(t) => t,
         None => {
@@ -60,281 +45,389 @@ pub fn status(args: StatusArgs) -> Result<(), BluError> {
         }
     };
 
-    let mut vec_new_files: Vec<FileDisplay> = Vec::new();
-    let mut vec_removed_files: Vec<FileDisplay> = Vec::new();
-    let mut vec_size_mismatch: Vec<FileSizeMismatch> = Vec::new();
-    let mut vec_paths_updated: HashSet<FileUpdatedPaths> = HashSet::new();
+    let mut unpublished: Vec<FileDisplay> = Vec::new();
+    let mut path_updates: HashSet<FileUpdatedPaths> = HashSet::new();
+    let mut size_mismatches: Vec<FileSizeMismatch> = Vec::new();
 
     match status_check_type {
         StatusCheckType::Shallow => {
-            let mut curr_fs_path_size: HashMap<PathBuf, u64> = HashMap::new();
-            let path_index = index.build_path_index();
-            // files that ARE NOT in the index but ARE in FS (new files)
-            'outer: for (p, s) in files_list.iter() {
-                curr_fs_path_size.insert(p.clone(), *s);
-                match path_index.get(p) {
-                    None => {
-                        // TODO: consider full-file hash here too, and comparing
-                        // w/index
-                        //
-                        // calculates hash here
-                        let bytes = match std::fs::read(p) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                println!("unable to read file {:?}: {}", p, e);
-                                continue 'outer;
-                            }
-                        };
-                        let mh = hash::multihash(&bytes);
-                        let hash = Hash::from(mh.to_bytes());
-                        vec_new_files.push(FileDisplay {
-                            hash,
-                            size: *s,
-                            paths: vec![p.clone()],
-                        });
-                    }
-                    Some(val) => {
-                        let fileref = match index.get_fileref_ref(val) {
-                            Some(f) => f,
-                            None => {
-                                println!("error: unable to get fileref for {:?}", p);
-                                continue 'outer;
-                            }
-                        };
-                        let size_in_index = fileref.total_size();
-                        if size_in_index != *s {
-                            // TODO: consider full-file hash on only these files
-                            // which have sizes which don't match the same
-                            // filename in the index
-                            //
-                            // NOTE: If there is a size mismatch, then
-                            // technically it's a different file, so consider
-                            // hashing the file and comparing the hash to the
-                            // index. If the hash matches something, then it's a
-                            // rename and we should report it as such.
-                            vec_size_mismatch.push(FileSizeMismatch {
-                                hash: val.clone(),
-                                size_in_index,
-                                size_in_filesystem: *s,
-                                paths: fileref.paths.iter().cloned().collect(),
-                            });
-                        }
+            collect_shallow_unpublished(
+                &index,
+                &files_list,
+                &mut unpublished,
+                &mut size_mismatches,
+            );
+        }
+        StatusCheckType::Deep => {
+            collect_deep_unpublished(&index, &mut unpublished, &mut path_updates)?;
+        }
+    }
+
+    let checkout = checkout_summary(&index);
+    let remote_state = remote_catalog_state(&cfg, &keys).await;
+
+    print_header(&cfg);
+    print_catalog_summary(&index, remote_state);
+    print_checkout_summary(&checkout);
+    print_section("Unpublished local files", &unpublished, |f| f.to_string());
+    print_missing_checkout(&checkout);
+    print_extra_changes(&path_updates, &size_mismatches);
+
+    Ok(())
+}
+
+fn print_header(cfg: &Config) {
+    let vault = cfg.basedir().display();
+    let backend = format_default_backend(cfg);
+    println!("On vault {}  backend {}", vault, backend);
+}
+
+fn format_default_backend(cfg: &Config) -> String {
+    let name = &cfg.default_backend;
+    match cfg.backends.get(name) {
+        Some(BackendConfig::Local(local)) => {
+            format!("{} (local:{})", name, local.path.display())
+        }
+        Some(BackendConfig::AmazonS3(s3)) => {
+            let prefix = s3.prefix.as_deref().unwrap_or("");
+            if prefix.is_empty() {
+                format!("{} (s3://{})", name, s3.bucket)
+            } else {
+                format!("{} (s3://{}/{})", name, s3.bucket, prefix)
+            }
+        }
+        None => format!("{} (missing)", name),
+    }
+}
+
+fn print_catalog_summary(index: &PlainIndex, remote: RemoteStateLine) {
+    let file_count = index.files_map_ref().len();
+    let total_bytes = index.total_bytes_indexed();
+    println!(
+        "Catalog: {} files ({})    Remote: {}",
+        file_count,
+        human_bytes(total_bytes),
+        remote.display(),
+    );
+}
+
+fn print_checkout_summary(checkout: &CheckoutSummary) {
+    if checkout.catalog_entries == 0 {
+        println!("Checkout: empty catalog");
+        return;
+    }
+    let mut line = format!(
+        "Checkout: {} present, {} missing ({})",
+        checkout.present,
+        checkout.missing_count(),
+        human_bytes(checkout.missing_bytes),
+    );
+    if checkout.missing_count() > 0 {
+        line.push_str(" — blu restore --path '…'  or  blu restore --all");
+    }
+    println!("{}", line);
+}
+
+fn print_section<T, F>(title: &str, items: &[T], fmt: F)
+where
+    F: Fn(&T) -> String,
+{
+    if items.is_empty() {
+        return;
+    }
+    println!();
+    println!("{}:", title);
+    let shown = items.len().min(MAX_LISTED_PATHS);
+    for item in items.iter().take(shown) {
+        println!("  {}", fmt(item));
+    }
+    if items.len() > shown {
+        println!("  … and {} more", items.len() - shown);
+    }
+}
+
+fn print_missing_checkout(checkout: &CheckoutSummary) {
+    if checkout.missing.is_empty() {
+        return;
+    }
+    println!();
+    println!("Not in checkout (in catalog only):");
+    let shown = checkout.missing.len().min(MAX_LISTED_PATHS);
+    for entry in checkout.missing.iter().take(shown) {
+        println!(
+            "  {}  {}  {}",
+            entry.hash.dbg_short(7),
+            human_bytes(entry.size),
+            entry.path.display()
+        );
+    }
+    if checkout.missing.len() > shown {
+        println!("  … and {} more", checkout.missing.len() - shown);
+    }
+}
+
+fn print_extra_changes(
+    path_updates: &HashSet<FileUpdatedPaths>,
+    size_mismatches: &[FileSizeMismatch],
+) {
+    if path_updates.is_empty() && size_mismatches.is_empty() {
+        return;
+    }
+    println!();
+    println!("Other changes:");
+    for fref in path_updates {
+        println!("  renamed:  {}", fref);
+    }
+    for fref in size_mismatches {
+        println!("  modified: {}", fref);
+    }
+}
+
+enum RemoteStateLine {
+    Ok(CatalogRemoteState),
+    Error(String),
+}
+
+impl RemoteStateLine {
+    fn display(&self) -> String {
+        match self {
+            Self::Ok(state) => state.as_str().to_string(),
+            Self::Error(msg) => format!("unavailable ({})", msg),
+        }
+    }
+}
+
+async fn remote_catalog_state(
+    cfg: &Config,
+    keys: &crate::dek_provider::DekProvider,
+) -> RemoteStateLine {
+    match cfg.init_storage_backend().await {
+        Ok(backend) => match cfg.catalog_remote_state(&backend, keys).await {
+            Ok(state) => RemoteStateLine::Ok(state),
+            Err(e) => RemoteStateLine::Error(e.to_string()),
+        },
+        Err(e) => RemoteStateLine::Error(e.to_string()),
+    }
+}
+
+/// One catalog path that is not present on disk.
+#[derive(Debug, Clone)]
+struct MissingCheckout {
+    hash: Hash,
+    size: u64,
+    path: PathBuf,
+}
+
+/// Checkout presence for catalog entries.
+#[derive(Debug, Default)]
+struct CheckoutSummary {
+    catalog_entries: usize,
+    present: usize,
+    missing_bytes: u64,
+    missing: Vec<MissingCheckout>,
+}
+
+impl CheckoutSummary {
+    fn missing_count(&self) -> usize {
+        self.missing.len()
+    }
+}
+
+/// Count catalog paths present on disk vs missing (not checked out).
+fn checkout_summary(index: &PlainIndex) -> CheckoutSummary {
+    let mut summary = CheckoutSummary {
+        catalog_entries: index.files_map_ref().len(),
+        ..CheckoutSummary::default()
+    };
+
+    for (hash, fileref) in index.files_map_ref() {
+        let size = fileref.total_size();
+        // A file is present if any of its recorded paths exists on disk.
+        let any_present = fileref.paths.iter().any(|p| p.exists());
+        if any_present {
+            summary.present += 1;
+            continue;
+        }
+        summary.missing_bytes += size;
+        // Prefer the first path for display.
+        if let Some(path) = fileref.paths.iter().next() {
+            summary.missing.push(MissingCheckout {
+                hash: hash.clone(),
+                size,
+                path: path.clone(),
+            });
+        } else {
+            summary.missing.push(MissingCheckout {
+                hash: hash.clone(),
+                size,
+                path: PathBuf::from("(no path)"),
+            });
+        }
+    }
+
+    summary.missing.sort_by(|a, b| a.path.cmp(&b.path));
+    summary
+}
+
+fn collect_shallow_unpublished(
+    index: &PlainIndex,
+    files_list: &[(PathBuf, u64)],
+    unpublished: &mut Vec<FileDisplay>,
+    size_mismatches: &mut Vec<FileSizeMismatch>,
+) {
+    let path_index = index.build_path_index();
+    for (p, s) in files_list {
+        match path_index.get(p) {
+            None => {
+                let bytes = match std::fs::read(p) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        println!("unable to read file {:?}: {}", p, e);
+                        continue;
                     }
                 };
+                let hash = Hash::from(hash::multihash(&bytes).to_bytes());
+                unpublished.push(FileDisplay {
+                    hash,
+                    size: *s,
+                    paths: vec![p.clone()],
+                });
             }
-
-            // files that WERE in the index but got removed (deleted from fs)
-            for (p, file_hash) in path_index.iter() {
-                if !curr_fs_path_size.contains_key(p) {
-                    let fileref = match index.get_fileref_ref(file_hash) {
-                        Some(f) => f,
-                        None => {
-                            println!("error: unable to get fileref for {:?}", p);
-                            continue;
-                        }
-                    };
-                    vec_removed_files.push(FileDisplay {
-                        hash: file_hash.clone(),
-                        size: fileref.total_size(),
+            Some(val) => {
+                let Some(fileref) = index.get_fileref_ref(val) else {
+                    println!("error: unable to get fileref for {:?}", p);
+                    continue;
+                };
+                let size_in_index = fileref.total_size();
+                if size_in_index != *s {
+                    size_mismatches.push(FileSizeMismatch {
+                        hash: val.clone(),
+                        size_in_index,
+                        size_in_filesystem: *s,
                         paths: fileref.paths.iter().cloned().collect(),
                     });
                 }
             }
         }
-        StatusCheckType::Deep => {
-            // index the current dir on filesystem and compare
-            let curr_fs_index = PlainIndex::new(".")?;
+    }
+}
 
-            // files that ARE NOT in the index but ARE in FS
-            for (file_hash, fileref) in &curr_fs_index.files {
-                match index.files.get(file_hash) {
-                    Some(val) => {
-                        // Same same, now check paths
-                        if val.paths != fileref.paths {
-                            vec_paths_updated.insert(FileUpdatedPaths {
-                                hash: file_hash.clone(),
-                                size: fileref.total_size(),
-                                paths_in_index: val.paths.iter().cloned().collect(),
-                                paths_in_filesystem: fileref.paths.iter().cloned().collect(),
-                            });
-                        }
-                    }
-                    None => {
-                        // File does NOT exist in index, therefore it's new
-                        vec_new_files.push(FileDisplay {
-                            hash: file_hash.clone(),
-                            size: fileref.total_size(),
-                            paths: fileref.paths.iter().cloned().collect(),
-                        });
-                    }
-                };
-            }
+fn collect_deep_unpublished(
+    index: &PlainIndex,
+    unpublished: &mut Vec<FileDisplay>,
+    path_updates: &mut HashSet<FileUpdatedPaths>,
+) -> Result<(), BluError> {
+    let curr_fs_index = PlainIndex::new(".")?;
 
-            // files that WERE in the index but got removed ...
-            for (file_hash, fileref) in &index.files {
-                match curr_fs_index.files.get(file_hash) {
-                    Some(val) => {
-                        // Same same, now check paths
-                        if val.paths != fileref.paths {
-                            vec_paths_updated.insert(FileUpdatedPaths {
-                                hash: file_hash.clone(),
-                                size: fileref.total_size(),
-                                paths_in_index: fileref.paths.iter().cloned().collect(),
-                                paths_in_filesystem: val.paths.iter().cloned().collect(),
-                            });
-                        }
-                    }
-                    None => {
-                        // File does NOT exist in FS, therefore it has been
-                        // removed.
-                        vec_removed_files.push(FileDisplay {
-                            hash: file_hash.clone(),
-                            size: fileref.total_size(),
-                            paths: fileref.paths.iter().cloned().collect(),
-                        });
-                    }
+    for (file_hash, fileref) in &curr_fs_index.files {
+        match index.files.get(file_hash) {
+            Some(val) => {
+                if val.paths != fileref.paths {
+                    path_updates.insert(FileUpdatedPaths {
+                        hash: file_hash.clone(),
+                        size: fileref.total_size(),
+                        paths_in_index: val.paths.iter().cloned().collect(),
+                        paths_in_filesystem: fileref.paths.iter().cloned().collect(),
+                    });
                 }
             }
-        }
-    };
-
-    // Display changes (new/deleted/renamed/modified)
-    let has_changes = !vec_new_files.is_empty()
-        || !vec_removed_files.is_empty()
-        || !vec_paths_updated.is_empty()
-        || !vec_size_mismatch.is_empty();
-
-    println!();
-    if has_changes {
-        println!("changes:");
-        for fref in &vec_new_files {
-            println!("    new:      {}", fref);
-        }
-        for fref in &vec_removed_files {
-            println!("    deleted:  {}", fref);
-        }
-        for fref in &vec_paths_updated {
-            println!("    renamed:  {}", fref);
-        }
-        for fref in &vec_size_mismatch {
-            println!("    modified: {}", fref);
-        }
-        println!();
-    } else {
-        println!("no changes detected");
-        println!();
-    }
-
-    // Vault summary: file and dedup stats from the plain index
-    let file_count = index.files_map_ref().len();
-    let total_bytes = index.total_bytes_indexed();
-    let dedup_bytes = index.duplicate_bytes_indexed();
-    let total_chunks = index.count_blocks();
-
-    println!("vault:");
-    println!(
-        "    files:    {} ({})",
-        file_count,
-        human_bytes(total_bytes),
-    );
-    if dedup_bytes > 0 {
-        println!("    dedup:    {} saved", human_bytes(dedup_bytes));
-    }
-    println!("    chunks:   {} unique", total_chunks);
-
-    // Blob / encryption stats
-    let blob_index = cfg.load_blob_index_or_default(&keys);
-
-    let blob_file_count = blob_index.count_blob_files();
-    let encrypted_chunks = index
-        .blocks
-        .iter()
-        .filter(|(block_hash, _)| blob_index.map.contains_key(block_hash))
-        .count();
-
-    if total_chunks == 0 {
-        println!("    blobs:    none (no chunks in index)");
-    } else {
-        let pct = (encrypted_chunks as f64 / total_chunks as f64) * 100.0;
-        println!(
-            "    blobs:    {} blob files, {} of {} chunks encrypted ({:.1}%)",
-            blob_file_count, encrypted_chunks, total_chunks, pct,
-        );
-    }
-    if !blob_index.paths_to_delete.is_empty() {
-        println!(
-            "    gc:       {} blob files pending deletion",
-            blob_index.paths_to_delete.len(),
-        );
-    }
-
-    // Tag stats
-    let tag_index = cfg.load_tag_index_or_default(&keys);
-
-    let unique_tags = tag_index.list_all_tags().len();
-    let tagged_files = tag_index.file_tags.len();
-    if unique_tags > 0 {
-        println!(
-            "    tags:     {} unique across {} files",
-            unique_tags, tagged_files,
-        );
-    }
-
-    // Backend listing
-    let backend_names: Vec<&str> = cfg.backends.keys().map(|s| s.as_str()).collect();
-    let mut backend_parts: Vec<String> = Vec::new();
-    for name in &backend_names {
-        if *name == cfg.default_backend {
-            backend_parts.push(format!("{} (default)", name));
-        } else {
-            backend_parts.push(name.to_string());
+            None => {
+                unpublished.push(FileDisplay {
+                    hash: file_hash.clone(),
+                    size: fileref.total_size(),
+                    paths: fileref.paths.iter().cloned().collect(),
+                });
+            }
         }
     }
-    backend_parts.sort();
-    println!("    backends: {}", backend_parts.join(", "));
 
-    println!();
+    // Paths recorded in the catalog that differ on disk (rename detection).
+    for (file_hash, fileref) in &index.files {
+        if let Some(val) = curr_fs_index.files.get(file_hash) {
+            if val.paths != fileref.paths {
+                path_updates.insert(FileUpdatedPaths {
+                    hash: file_hash.clone(),
+                    size: fileref.total_size(),
+                    paths_in_index: fileref.paths.iter().cloned().collect(),
+                    paths_in_filesystem: val.paths.iter().cloned().collect(),
+                });
+            }
+        }
+    }
+
     Ok(())
 }
 
 #[derive(Clone, Debug)]
-pub struct FileSizeMismatch {
-    pub hash: Hash,
-    pub size_in_index: u64,
-    pub size_in_filesystem: u64,
-    pub paths: Vec<PathBuf>,
+struct FileSizeMismatch {
+    hash: Hash,
+    size_in_index: u64,
+    size_in_filesystem: u64,
+    paths: Vec<PathBuf>,
 }
 
 impl std::fmt::Display for FileSizeMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display_hash = self.hash.dbg_short(7);
         write!(
             f,
             "hash: {}, index_size: {}, fs_size: {}, paths: {:?}",
-            display_hash, self.size_in_index, self.size_in_filesystem, self.paths,
+            self.hash.dbg_short(7),
+            self.size_in_index,
+            self.size_in_filesystem,
+            self.paths,
         )
     }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct FileUpdatedPaths {
-    pub hash: Hash,
-    pub size: u64,
-    pub paths_in_index: Vec<PathBuf>,
-    pub paths_in_filesystem: Vec<PathBuf>,
+struct FileUpdatedPaths {
+    hash: Hash,
+    size: u64,
+    paths_in_index: Vec<PathBuf>,
+    paths_in_filesystem: Vec<PathBuf>,
 }
 
 impl std::fmt::Display for FileUpdatedPaths {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let display_hash = self.hash.dbg_short(7);
         write!(
             f,
             "hash: {}, size: {}, index_paths: {:?}, fs_paths: {:?}",
-            display_hash, self.size, self.paths_in_index, self.paths_in_filesystem,
+            self.hash.dbg_short(7),
+            self.size,
+            self.paths_in_index,
+            self.paths_in_filesystem,
         )
     }
 }
 
-fn get_files_and_sizes<P: AsRef<Path>>(dir: P) -> Vec<(PathBuf, u64)> {
-    walk_files_with_sizes(dir)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    use crate::block::PlainIndex;
+
+    #[test]
+    fn checkout_summary_counts_missing_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let present = tmp.path().join("present.txt");
+        fs::write(&present, b"hello").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        index.add(&present, None).unwrap();
+
+        // Add a catalog-only path by cloning a fileref and swapping paths.
+        // Easier: index a file then delete it from disk.
+        let gone = tmp.path().join("gone.txt");
+        fs::write(&gone, b"bye").unwrap();
+        index.add(&gone, None).unwrap();
+        fs::remove_file(&gone).unwrap();
+
+        let summary = checkout_summary(&index);
+        assert_eq!(summary.catalog_entries, 2);
+        assert_eq!(summary.present, 1);
+        assert_eq!(summary.missing_count(), 1);
+        assert_eq!(summary.missing_bytes, 3); // "bye"
+        assert_eq!(summary.missing[0].path, gone);
+    }
 }
