@@ -50,6 +50,8 @@ pub mod format;
 pub mod hash;
 /// filesystem walking with `.bluignore` support
 pub mod ignore;
+/// union-merge of plain and blob indexes for multi-device sync
+pub mod index_merge;
 /// serialization + compression + encryption for indexes
 pub mod io;
 /// key management (generation, loading, storage)
