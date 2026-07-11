@@ -50,8 +50,8 @@ pub enum Action {
     ReadIndex(ReadIndexArgs),
     /// Defrag consolidates encrypted blob files
     DefragBlobs(DefragBlobsArgs),
-    /// Delete data from index and mark associated encrypted blobs as deleted
-    DeleteFiles(DeleteFilesArgs),
+    /// Tombstone catalog entries and cascade blob cleanup
+    Rm(RmArgs),
     /// Search filenames, tags
     Search(SearchArgs),
     /// Status command, show changes not in index (and not encrypted?)
@@ -270,7 +270,7 @@ pub struct DefragBlobsArgs {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct DeleteFilesArgs {
+pub struct RmArgs {
     /// Filter by hash prefix, path substring, or tag (required unless --all)
     #[arg(long)]
     pub filter: Option<String>,

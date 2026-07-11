@@ -1,20 +1,20 @@
 use std::collections::HashSet;
 
 use crate::blob::repack_blobs;
-use crate::cli::clapargs::DeleteFilesArgs;
+use crate::cli::clapargs::RmArgs;
 use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::Hash;
 
-/// Delete files from the plain index and cascade through the full
-/// data pipeline: plain index, blocks, blob index, tags, and backend
+/// Tombstone catalog entries and cascade through the full data
+/// pipeline: plain index, blocks, blob index, tags, and backend
 /// storage.
 ///
 /// When all chunks in a blob file are removed, the blob is deleted
 /// from the configured storage backend. Partially-dead blobs (still
 /// containing live chunks) are left for defrag to repack later.
-pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
+pub async fn rm(args: RmArgs) -> Result<(), BluError> {
     if args.filter.is_none() && !args.all {
         return Err(BluError::Internal("must specify --filter or --all".into()));
     }

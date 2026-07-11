@@ -515,7 +515,7 @@ pub struct BlobIndex {
     pub paths_to_delete: HashSet<PathBuf>,
     /// Blob paths that still contain live chunks but have had at least one
     /// chunk removed. These are candidates for repacking by `defrag-blobs`
-    /// or `delete-files --scrub`.
+    /// or `rm --scrub`.
     #[serde(default)]
     pub paths_to_repack: HashSet<PathBuf>,
 }
