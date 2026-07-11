@@ -108,7 +108,7 @@ macOS). Defaults: `~/.config/blu`, `~/.local/share/blu`,
 ## Testing
 
 - All tests are inline `#[cfg(test)]` modules (no `tests/` integration test directory)
-- `src/cli/smoke.rs` -- end-to-end vault pipeline smokes (init/sync/restore/delete/doctor)
+- `src/cli/smoke.rs` -- end-to-end vault pipeline smokes (init/backup/restore/delete/doctor)
 - `test/blu_secrets/` -- classic age X25519 fixtures (`AGE-SECRET-KEY-1...` / `age1...`); not PQ; legacy/fixture use only
 - `test/blocks/` -- fixture directories for chunking/block tests (t1-t7)
 - `test/old/` -- legacy config format fixtures (t0-t6)

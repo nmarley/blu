@@ -8,6 +8,7 @@ pub mod output;
 mod add;
 mod agent_cmd;
 mod backend_cmd;
+mod backup;
 mod defrag_blobs;
 mod delete_files;
 mod doctor;
@@ -23,7 +24,6 @@ mod search;
 #[cfg(test)]
 mod smoke;
 mod status;
-mod sync;
 mod tagger;
 mod write_index;
 
@@ -32,6 +32,7 @@ pub use agent_cmd::agent;
 pub use agent_cmd::lock;
 pub use agent_cmd::unlock;
 pub use backend_cmd::backend;
+pub use backup::backup;
 pub use defrag_blobs::defrag_blobs;
 pub use delete_files::delete_files;
 pub use doctor::doctor;
@@ -46,7 +47,6 @@ pub use read_index::read_index;
 pub use restore_files::restore_files;
 pub use search::search;
 pub use status::status;
-pub use sync::sync;
 pub use tagger::tagger;
 pub use write_index::write_index;
 

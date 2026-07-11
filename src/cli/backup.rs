@@ -1,22 +1,23 @@
-//! Sync command - combines add + encrypt in a single operation.
+//! Backup command - index paths, encrypt, and publish to the backend.
 
 use crate::blob::BlobBuffer;
-use crate::cli::clapargs::SyncArgs;
+use crate::cli::clapargs::BackupArgs;
 use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 use crate::hash::{self, Hash};
 use itertools::Itertools;
 
-/// Sync local files to the encrypted backend.
+/// Publish local files into the encrypted vault.
 ///
 /// This command performs the following steps:
 /// 1. Adds all files from the specified paths to the index
 /// 2. Encrypts any chunks not yet encrypted
 /// 3. Writes the updated indexes
+/// 4. Merges remote indexes and pushes the catalog to the backend
 ///
 /// It is idempotent and safe to run repeatedly.
-pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
-    info!("Started sync");
+pub async fn backup(args: BackupArgs) -> Result<(), BluError> {
+    info!("Started backup");
 
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
 
@@ -93,14 +94,14 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
         cfg.write_blob_index(&blob_index, &keys)?;
     }
 
-    // Sync indexes to the backend. The backend is the source of truth,
+    // Publish indexes to the backend. The backend is the source of truth,
     // so this is not optional: the same backend that received the blobs
     // must also receive the updated indexes.
     push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), Some(&backend)).await?;
 
     // Print summary
     println!(
-        "Sync complete: {} files indexed, {} chunks encrypted",
+        "Backup complete: {} files indexed, {} chunks encrypted",
         files_added, chunks_encrypted
     );
 

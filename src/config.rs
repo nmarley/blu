@@ -158,7 +158,7 @@ macro_rules! load_index {
 /// value when the index is missing or has an incompatible format.
 ///
 /// This is the right choice for supplementary indexes (blob, tag) and
-/// for commands that can rebuild the index from scratch (sync, add).
+/// for commands that can rebuild the index from scratch (backup, add).
 macro_rules! load_index_or_default {
     ($name: ident, $idx_struct_name:ident, $idx_filename_varname:ident, $default_expr:expr) => {
         /// Load the index, returning a default value if the file is

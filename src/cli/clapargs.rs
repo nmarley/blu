@@ -26,8 +26,8 @@ pub enum Action {
     Init(InitArgs),
     /// Open an existing vault from a remote backend
     Open(OpenArgs),
-    /// Sync files: add to index and encrypt (combines add + encrypt-files)
-    Sync(SyncArgs),
+    /// Index paths, encrypt, and publish to the vault backend
+    Backup(BackupArgs),
     /// Pull indexes from remote backend
     Pull(PullArgs),
     /// Write index (plumbing)
@@ -140,8 +140,8 @@ pub struct AddArgs {
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
-pub struct SyncArgs {
-    /// Paths to sync (defaults to current directory)
+pub struct BackupArgs {
+    /// Paths to back up (defaults to current directory)
     pub paths: Vec<String>,
 
     /// Force write indexes even if no changes

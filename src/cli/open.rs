@@ -78,7 +78,7 @@ pub async fn open_vault(params: OpenVaultParams) -> Result<PathBuf, BluError> {
         return Err(BluError::Internal(
             "backend has no KEK store (keys/kek.toml missing)\n\
              On the original machine, run any command that pushes indexes\n\
-             (e.g. `blu sync`) so the KEK store is published, then retry."
+             (e.g. `blu backup`) so the KEK store is published, then retry."
                 .into(),
         ));
     }

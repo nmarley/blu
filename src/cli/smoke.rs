@@ -1,6 +1,6 @@
 //! End-to-end smoke tests for the main vault data pipeline.
 //!
-//! Exercises library APIs that back the CLI (init → sync → list/status →
+//! Exercises library APIs that back the CLI (init → backup → list/status →
 //! restore → delete → doctor) without requiring the agent daemon.
 //!
 //! Multi-device smokes (shared local backend, two vault dirs) lock the
@@ -71,7 +71,11 @@ fn setup_vault() -> (tempfile::TempDir, Config, DekProvider) {
     (tmp, cfg, keys)
 }
 
-async fn sync_tree(cfg: &Config, keys: &DekProvider, paths: &[PathBuf]) -> (PlainIndex, BlobIndex) {
+async fn backup_tree(
+    cfg: &Config,
+    keys: &DekProvider,
+    paths: &[PathBuf],
+) -> (PlainIndex, BlobIndex) {
     let mut plain = cfg.load_plain_index_or_default(keys);
     for p in paths {
         plain.add(p, None).unwrap();
@@ -103,13 +107,13 @@ async fn sync_tree(cfg: &Config, keys: &DekProvider, paths: &[PathBuf]) -> (Plai
     (plain, blob)
 }
 
-/// Sync local paths then merge-remote + push indexes (CLI `blu sync` shape).
-async fn sync_tree_and_push(
+/// Back up local paths then merge-remote + push indexes (CLI `blu backup` shape).
+async fn backup_tree_and_push(
     cfg: &Config,
     keys: &DekProvider,
     paths: &[PathBuf],
 ) -> (PlainIndex, BlobIndex) {
-    let (_plain, _blob) = sync_tree(cfg, keys, paths).await;
+    let (_plain, _blob) = backup_tree(cfg, keys, paths).await;
     let backend = cfg.init_storage_backend().await.unwrap();
     cfg.merge_remote_indexes(&backend, keys).await.unwrap();
     // Re-load after merge so callers see the merged plain index.
@@ -249,7 +253,7 @@ fn list_paths(plain: &PlainIndex) -> HashSet<PathBuf> {
 async fn vault_pipeline_happy_path() {
     let (tmp, cfg, keys) = setup_vault();
 
-    // Small tree to sync
+    // Small tree to back up
     let docs = tmp.path().join("docs");
     fs::create_dir_all(&docs).unwrap();
     let a = docs.join("a.txt");
@@ -257,8 +261,8 @@ async fn vault_pipeline_happy_path() {
     fs::write(&a, b"alpha content for smoke").unwrap();
     fs::write(&b, b"bravo content for smoke test").unwrap();
 
-    // sync
-    let (plain, blob) = sync_tree(&cfg, &keys, std::slice::from_ref(&docs)).await;
+    // backup
+    let (plain, blob) = backup_tree(&cfg, &keys, std::slice::from_ref(&docs)).await;
     assert_eq!(plain.files_map_ref().len(), 2);
     assert!(blob.count_blob_files() >= 1);
     assert_eq!(
@@ -268,7 +272,7 @@ async fn vault_pipeline_happy_path() {
             .keys()
             .filter(|h| blob.has_chunk(h))
             .count(),
-        "all chunks should be encrypted after sync"
+        "all chunks should be encrypted after backup"
     );
 
     // list
@@ -280,7 +284,7 @@ async fn vault_pipeline_happy_path() {
     let report = diagnose(&cfg, &keys).await.unwrap();
     assert!(
         !report.has_failures(),
-        "doctor should be clean after sync: {:?}",
+        "doctor should be clean after backup: {:?}",
         report.checks
     );
     assert!(report
@@ -312,12 +316,12 @@ async fn vault_pipeline_happy_path() {
 }
 
 #[tokio::test]
-async fn doctor_fails_on_missing_blob_after_sync() {
+async fn doctor_fails_on_missing_blob_after_backup() {
     let (tmp, cfg, keys) = setup_vault();
 
     let f = tmp.path().join("solo.txt");
     fs::write(&f, b"will lose its blob").unwrap();
-    let (_plain, blob) = sync_tree(&cfg, &keys, &[f]).await;
+    let (_plain, blob) = backup_tree(&cfg, &keys, &[f]).await;
     assert!(blob.count_blob_files() >= 1);
 
     // Delete every blob object from the backend while leaving the index.
@@ -337,14 +341,14 @@ async fn doctor_fails_on_missing_blob_after_sync() {
 }
 
 #[tokio::test]
-async fn bluignore_respected_during_sync_walk() {
+async fn bluignore_respected_during_backup_walk() {
     let (tmp, cfg, keys) = setup_vault();
 
     fs::write(tmp.path().join(".bluignore"), "*.log\n").unwrap();
     fs::write(tmp.path().join("keep.txt"), b"keep me").unwrap();
     fs::write(tmp.path().join("noise.log"), b"ignore me").unwrap();
 
-    let (plain, _blob) = sync_tree(&cfg, &keys, &[tmp.path().to_path_buf()]).await;
+    let (plain, _blob) = backup_tree(&cfg, &keys, &[tmp.path().to_path_buf()]).await;
     let paths = list_paths(&plain);
     assert!(paths.iter().any(|p| p.ends_with("keep.txt")));
     assert!(
@@ -370,7 +374,7 @@ async fn multi_device_sequential_adds_visible_after_pull() {
     // A publishes a.txt
     let a_txt = vault_a.join("a.txt");
     fs::write(&a_txt, b"content from machine A").unwrap();
-    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_txt)).await;
+    backup_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_txt)).await;
 
     // B opens and sees a.txt
     let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
@@ -384,7 +388,7 @@ async fn multi_device_sequential_adds_visible_after_pull() {
     // B publishes b.txt
     let b_txt = vault_b.join("b.txt");
     fs::write(&b_txt, b"content from machine B").unwrap();
-    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_txt)).await;
+    backup_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_txt)).await;
 
     // A pulls and sees a.txt + b.txt
     pull_indexes(&cfg_a, &keys_a).await;
@@ -398,7 +402,7 @@ async fn multi_device_sequential_adds_visible_after_pull() {
     // A publishes a2.txt (local index already merged remote via pull)
     let a2_txt = vault_a.join("a2.txt");
     fs::write(&a2_txt, b"second file from A").unwrap();
-    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a2_txt)).await;
+    backup_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a2_txt)).await;
 
     // B pulls and sees the full union
     pull_indexes(&cfg_b, &keys_b).await;
@@ -427,7 +431,7 @@ async fn multi_device_concurrent_adds_preserve_union() {
     // Shared baseline so both machines start from the same remote index.
     let base = vault_a.join("base.txt");
     fs::write(&base, b"shared baseline").unwrap();
-    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&base)).await;
+    backup_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&base)).await;
 
     let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
     let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
@@ -436,12 +440,12 @@ async fn multi_device_concurrent_adds_preserve_union() {
     // Divergent adds without intermediate pull.
     let a_only = vault_a.join("a_only.txt");
     fs::write(&a_only, b"only on A").unwrap();
-    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_only)).await;
+    backup_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_only)).await;
 
     let b_only = vault_b.join("b_only.txt");
     fs::write(&b_only, b"only on B").unwrap();
     // B still has local index {base} only; merge-on-push keeps a_only.
-    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_only)).await;
+    backup_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_only)).await;
 
     // Both pull the merged remote index.
     pull_indexes(&cfg_a, &keys_a).await;
@@ -477,7 +481,7 @@ async fn multi_device_delete_tombstone_propagates() {
 
     let shared = vault_a.join("shared.txt");
     fs::write(&shared, b"shared content").unwrap();
-    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&shared)).await;
+    backup_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&shared)).await;
 
     let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
     assert_eq!(
@@ -496,7 +500,7 @@ async fn multi_device_delete_tombstone_propagates() {
     // B never pulled the delete; still has shared.txt and pushes a new file.
     let b_extra = vault_b.join("b_extra.txt");
     fs::write(&b_extra, b"extra on B").unwrap();
-    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_extra)).await;
+    backup_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_extra)).await;
 
     pull_indexes(&cfg_a, &keys_a).await;
     pull_indexes(&cfg_b, &keys_b).await;
