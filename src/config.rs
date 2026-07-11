@@ -1319,6 +1319,33 @@ pub(crate) mod test {
         );
     }
 
+    /// Encrypt every plain-index chunk missing from the blob index and
+    /// write the blob index. Test helper so multi-writer publish paths
+    /// stay complete under the push coverage gate.
+    async fn encrypt_uncovered_chunks(
+        cfg: &Config,
+        keys: &crate::dek_provider::DekProvider,
+        plain: &PlainIndex,
+        backend: &crate::storage::BackendKind,
+    ) {
+        use crate::blob::BlobBuffer;
+
+        let mut blob = cfg.load_blob_index_or_default(keys);
+        let mut buf = BlobBuffer::new(backend, keys.clone());
+        for fileref in plain.files_map_ref().values() {
+            for cm in &fileref.chunkmetas {
+                if blob.has_chunk(&cm.hash) {
+                    continue;
+                }
+                let block_ref = plain.blocks_map_ref().get(&cm.hash).unwrap();
+                let mut data = plain.read_block_bytes(block_ref).unwrap();
+                buf.add_chunk(&mut data, &mut blob).await.unwrap();
+            }
+        }
+        buf.finalize(&mut blob).await.unwrap();
+        cfg.write_blob_index(&blob, keys).unwrap();
+    }
+
     #[tokio::test]
     async fn push_indexes_or_fail_remerges_after_remote_advance() {
         use crate::cli::helpers::push_indexes_or_fail;
@@ -1336,27 +1363,30 @@ pub(crate) mod test {
         let cfg_b = local_backend_config(&datadir, &vault_b);
         let backend = cfg_a.init_storage_backend().await.unwrap();
 
-        // A publishes baseline.
+        // A publishes baseline (catalog + ciphertext).
         let mut plain_a = PlainIndex::new_empty();
         let a_file = vault_a.join("a.txt");
         fs::write(&a_file, b"from a").unwrap();
         plain_a.add(&a_file, None).unwrap();
         cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        encrypt_uncovered_chunks(&cfg_a, &keys, &plain_a, &backend).await;
         cfg_a.push_indexes(&backend).await.unwrap();
 
-        // B opens from remote (pull bytes), then prepares local-only add.
+        // B opens from remote (pull bytes), then prepares local add.
         cfg_b.pull_indexes(&backend).await.unwrap();
         let mut plain_b = cfg_b.load_plain_index(&keys).unwrap();
         let b_file = vault_b.join("b.txt");
         fs::write(&b_file, b"from b").unwrap();
         plain_b.add(&b_file, None).unwrap();
         cfg_b.write_plain_index(&plain_b, &keys).unwrap();
+        encrypt_uncovered_chunks(&cfg_b, &keys, &plain_b, &backend).await;
 
         // A advances remote with another file before B pushes.
         let a2 = vault_a.join("a2.txt");
         fs::write(&a2, b"from a again").unwrap();
         plain_a.add(&a2, None).unwrap();
         cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        encrypt_uncovered_chunks(&cfg_a, &keys, &plain_a, &backend).await;
         cfg_a.push_indexes(&backend).await.unwrap();
 
         // B push should merge A's a2 in (via re-merge or first merge).
