@@ -98,7 +98,7 @@ pub async fn tagger(args: TaggerArgs) -> Result<(), BluError> {
         }
 
         // Sync the updated tag index to the backend.
-        push_indexes_or_fail(&cfg, None, None).await?;
+        push_indexes_or_fail(&cfg, &keys, None, None).await?;
     }
 
     Ok(())

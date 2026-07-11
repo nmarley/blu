@@ -58,7 +58,7 @@ async fn repack(args: DefragBlobsArgs) -> Result<(), BluError> {
 
     // Repacking rewrote blobs on the backend; sync the indexes so they
     // reflect the new blob layout.
-    push_indexes_or_fail(&cfg, args.backend.as_deref(), Some(&backend)).await?;
+    push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), Some(&backend)).await?;
 
     println!(
         "Repacked {} blob(s), moved {} chunks, deleted {} old blob(s)",
@@ -109,7 +109,7 @@ async fn upgrade_format(args: DefragBlobsArgs) -> Result<(), BluError> {
 
     // Upgrading rewrote blobs on the backend; sync the indexes so they
     // reflect the new v3 blob layout.
-    push_indexes_or_fail(&cfg, args.backend.as_deref(), Some(&backend)).await?;
+    push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), Some(&backend)).await?;
 
     println!(
         "Upgraded {} blob(s) to v3, moved {} chunks, deleted {} old blob(s)",

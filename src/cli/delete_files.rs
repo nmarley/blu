@@ -177,7 +177,7 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     // Sync the indexes to the backend. Reuse the backend handle if one
     // was initialized for blob deletion; otherwise the helper resolves
     // it by name.
-    push_indexes_or_fail(&cfg, args.backend.as_deref(), backend.as_ref()).await?;
+    push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), backend.as_ref()).await?;
 
     println!(
         "Deleted {} file(s), removed {} unreferenced blocks, \

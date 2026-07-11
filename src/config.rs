@@ -7,12 +7,22 @@ use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result as BluResult};
+use crate::index_merge::{merge_blob_index, merge_plain_index, merge_tag_index, PathConflict};
 use crate::io::EncryptedSerializable;
 use crate::storage::{AmazonS3, BackendKind, Local};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
 /// Backend config structures, one for each supported backend.
 pub mod backend;
+
+/// Summary of a merge of remote indexes into the local vault.
+#[derive(Debug, Clone, Default)]
+pub struct IndexMergeSummary {
+    /// Path conflicts detected while merging plain indexes.
+    pub conflicts: Vec<PathConflict>,
+    /// True when remote indexes existed and were merged.
+    pub merged: bool,
+}
 
 /// Encryption configuration for a blu vault.
 ///
@@ -463,6 +473,96 @@ impl Config {
         self.pull_kek_store(backend).await?;
 
         Ok(())
+    }
+
+    /// Fetch remote indexes (if any), union-merge into local, rewrite local.
+    ///
+    /// No-op when the remote has no plain or blob index. Used before push
+    /// so concurrent multi-device adds are preserved, and by pull (merge
+    /// mode) so local-only entries are not discarded.
+    pub async fn merge_remote_indexes(
+        &self,
+        backend: &BackendKind,
+        keys: &DekProvider,
+    ) -> Result<IndexMergeSummary, BluError> {
+        let remote_plain_path = self.remote_plain_index_path();
+        let remote_blob_path = self.remote_blob_index_path();
+        let remote_tag_path = self.remote_tag_index_path();
+
+        let has_remote = backend.exists(&remote_plain_path).await?
+            || backend.exists(&remote_blob_path).await?
+            || backend.exists(&remote_tag_path).await?;
+        if !has_remote {
+            return Ok(IndexMergeSummary::default());
+        }
+
+        let local_plain = self.load_plain_index_or_default(keys);
+        let local_blob = self.load_blob_index_or_default(keys);
+        let local_tag = self.load_tag_index_or_default(keys);
+
+        let remote_plain =
+            Self::read_remote_index::<PlainIndex>(backend, &remote_plain_path, keys).await?;
+        let remote_blob =
+            Self::read_remote_index::<BlobIndex>(backend, &remote_blob_path, keys).await?;
+        let remote_tag =
+            Self::read_remote_index::<TagIndex>(backend, &remote_tag_path, keys).await?;
+
+        let mut conflicts = Vec::new();
+
+        let plain = match remote_plain {
+            Some(remote) => {
+                let merged = merge_plain_index(&local_plain, &remote)?;
+                conflicts = merged.conflicts;
+                merged.index
+            }
+            None => local_plain,
+        };
+        let blob = match remote_blob {
+            Some(remote) => merge_blob_index(&local_blob, &remote),
+            None => local_blob,
+        };
+        let tag = match remote_tag {
+            Some(remote) => merge_tag_index(&local_tag, &remote),
+            None => local_tag,
+        };
+
+        self.write_plain_index(&plain, keys)?;
+        self.write_blob_index(&blob, keys)?;
+        self.write_tag_index(&tag, keys)?;
+
+        Ok(IndexMergeSummary {
+            conflicts,
+            merged: true,
+        })
+    }
+
+    /// Pull indexes by union-merging remote into local (not overwrite).
+    ///
+    /// Also refreshes the KEK store from the backend.
+    pub async fn pull_indexes_merged(
+        &self,
+        backend: &BackendKind,
+        keys: &DekProvider,
+    ) -> Result<IndexMergeSummary, BluError> {
+        let summary = self.merge_remote_indexes(backend, keys).await?;
+        self.pull_kek_store(backend).await?;
+        Ok(summary)
+    }
+
+    async fn read_remote_index<T: EncryptedSerializable>(
+        backend: &BackendKind,
+        remote_path: &Path,
+        keys: &DekProvider,
+    ) -> Result<Option<T>, BluError> {
+        if !backend.exists(remote_path).await? {
+            return Ok(None);
+        }
+        let data = backend.read_from_path(remote_path).await?;
+        let idx = T::read(&data[..], keys).map_err(|e| BluError::IndexLoadFailed {
+            path: remote_path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+        Ok(Some(idx))
     }
 
     /// Pull a single file from the backend if it exists remotely.

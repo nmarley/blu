@@ -97,7 +97,7 @@ pub async fn encrypt_files(args: EncryptFilesArgs) -> Result<(), BluError> {
 
         // New blobs were written to the backend; sync the indexes so the
         // backend never holds blobs without a matching index.
-        push_indexes_or_fail(&cfg, None, Some(&backend)).await?;
+        push_indexes_or_fail(&cfg, &keys, None, Some(&backend)).await?;
     }
 
     Ok(())

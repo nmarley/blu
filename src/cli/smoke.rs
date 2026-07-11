@@ -103,14 +103,18 @@ async fn sync_tree(cfg: &Config, keys: &DekProvider, paths: &[PathBuf]) -> (Plai
     (plain, blob)
 }
 
-/// Sync local paths then push indexes (CLI `blu sync` shape for multi-device).
+/// Sync local paths then merge-remote + push indexes (CLI `blu sync` shape).
 async fn sync_tree_and_push(
     cfg: &Config,
     keys: &DekProvider,
     paths: &[PathBuf],
 ) -> (PlainIndex, BlobIndex) {
-    let (plain, blob) = sync_tree(cfg, keys, paths).await;
+    let (_plain, _blob) = sync_tree(cfg, keys, paths).await;
     let backend = cfg.init_storage_backend().await.unwrap();
+    cfg.merge_remote_indexes(&backend, keys).await.unwrap();
+    // Re-load after merge so callers see the merged plain index.
+    let plain = cfg.load_plain_index_or_default(keys);
+    let blob = cfg.load_blob_index_or_default(keys);
     cfg.push_indexes(&backend).await.unwrap();
     (plain, blob)
 }
@@ -164,9 +168,9 @@ async fn setup_secondary_vault(vault_dir: &Path, backend_dir: &Path) -> (Config,
     (cfg, keys)
 }
 
-async fn pull_indexes(cfg: &Config) {
+async fn pull_indexes(cfg: &Config, keys: &DekProvider) {
     let backend = cfg.init_storage_backend().await.unwrap();
-    cfg.pull_indexes(&backend).await.unwrap();
+    cfg.pull_indexes_merged(&backend, keys).await.unwrap();
 }
 
 fn basenames(plain: &PlainIndex) -> HashSet<String> {
@@ -387,7 +391,7 @@ async fn multi_device_sequential_adds_visible_after_pull() {
     sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_txt)).await;
 
     // A pulls and sees a.txt + b.txt
-    pull_indexes(&cfg_a).await;
+    pull_indexes(&cfg_a, &keys_a).await;
     let plain_a = cfg_a.load_plain_index(&keys_a).unwrap();
     assert_eq!(
         basenames(&plain_a),
@@ -401,7 +405,7 @@ async fn multi_device_sequential_adds_visible_after_pull() {
     sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a2_txt)).await;
 
     // B pulls and sees the full union
-    pull_indexes(&cfg_b).await;
+    pull_indexes(&cfg_b, &keys_b).await;
     let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
     assert_eq!(
         basenames(&plain_b),
@@ -444,8 +448,8 @@ async fn multi_device_concurrent_adds_preserve_union() {
     sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_only)).await;
 
     // Both pull the surviving remote index.
-    pull_indexes(&cfg_a).await;
-    pull_indexes(&cfg_b).await;
+    pull_indexes(&cfg_a, &keys_a).await;
+    pull_indexes(&cfg_b, &keys_b).await;
 
     let plain_a = cfg_a.load_plain_index(&keys_a).unwrap();
     let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();

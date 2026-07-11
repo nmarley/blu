@@ -13,6 +13,7 @@ use crate::block::BlockRef;
 use crate::block::{FileRef, PlainIndex, CURRENT_INDEX_VERSION};
 use crate::error::BluError;
 use crate::hash::Hash;
+use crate::tag::TagIndex;
 
 /// A vault path that maps to more than one content hash after a merge.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +98,17 @@ pub fn merge_plain_index(
     let conflicts = detect_path_conflicts(&index);
 
     Ok(PlainIndexMerge { index, conflicts })
+}
+
+/// Merge two tag indexes by union of file-tag associations.
+pub fn merge_tag_index(local: &TagIndex, remote: &TagIndex) -> TagIndex {
+    let mut out = local.clone();
+    for (file_hash, tags) in &remote.file_tags {
+        for tag in tags {
+            out.add_tag(file_hash, tag);
+        }
+    }
+    out
 }
 
 /// Merge two blob indexes by chunk-hash union.
