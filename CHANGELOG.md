@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `blu restore` fails closed: missing ciphertext skips the file before
   creating a dest; mid-write failures unlink partials and hard-error;
   each chunk is size+hash verified and the whole file hash is checked.
+- `blu doctor` `encryption-coverage` is a failure (not a warning) when
+  plain-index chunks lack blob-index ciphertext.
 
 ## [0.7.5] - 2026-07-11
 
