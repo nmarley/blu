@@ -198,8 +198,14 @@ async fn restore_file_bytes(
         let location = blob.get_block_location_ref(&cm.hash).unwrap();
         let chunk = reader.get_bytes(&location).await.unwrap();
         assert_eq!(chunk.len(), cm.size);
+        let actual = crate::hash::Hash::from(crate::hash::multihash(&chunk).to_bytes());
+        assert_eq!(actual, cm.hash, "restored chunk hash mismatch");
         out.extend_from_slice(&chunk);
     }
+    let whole = crate::hash::Hash::from(crate::hash::multihash(&out).to_bytes());
+    // Whole-file hash is incremental SHA-512 over chunks (same as multihash of
+    // full bytes when the file is the concatenation of its chunks).
+    assert_eq!(&whole, file_hash, "restored file hash mismatch");
     out
 }
 

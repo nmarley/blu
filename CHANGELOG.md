@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** remove hidden `blu add`. Catalog-only publish is gone;
   use `blu backup` to index, encrypt, and publish. Push refuses when
   plain-index chunks lack ciphertext (`ensure_encryption_coverage`).
+- `blu restore` fails closed: missing ciphertext skips the file before
+  creating a dest; mid-write failures unlink partials and hard-error;
+  each chunk is size+hash verified and the whole file hash is checked.
 
 ## [0.7.5] - 2026-07-11
 

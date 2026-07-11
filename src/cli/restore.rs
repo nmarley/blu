@@ -6,16 +6,19 @@ use std::time::Instant;
 
 use glob::Pattern;
 use indicatif::{ProgressBar, ProgressStyle};
+use multihash::Multihash;
+use sha2::{Digest, Sha512};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::blob::BlobBlockLocation;
+use crate::block::ChunkMeta;
 use crate::cli::clapargs::RestoreArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::compression::decompress;
 use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, DekProvider};
 use crate::error::BluError;
 use crate::format::human_bytes;
-use crate::hash::Hash;
+use crate::hash::{self, Hash, SHA2_512};
 use crate::storage;
 use crate::v3format;
 
@@ -225,6 +228,21 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
             }
         }
 
+        // Fail closed before creating any dest file: every chunk must
+        // have ciphertext in the blob index.
+        if let Some(missing) = fileref
+            .chunkmetas
+            .iter()
+            .find(|cm| !blob_index.has_chunk(&cm.hash))
+        {
+            eprintln!(
+                "Unable to restore file {}: chunk {} has no ciphertext in the blob index",
+                file_hash.dbg_short(9),
+                missing.hash.dbg_short(9),
+            );
+            continue 'outer;
+        }
+
         println!("  -> {}", restore_path.display());
 
         // Create parent directories if needed
@@ -235,53 +253,82 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
         }
 
         // Create a sparse file of the correct size
-        let fh = std::fs::OpenOptions::new()
+        let fh = match std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&restore_path)?;
-        let _ = fh
-            .set_len(file_size)
-            .map_err(|e| eprintln!("Unable to set length of new sparse file: {:?}", e));
+            .open(&restore_path)
+        {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("Unable to create {:?}: {}", restore_path, e);
+                continue 'outer;
+            }
+        };
+        if let Err(e) = fh.set_len(file_size) {
+            let _ = std::fs::remove_file(&restore_path);
+            return Err(BluError::Io(e));
+        }
 
         let started = Instant::now();
         let mut offset = 0u64;
         let total_chunks = fileref.chunkmetas.len();
+        let mut file_hasher = Sha512::new();
 
-        for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
-            if !blob_index.has_chunk(&chunkmeta.hash) {
-                eprintln!(
-                    "Unable to restore file: Block hash not found in blob index for block: {:?}, file: {:?}",
-                    chunkmeta.hash, file_hash
+        let write_result: Result<(), BluError> = (|| {
+            for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
+                let location = blob_index.get_block_location_ref(&chunkmeta.hash)?;
+                debug!(
+                    "chunk {}/{}: hash={}, offset={}, size={}",
+                    i + 1,
+                    total_chunks,
+                    chunkmeta.hash.dbg_short(9),
+                    location.position.offset,
+                    location.position.size,
                 );
-                continue; // next file
+
+                let block_data = get_cached_bytes(&blob_cache, &location)?;
+                verify_chunk_bytes(block_data, chunkmeta)?;
+                fh.write_all_at(block_data, offset)?;
+                file_hasher.update(block_data);
+                trace!(
+                    "wrote {} bytes at offset {} to {:?}",
+                    block_data.len(),
+                    offset,
+                    restore_path,
+                );
+                offset += block_data.len() as u64;
             }
 
-            let blob_block_location_ref = match blob_index.get_block_location_ref(&chunkmeta.hash) {
-                Ok(location) => location,
-                Err(e) => {
-                    eprintln!("Unable to restore file: {:?}", e);
-                    continue; // next file
-                }
-            };
-            debug!(
-                "chunk {}/{}: hash={}, offset={}, size={}",
-                i + 1,
-                total_chunks,
-                chunkmeta.hash.dbg_short(9),
-                blob_block_location_ref.position.offset,
-                blob_block_location_ref.position.size,
-            );
+            if offset != file_size {
+                return Err(BluError::Internal(format!(
+                    "restored size mismatch for {}: wrote {} bytes, catalog size {}",
+                    file_hash.dbg_short(9),
+                    offset,
+                    file_size
+                )));
+            }
 
-            let block_data = get_cached_bytes(&blob_cache, &blob_block_location_ref)?;
-            fh.write_all_at(block_data, offset)?;
-            trace!(
-                "wrote {} bytes at offset {} to {:?}",
-                block_data.len(),
-                offset,
-                restore_path,
+            let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &file_hasher.finalize())
+                .map_err(|e| BluError::Internal(format!("file multihash wrap: {}", e)))?;
+            let actual = Hash::from(file_mh.to_bytes());
+            if actual != file_hash {
+                return Err(BluError::Internal(format!(
+                    "file hash mismatch: expected {}, got {}",
+                    file_hash, actual
+                )));
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            let _ = std::fs::remove_file(&restore_path);
+            eprintln!(
+                "Unable to restore {}: {}; removed partial file",
+                restore_path.display(),
+                e
             );
-            offset += chunkmeta.size as u64;
+            return Err(e);
         }
 
         let elapsed = started.elapsed();
@@ -469,7 +516,43 @@ fn get_cached_bytes<'a>(
         ))
     })?;
     let pos = &location.position;
-    Ok(&full_data[pos.offset..pos.offset + pos.size])
+    let end = pos.offset.checked_add(pos.size).ok_or_else(|| {
+        BluError::Internal(format!(
+            "chunk slice overflow in blob {}: offset={} size={}",
+            location.blob_path().display(),
+            pos.offset,
+            pos.size
+        ))
+    })?;
+    if end > full_data.len() {
+        return Err(BluError::Internal(format!(
+            "chunk slice out of bounds in blob {}: offset={} size={} blob_len={}",
+            location.blob_path().display(),
+            pos.offset,
+            pos.size,
+            full_data.len()
+        )));
+    }
+    Ok(&full_data[pos.offset..end])
+}
+
+/// Verify restored chunk bytes match catalog size and multihash.
+fn verify_chunk_bytes(data: &[u8], chunkmeta: &ChunkMeta) -> Result<(), BluError> {
+    if data.len() != chunkmeta.size {
+        return Err(BluError::Internal(format!(
+            "chunk size mismatch: expected {}, got {}",
+            chunkmeta.size,
+            data.len()
+        )));
+    }
+    let actual = Hash::from(hash::multihash(data).to_bytes());
+    if actual != chunkmeta.hash {
+        return Err(BluError::BlockHashMismatch {
+            expected: chunkmeta.hash.to_string(),
+            actual: actual.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// Decrypt and decompress a whole blob file into plaintext chunk packing.
@@ -496,10 +579,13 @@ fn decrypt_blob_to_plaintext(raw: &[u8], keys: &DekProvider) -> Result<Vec<u8>, 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::blob::BlobBlockLocation;
     use crate::compression::compress;
     use crate::dek_provider::{encrypt_envelope, encrypt_envelope_segmented};
+    use crate::io::Position;
     use crate::keys::kek::Kek;
     use crate::v2format::FileType;
+    use std::path::PathBuf;
 
     fn local_keys() -> DekProvider {
         DekProvider::Local {
@@ -546,6 +632,57 @@ mod test {
         assert!(
             err.to_string().to_lowercase().contains("decrypt")
                 || err.to_string().to_lowercase().contains("fail"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn verify_chunk_bytes_accepts_matching_data() {
+        let data = b"chunk body";
+        let cm = ChunkMeta::new(data);
+        verify_chunk_bytes(data, &cm).unwrap();
+    }
+
+    #[test]
+    fn verify_chunk_bytes_rejects_size_and_hash_mismatch() {
+        let cm = ChunkMeta::new(b"expected");
+        let size_err = verify_chunk_bytes(b"short", &cm).unwrap_err();
+        assert!(
+            size_err.to_string().contains("chunk size mismatch"),
+            "{size_err}"
+        );
+
+        let hash_err = verify_chunk_bytes(
+            b"expected!",
+            &ChunkMeta {
+                hash: cm.hash.clone(),
+                size: 9,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            hash_err.to_string().contains("block hash mismatch"),
+            "{hash_err}"
+        );
+    }
+
+    #[test]
+    fn get_cached_bytes_rejects_out_of_bounds_slice() {
+        let hash_hex = "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6";
+        let blob_path = PathBuf::from(format!("d/dd4/dd4ce/{hash_hex}"));
+        let blob_hash = storage::hash_from_path(&blob_path).unwrap();
+        let mut cache = HashMap::new();
+        cache.insert(blob_hash, vec![0u8; 8]);
+        let location = BlobBlockLocation::new(
+            blob_path,
+            Position {
+                offset: 4,
+                size: 16,
+            },
+        );
+        let err = get_cached_bytes(&cache, &location).unwrap_err();
+        assert!(
+            err.to_string().contains("out of bounds"),
             "unexpected error: {err}"
         );
     }
