@@ -30,6 +30,9 @@ Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
 - [x] Delete tombstones with LWW re-add (plain index `deleted_files` /
       `file_times`) for multi-device delete propagation
 - [ ] Tombstone GC / compaction (drop ancient tombstones after retention)
+- [ ] Multi-device-safe blob GC: do not delete backend blob objects while
+      another peer may still reference a shared chunk (grace period,
+      refcount, or tombstone-first / GC-later)
 - [ ] Event log / snapshot history if richer than LWW tombstones is needed
 
 ## Architecture
