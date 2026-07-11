@@ -99,6 +99,26 @@ impl BackendKind {
             Self::AmazonS3(b) => b.read_from_path(path).await,
         }
     }
+
+    /// List relative paths of content-addressed blob objects.
+    ///
+    /// Skips catalog and key material (`indexes/`, `keys/`). Returned
+    /// paths match the shape of `BlobIndex::path_index` keys and
+    /// [`path_for`] output. Collects the full set into memory; large
+    /// backends may be slow.
+    pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
+        match self {
+            Self::Local(b) => b.list_blob_paths().await,
+            Self::AmazonS3(b) => b.list_blob_paths().await,
+        }
+    }
+}
+
+/// True when a relative backend path is catalog or key material, not a blob.
+pub fn is_non_blob_prefix(path: &Path) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|c| matches!(c.as_os_str().to_str(), Some("indexes") | Some("keys")))
 }
 
 /// Get a path for the encrypted data.
@@ -188,6 +208,7 @@ mod test {
         "6/649/64982/64982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36"
     );
 
+    use std::path::Path;
     use tempfile::tempdir;
 
     use super::BackendKind;
@@ -277,6 +298,58 @@ mod test {
         // Empty window (end <= start) returns empty.
         let zero = storage.read_range(&rel_path, 5, 5).await.unwrap();
         assert!(zero.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_list_blob_paths_skips_indexes_and_keys() {
+        use super::is_non_blob_prefix;
+        use std::fs;
+
+        assert!(is_non_blob_prefix(Path::new("indexes/index.dat")));
+        assert!(is_non_blob_prefix(Path::new("keys/kek.toml")));
+        assert!(!is_non_blob_prefix(Path::new(
+            "d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+        )));
+
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir.path()));
+
+        let data_a = b"blob-a";
+        let data_b = b"blob-b";
+        let path_a = storage
+            .write_data(&Hash::from(multihash(data_a).to_bytes()), data_a)
+            .await
+            .unwrap();
+        let path_b = storage
+            .write_data(&Hash::from(multihash(data_b).to_bytes()), data_b)
+            .await
+            .unwrap();
+
+        // Catalog / key objects must not appear in the blob list.
+        storage
+            .write_to_path(Path::new("indexes/index.dat"), b"plain-index")
+            .await
+            .unwrap();
+        storage
+            .write_to_path(Path::new("keys/kek.toml"), b"kek-meta")
+            .await
+            .unwrap();
+        // Empty shard dirs alone should not produce entries (files only).
+        fs::create_dir_all(datadir.path().join("z/zzz/zzzzz")).unwrap();
+
+        let listed = storage.list_blob_paths().await.unwrap();
+        assert_eq!(listed.len(), 2, "listed={listed:?}");
+        assert!(listed.contains(&path_a));
+        assert!(listed.contains(&path_b));
+        assert!(!listed.iter().any(|p| is_non_blob_prefix(p)));
+    }
+
+    #[tokio::test]
+    async fn local_list_blob_paths_empty_datadir() {
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir.path().join("missing")));
+        let listed = storage.list_blob_paths().await.unwrap();
+        assert!(listed.is_empty());
     }
 }
 

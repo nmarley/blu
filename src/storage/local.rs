@@ -130,4 +130,58 @@ impl Local {
         let data = tokio::fs::read(&full_path).await?;
         Ok(data)
     }
+
+    /// List relative paths of content-addressed blob files under datadir.
+    ///
+    /// Skips `indexes/` and `keys/`. Empty or missing datadir yields an
+    /// empty list (not an error).
+    pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
+        let datadir = self.datadir.clone();
+        tokio::task::spawn_blocking(move || list_blob_paths_sync(&datadir))
+            .await
+            .map_err(|e| BluError::Internal(format!("list_blob_paths join: {}", e)))?
+    }
+}
+
+fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {
+    if !datadir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    let mut stack = vec![datadir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| BluError::Internal(format!("read_dir {}: {}", dir.display(), e)))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                BluError::Internal(format!("read_dir entry under {}: {}", dir.display(), e))
+            })?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|e| BluError::Internal(format!("file_type {}: {}", path.display(), e)))?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let rel = path.strip_prefix(datadir).map_err(|e| {
+                BluError::Internal(format!(
+                    "strip_prefix {} from {}: {}",
+                    datadir.display(),
+                    path.display(),
+                    e
+                ))
+            })?;
+            if super::is_non_blob_prefix(rel) {
+                continue;
+            }
+            out.push(rel.to_path_buf());
+        }
+    }
+    out.sort();
+    Ok(out)
 }

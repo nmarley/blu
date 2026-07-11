@@ -220,6 +220,79 @@ impl AmazonS3 {
             .map_err(|e| BluError::S3Error(e.to_string()))?;
         Ok(body.into_bytes().to_vec())
     }
+
+    /// List relative paths of content-addressed blob objects under the
+    /// backend prefix.
+    ///
+    /// Uses paginated `ListObjectsV2`. Skips `indexes/` and `keys/`
+    /// relative to the backend prefix. Keys are returned without the
+    /// configured prefix, matching local relative paths.
+    pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
+        let mut out = Vec::new();
+        let list_prefix = {
+            let p = self.prefix.to_string_lossy();
+            if p.is_empty() {
+                String::new()
+            } else if p.ends_with('/') {
+                p.into_owned()
+            } else {
+                format!("{}/", p)
+            }
+        };
+
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .max_keys(1000);
+            if !list_prefix.is_empty() {
+                req = req.prefix(&list_prefix);
+            }
+            if let Some(token) = continuation.take() {
+                req = req.continuation_token(token);
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| BluError::S3Error(e.to_string()))?;
+
+            for obj in resp.contents() {
+                let Some(key) = obj.key() else {
+                    continue;
+                };
+                let rel = if list_prefix.is_empty() {
+                    key.to_string()
+                } else if let Some(stripped) = key.strip_prefix(&list_prefix) {
+                    stripped.to_string()
+                } else {
+                    continue;
+                };
+                if rel.is_empty() || rel.ends_with('/') {
+                    continue;
+                }
+                let path = PathBuf::from(&rel);
+                if super::is_non_blob_prefix(&path) {
+                    continue;
+                }
+                out.push(path);
+            }
+
+            if resp.is_truncated().unwrap_or(false) {
+                continuation = resp.next_continuation_token().map(|s| s.to_string());
+                if continuation.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        out.sort();
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
