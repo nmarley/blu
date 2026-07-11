@@ -17,15 +17,8 @@ async fn main() {
 }
 
 pub async fn run() -> Result<(), BluError> {
-    CombinedLogger::init(vec![TermLogger::new(
-        LevelFilter::Debug,
-        Config::default(),
-        TerminalMode::Mixed,
-        ColorChoice::Auto,
-    )])
-    .unwrap();
-
     let args = clapargs::Args::parse();
+    init_logger(args.verbose, &args.action);
 
     // Set global no-passphrase flag from CLI args
     helpers::set_no_passphrase(args.no_passphrase);
@@ -107,6 +100,24 @@ pub async fn run() -> Result<(), BluError> {
             unreachable!()
         }
     }
+}
+
+fn init_logger(verbose: u8, action: &clapargs::Action) {
+    let level = match verbose {
+        0 => match action {
+            // Long-running processes keep lifecycle logs without -v.
+            clapargs::Action::Serve(_) | clapargs::Action::AgentDaemon => LevelFilter::Info,
+            _ => LevelFilter::Warn,
+        },
+        1 => LevelFilter::Info,
+        _ => LevelFilter::Debug,
+    };
+    let _ = CombinedLogger::init(vec![TermLogger::new(
+        level,
+        Config::default(),
+        TerminalMode::Mixed,
+        ColorChoice::Auto,
+    )]);
 }
 
 fn find_blu_basedir<P: AsRef<Path>>(dest: P) -> Option<PathBuf> {

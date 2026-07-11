@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 /// Encrypted, content-addressed file vault (git-like catalog + checkout)
 #[derive(Parser, Debug)]
@@ -11,6 +11,10 @@ pub struct Args {
     /// Do not prompt for passphrase (fail if key is encrypted)
     #[arg(long, global = true)]
     pub no_passphrase: bool,
+
+    /// Increase log verbosity (-v info, -vv debug)
+    #[arg(short = 'v', long, action = ArgAction::Count, global = true)]
+    pub verbose: u8,
 
     /// The subcommand to run
     #[command(subcommand)]
