@@ -383,6 +383,8 @@ pub enum BackendCommand {
     List(BackendListArgs),
     /// Remove a named backend
     Remove(BackendRemoveArgs),
+    /// Rename a named backend
+    Rename(BackendRenameArgs),
     /// Set the default backend
     SetDefault(BackendSetDefaultArgs),
     /// Copy blobs from one backend to another
@@ -427,6 +429,16 @@ pub struct BackendAddArgs {
 pub struct BackendRemoveArgs {
     /// Name of the backend to remove
     pub name: String,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendRenameArgs {
+    /// Current backend name
+    pub old: String,
+
+    /// New backend name
+    pub new: String,
 }
 
 #[allow(missing_docs)]

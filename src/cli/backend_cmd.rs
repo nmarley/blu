@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::cli::clapargs::{
     BackendAddArgs, BackendArgs, BackendCommand, BackendDiffArgs, BackendListArgs,
-    BackendMirrorArgs, BackendRemoveArgs, BackendSetDefaultArgs,
+    BackendMirrorArgs, BackendRemoveArgs, BackendRenameArgs, BackendSetDefaultArgs,
 };
 use crate::config;
 use crate::config::backend::BackendConfig;
@@ -17,6 +17,7 @@ pub async fn backend(args: BackendArgs) -> Result<(), BluError> {
         BackendCommand::Add(a) => add(a),
         BackendCommand::List(a) => list(a).await,
         BackendCommand::Remove(a) => remove(a),
+        BackendCommand::Rename(a) => rename(a),
         BackendCommand::SetDefault(a) => set_default(a),
         BackendCommand::Mirror(a) => mirror(a).await,
         BackendCommand::Diff(a) => diff(a).await,
@@ -206,6 +207,54 @@ fn remove(args: BackendRemoveArgs) -> Result<(), BluError> {
     cfg.backends.remove(&args.name);
     cfg.save()?;
     println!("Removed backend \"{}\"", args.name);
+
+    Ok(())
+}
+
+/// Rename a named backend key in config.
+///
+/// Config-only: does not move storage. Updates `default_backend` when
+/// the renamed entry was the default.
+fn rename(args: BackendRenameArgs) -> Result<(), BluError> {
+    let mut cfg = config::read_config(".")?;
+    rename_in_config(&mut cfg, &args.old, &args.new)?;
+    cfg.save()?;
+    println!("Renamed backend \"{}\" to \"{}\"", args.old, args.new);
+    Ok(())
+}
+
+/// Rename a backend entry in an in-memory config.
+fn rename_in_config(cfg: &mut config::Config, old: &str, new: &str) -> Result<(), BluError> {
+    if old == new {
+        return Err(BluError::InvalidConfig(format!(
+            "backend is already named \"{}\"",
+            old
+        )));
+    }
+
+    if !cfg.backends.contains_key(old) {
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" not found",
+            old
+        )));
+    }
+
+    if cfg.backends.contains_key(new) {
+        return Err(BluError::InvalidConfig(format!(
+            "backend \"{}\" already exists",
+            new
+        )));
+    }
+
+    let backend_cfg = cfg
+        .backends
+        .remove(old)
+        .expect("backend presence checked above");
+    cfg.backends.insert(new.to_string(), backend_cfg);
+
+    if cfg.default_backend == old {
+        cfg.default_backend = new.to_string();
+    }
 
     Ok(())
 }
@@ -720,4 +769,81 @@ async fn diff(args: BackendDiffArgs) -> Result<(), BluError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::backend::{BackendConfig, LocalConfig, S3Config};
+    use std::path::PathBuf;
+
+    fn two_backend_config() -> config::Config {
+        let mut cfg = config::Config::default();
+        cfg.backends.clear();
+        cfg.backends.insert(
+            "default".into(),
+            BackendConfig::Local(LocalConfig {
+                path: PathBuf::from(".blu/data"),
+            }),
+        );
+        cfg.backends.insert(
+            "cold".into(),
+            BackendConfig::AmazonS3(S3Config {
+                bucket: "my-bucket".into(),
+                prefix: Some("photos".into()),
+                region: Some("us-east-1".into()),
+            }),
+        );
+        cfg.default_backend = "default".into();
+        cfg
+    }
+
+    #[test]
+    fn rename_moves_entry_and_preserves_config() {
+        let mut cfg = two_backend_config();
+        rename_in_config(&mut cfg, "cold", "archive").unwrap();
+
+        assert!(!cfg.backends.contains_key("cold"));
+        assert!(cfg.backends.contains_key("archive"));
+        assert_eq!(cfg.default_backend, "default");
+        match cfg.backends.get("archive") {
+            Some(BackendConfig::AmazonS3(s3)) => {
+                assert_eq!(s3.bucket, "my-bucket");
+                assert_eq!(s3.prefix.as_deref(), Some("photos"));
+                assert_eq!(s3.region.as_deref(), Some("us-east-1"));
+            }
+            other => panic!("expected S3 config, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rename_updates_default_backend() {
+        let mut cfg = two_backend_config();
+        rename_in_config(&mut cfg, "default", "local").unwrap();
+
+        assert!(!cfg.backends.contains_key("default"));
+        assert!(cfg.backends.contains_key("local"));
+        assert_eq!(cfg.default_backend, "local");
+    }
+
+    #[test]
+    fn rename_missing_old_errors() {
+        let mut cfg = two_backend_config();
+        let err = rename_in_config(&mut cfg, "nope", "other").unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn rename_colliding_new_errors() {
+        let mut cfg = two_backend_config();
+        let err = rename_in_config(&mut cfg, "cold", "default").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn rename_same_name_errors() {
+        let mut cfg = two_backend_config();
+        let err = rename_in_config(&mut cfg, "cold", "cold").unwrap_err();
+        assert!(err.to_string().contains("already named"));
+    }
 }
