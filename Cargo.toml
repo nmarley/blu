@@ -1,6 +1,6 @@
 [package]
 name = "blu"
-version = "0.7.3"
+version = "0.7.4"
 edition = "2021"
 authors = ["Nathan Marley <nathan@glowberrylabs.com>"]
 license = "MIT OR Apache-2.0"
