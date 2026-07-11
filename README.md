@@ -24,6 +24,8 @@ can cache unlock state (with macOS Touch ID when available).
   reads (v2 still readable; upgrade via `defrag-blobs --upgrade-format`)
 - **Content-addressed storage**: chunk + multihash dedup across files
 - **Named multi-backend config**: local and S3, with mirror/diff
+- **Multi-device index merge**: content-hash union on pull/push so either
+  machine can add or delete; last-write-wins tombstones for deletes
 - **Agent daemon**: unlock once, zeroize on lock; biometric gate on macOS
 - **`blu serve`**: S3-compatible localhost API over the encrypted vault
 - **`.bluignore`**: gitignore-style exclusion during add/sync/status
@@ -54,7 +56,10 @@ blu doctor
 Optional: put a `.bluignore` at the vault root (gitignore syntax). The
 `.blu/` and `.git/` directories are always skipped.
 
-### Restore files (same machine)
+### Restore files (materialize plaintext)
+
+`blu pull` and `blu open` update **indexes** only. They do not write
+plaintext into the vault working tree. Use `restore-files` to decrypt:
 
 ```sh
 blu restore-files --path "photos/*.jpg" --to /tmp/restored
@@ -62,11 +67,29 @@ blu restore-files --all --to /tmp/restored
 blu restore-files --file-hashes abc123
 ```
 
-### Restore on a new machine
+### Multi-device (same identity, shared backend)
 
-Vault-changing commands push encrypted indexes **and** the UK-wrapped
-KEK store to the backend. On a fresh machine you need only your
-mnemonic, backend location, and AWS credentials:
+Model is git-like for the vault index, not a full working-tree checkout:
+
+| Command | Role |
+|---------|------|
+| `blu sync [paths]` | Index local paths, encrypt new chunks, merge remote indexes, push |
+| `blu pull` | Fetch remote indexes and **union-merge** into local (default) |
+| `blu pull --force` | Hard reset: discard local indexes, take remote only |
+| `blu ls` | List what the **index** knows about (not `ls` of the directory) |
+| `blu restore-files` | Decrypt selected files to a destination path |
+
+Either machine may add files and push. The other machine `pull`s (or
+`sync`s) and sees the union in `blu ls`. Concurrent adds merge by content
+hash. Deletes record tombstones so a stale peer does not reanimate a
+removed file; re-adding the same content after a delete wins when the
+re-add is newer.
+
+Path conflict: the same path maps to two different content hashes after
+a merge (both versions stay in the index). `blu pull` prints a warning;
+restore by hash or resolve paths manually.
+
+Fresh machine (disaster recovery or second computer):
 
 ```sh
 # 1. Recover identity from the 24-word mnemonic
@@ -79,9 +102,18 @@ blu open --type s3 \
   --region us-east-1 \
   --dir ~/Archives/photos
 
-# 3. Unlock and restore
+# 3. Unlock, inspect index, restore plaintext where you want it
 cd ~/Archives/photos
 blu unlock
+blu ls
+blu restore-files --all --to /tmp/restored
+```
+
+Existing local vault, refresh from backend:
+
+```sh
+blu pull              # merge remote into local
+# blu pull --force    # only if you intend to drop local-only index state
 blu ls
 blu restore-files --all --to /tmp/restored
 ```
@@ -89,13 +121,6 @@ blu restore-files --all --to /tmp/restored
 If the backend was created before KEK push existed, run any index-pushing
 command once on the **original** machine (for example `blu sync`) so
 `keys/kek.toml` is published, then retry `blu open`.
-
-### Pull indexes (existing local vault)
-
-```sh
-# Indexes and KEK store are pushed after vault-changing commands.
-blu pull --force
-```
 
 ### Local S3-compatible API
 
@@ -163,15 +188,15 @@ blu backend diff --from default --to cold
 | `agent status` / `stop` | Agent daemon control |
 | `init` | Create a vault |
 | `open` | Open an existing vault from a backend |
-| `sync` | Add paths and encrypt |
+| `sync` | Add paths, encrypt, merge remote indexes, push |
 | `status` | Working-tree vs index |
 | `doctor` | Vault health diagnostics |
 | `ls` / `list-files` | List indexed files |
 | `search` | Search filenames and tags |
-| `restore-files` | Decrypt files out of the vault |
-| `delete-files` | Remove from index and cascade blobs |
+| `restore-files` | Decrypt files out of the vault (working tree) |
+| `delete-files` | Tombstone + cascade blobs; multi-device safe |
 | `defrag-blobs` | Repack partially-dead blobs; `--upgrade-format` for v2→v3 |
-| `pull` | Pull indexes from a backend |
+| `pull` | Merge remote indexes (default); `--force` resets to remote |
 | `tagger` | Add/remove tags |
 | `backend` | add / list / remove / set-default / mirror / diff |
 | `serve` | Localhost S3-compatible API |

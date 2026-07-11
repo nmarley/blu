@@ -25,9 +25,12 @@ Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
 
 ## Data Management
 
-- [ ] Event collision handling (e.g. user deletes from one backend,
-      syncs from another where data is still active; consider event
-      sourcing pattern)
+- [x] Multi-device index merge on pull/push (content-hash union; concurrent
+      adds)
+- [x] Delete tombstones with LWW re-add (plain index `deleted_files` /
+      `file_times`) for multi-device delete propagation
+- [ ] Tombstone GC / compaction (drop ancient tombstones after retention)
+- [ ] Event log / snapshot history if richer than LWW tombstones is needed
 
 ## Architecture
 
