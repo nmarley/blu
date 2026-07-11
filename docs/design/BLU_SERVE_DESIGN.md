@@ -2,8 +2,8 @@
 
 ## 1. Vision
 
-blu is an encrypted storage platform. The archival CLI (`blu sync`,
-`blu restore-files`, etc.) is one frontend. `blu serve` is a second
+blu is an encrypted storage platform. The archival CLI (`blu backup`,
+`blu restore`, etc.) is one frontend. `blu serve` is a second
 frontend: a local translation layer that presents decrypted,
 de-obfuscated files to any client while the real backend (Local or
 Amazon S3 today; other object stores are roadmap) holds only opaque,
@@ -476,7 +476,7 @@ When a client writes a file (e.g., `PUT /documents/report.pdf`):
    to `BlobIndex`
 7. **Flush**: write encrypted indexes to local disk, push to backend
 
-This is the same pipeline as `blu sync`, but triggered by an API
+This is the same pipeline as `blu backup`, but triggered by an API
 request instead of a CLI command. The underlying functions
 (`BlobBuffer::add_chunk`, `BlobBuffer::seal_and_upload`,
 `PlainIndex::hash_and_add_file`) already exist. The translation
@@ -523,7 +523,7 @@ without modification.
 | `GetObject` with `Range` | Same, but compute chunk overlap with byte range and serve only requested slice |
 | `HeadObject` | Resolve path -> compute size from chunk sizes, return metadata |
 | `PutObject` | Receive bytes -> chunk -> dedup -> pack -> encrypt -> upload -> update index |
-| `DeleteObject` | Remove from indexes -> trigger delete cascade (same as `blu delete-files`) |
+| `DeleteObject` | Remove from indexes -> trigger delete cascade (same as `blu rm`) |
 | `CreateMultipartUpload` | Allocate upload state, return upload ID |
 | `UploadPart` | Buffer part, chunk incrementally |
 | `CompleteMultipartUpload` | Finalize chunking, pack remaining, update indexes |

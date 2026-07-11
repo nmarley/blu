@@ -24,7 +24,7 @@ Ranked by impact for beta readiness. Updated 2026-07-09.
 
 14. [ ] encrypt command tests
 15. [ ] delete command tests
-16. [ ] sync command tests
+16. [ ] backup command tests
 17. [ ] restore command tests
 18. [ ] list-files command tests
 19. [ ] status command tests

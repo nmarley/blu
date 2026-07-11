@@ -546,7 +546,7 @@ $ blu open --type s3 --bucket my-bucket --prefix backups/photos \
 
 $ cd ~/Archives/photos
 $ blu unlock
-$ blu restore-files --all --to /tmp/restored
+$ blu restore --all --to /tmp/restored
 ```
 
 Identity recovery alone is not enough: the vault KEK is random and
@@ -633,13 +633,13 @@ blu identity recover
 blu init <path>
 blu open --type s3 --bucket <b> [--prefix <p>] [--region <r>] [--dir <path>]
 blu unlock / blu lock
-blu sync
+blu backup
 blu ls
-blu restore-files [--all] [--path <pattern>] [--to <dir>]
+blu restore [--all] [--path <pattern>] [--to <dir>]
 blu pull [--force]
 blu status
 blu doctor
-blu delete-files --filter <s> | --all
+blu rm --filter <s> | --all
 blu defrag-blobs [--upgrade-format]
 blu serve
 ```

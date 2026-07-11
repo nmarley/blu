@@ -4,7 +4,7 @@ Encrypted, deduplicated file archival CLI written in Rust.
 
 > "Not your keys, not your secrets ..."
 
-**Status:** 0.7.0 pre-release (dogfood / late-alpha quality). Breaking
+**Status:** 0.7.x pre-release (dogfood / late-alpha quality). Breaking
 changes are expected.
 
 ## Why
@@ -24,12 +24,25 @@ can cache unlock state (with macOS Touch ID when available).
   reads (v2 still readable; upgrade via `defrag-blobs --upgrade-format`)
 - **Content-addressed storage**: chunk + multihash dedup across files
 - **Named multi-backend config**: local and S3, with mirror/diff
-- **Multi-device index merge**: content-hash union on pull/push so either
+- **Multi-device catalog merge**: content-hash union on pull/push so either
   machine can add or delete; last-write-wins tombstones for deletes
 - **Agent daemon**: unlock once, zeroize on lock; biometric gate on macOS
 - **`blu serve`**: S3-compatible localhost API over the encrypted vault
-- **`.bluignore`**: gitignore-style exclusion during add/sync/status
+- **`.bluignore`**: gitignore-style exclusion during backup/status walks
 - **`blu doctor`**: vault health checks (config, keys, indexes, blobs)
+
+## Product model
+
+blu is an encrypted, content-addressed **vault**:
+
+- Remote backend holds the shared **catalog** (encrypted indexes) and
+  opaque **blobs**
+- Local directory is an optional **checkout** of plaintext, not a
+  Dropbox-style sync folder
+- Multi-device: same identity + backend; publish, pull catalog, restore
+  what you need
+
+See `docs/design/CLI_UX.md` for vocabulary and invariants.
 
 ## Quick start
 
@@ -43,9 +56,9 @@ blu unlock
 # 3. Initialize a vault in a directory
 blu init ~/Archives/photos
 
-# 4. Copy or create files under the vault, then sync
+# 4. Copy or create files under the vault, then publish
 cd ~/Archives/photos
-blu sync
+blu backup
 
 # 5. Inspect
 blu status
@@ -58,32 +71,46 @@ Optional: put a `.bluignore` at the vault root (gitignore syntax). The
 
 ### Restore files (materialize plaintext)
 
-`blu pull` and `blu open` update **indexes** only. They do not write
-plaintext into the vault working tree. Use `restore-files` to decrypt:
+`blu pull` and `blu open` update the **catalog** only. They do not write
+plaintext into the vault working tree. Use `restore` to decrypt:
 
 ```sh
-blu restore-files --path "photos/*.jpg" --to /tmp/restored
-blu restore-files --all --to /tmp/restored
-blu restore-files --file-hashes abc123
+blu restore --path "photos/*.jpg" --to /tmp/restored
+blu restore --all --to /tmp/restored
+blu restore --file-hashes abc123
 ```
 
 ### Multi-device (same identity, shared backend)
 
-Model is git-like for the vault index, not a full working-tree checkout:
+Git-like for the catalog, deliberate for plaintext checkout:
 
 | Command | Role |
 |---------|------|
-| `blu sync [paths]` | Index local paths, encrypt new chunks, merge remote indexes, push |
-| `blu pull` | Fetch remote indexes and **union-merge** into local (default) |
+| `blu backup [paths]` | Index local paths, encrypt, merge remote indexes, push |
+| `blu pull` | Fetch remote indexes and **union-merge** into local (catalog only) |
 | `blu pull --force` | Hard reset: discard local indexes, take remote only |
-| `blu ls` | List what the **index** knows about (not `ls` of the directory) |
-| `blu restore-files` | Decrypt selected files to a destination path |
+| `blu status` | Working tree vs catalog vs remote |
+| `blu ls` | List what the **catalog** knows about (not directory listing) |
+| `blu restore` | Materialize plaintext from catalog + blobs |
+| `blu rm` | Tombstone + cascade (multi-device safe) |
 
-Either machine may add files and push. The other machine `pull`s (or
-`sync`s) and sees the union in `blu ls`. Concurrent adds merge by content
-hash. Deletes record tombstones so a stale peer does not reanimate a
-removed file; re-adding the same content after a delete wins when the
-re-add is newer.
+Day-to-day:
+
+```sh
+# Machine A: publish
+blu backup path/or/.
+
+# Machine B: refresh catalog, then checkout deliberately
+blu pull
+blu status
+blu restore --path 'music/*'   # or --all when intentional
+```
+
+Either machine may add files and `backup`. The other machine `pull`s and
+sees the union in `blu ls`. Concurrent adds merge by content hash.
+Deletes record tombstones so a stale peer does not reanimate a removed
+file; re-adding the same content after a delete wins when the re-add is
+newer.
 
 Path conflict: the same path maps to two different content hashes after
 a merge (both versions stay in the index). `blu pull` prints a warning;
@@ -102,24 +129,24 @@ blu open --type s3 \
   --region us-east-1 \
   --dir ~/Archives/photos
 
-# 3. Unlock, inspect index, restore plaintext where you want it
+# 3. Unlock, inspect catalog, restore plaintext where you want it
 cd ~/Archives/photos
 blu unlock
 blu ls
-blu restore-files --all --to /tmp/restored
+blu restore --all --to /tmp/restored
 ```
 
 Existing local vault, refresh from backend:
 
 ```sh
-blu pull              # merge remote into local
+blu pull              # merge remote into local (catalog only)
 # blu pull --force    # only if you intend to drop local-only index state
 blu ls
-blu restore-files --all --to /tmp/restored
+blu restore --all --to /tmp/restored
 ```
 
 If the backend was created before KEK push existed, run any index-pushing
-command once on the **original** machine (for example `blu sync`) so
+command once on the **original** machine (for example `blu backup`) so
 `keys/kek.toml` is published, then retry `blu open`.
 
 ### Local S3-compatible API
@@ -188,19 +215,18 @@ blu backend diff --from default --to cold
 | `agent status` / `stop` | Agent daemon control |
 | `init` | Create a vault |
 | `open` | Open an existing vault from a backend |
-| `sync` | Add paths, encrypt, merge remote indexes, push |
-| `status` | Working-tree vs index |
+| `backup` | Index paths, encrypt, merge remote indexes, push |
+| `pull` | Merge remote catalog (default); `--force` resets to remote |
+| `status` | Working tree vs catalog vs remote |
 | `doctor` | Vault health diagnostics |
-| `ls` / `list-files` | List indexed files |
+| `ls` / `list-files` | List catalog entries |
 | `search` | Search filenames and tags |
-| `restore-files` | Decrypt files out of the vault (working tree) |
-| `delete-files` | Tombstone + cascade blobs; multi-device safe |
+| `restore` | Materialize plaintext from catalog + blobs |
+| `rm` | Tombstone + cascade blobs; multi-device safe |
 | `defrag-blobs` | Repack partially-dead blobs; `--upgrade-format` for v2→v3 |
-| `pull` | Merge remote indexes (default); `--force` resets to remote |
 | `tagger` | Add/remove tags |
-| `backend` | add / list / remove / set-default / mirror / diff |
+| `backend` | add / list / remove / set-default / rename / mirror / diff |
 | `serve` | Localhost S3-compatible API |
-| `add` | Index only (no encrypt) |
 
 Global options: `--bludir <path>` (like `git -C`), `--no-passphrase`.
 
@@ -224,6 +250,7 @@ CI runs on `macos-15` and `ubuntu-24.04` (build, test, clippy, fmt).
 
 ## Design docs
 
+- `docs/design/CLI_UX.md` — git-like vault CLI model
 - `docs/design/ENVELOPE_ENCRYPTION_DESIGN.md` — key hierarchy
 - `docs/design/BLU_SERVE_DESIGN.md` — `blu serve` architecture
 - `docs/project/START-HERE.md` — living project status

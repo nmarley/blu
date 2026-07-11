@@ -11,7 +11,7 @@ The cryptographic core (envelope encryption, PQ hybrid KEK wrapping,
 ChaCha20-Poly1305 pipeline, agent daemon with mlock'd memory) is solid
 and well-tested. The content-addressed storage model, named multi-backend
 config system, and backend mirror/diff commands are polished. The data
-pipeline (sync, delete cascade, defrag, restore) works end-to-end.
+pipeline (backup, rm cascade, defrag, restore) works end-to-end.
 
 Recent dogfood-readiness work: `.bluignore`, `blu doctor`, vault pipeline
 smoke tests, GitHub Actions CI (`macos-15` + `ubuntu-24.04`), README and
@@ -32,7 +32,7 @@ well-tested with tests concentrated in keys/, agent/, and format modules.
 
 Named multi-backend config with clean serde tagging and legacy migration.
 `BackendKind` enum dispatch (`Local`, `AmazonS3`). Indexes are local-first,
-pushed/pulled via sync. `backend mirror` and `backend diff` are polished.
+pushed/pulled via backup/pull. `backend mirror` and `backend diff` are polished.
 
 Missing: no `list` method on backends (orphan blob discovery blocked);
 no S3 field validation in config.
@@ -46,8 +46,10 @@ Enables prefix-fetch reads. Indexes (`BLUI`) remain v2. Upgrade path:
 
 ### Status / Delete / Defrag: COMPLETE
 
-`status`, `delete-files` (full cascade + `--scrub`), and `defrag-blobs`
-are production-quality with shared repack logic.
+`status`, `rm` (full cascade + `--scrub`), and `defrag-blobs` are
+production-quality with shared repack logic. CLI surface is git-like
+vault vocabulary (`backup` / `pull` / `restore` / `rm`); see
+`docs/design/CLI_UX.md`.
 
 ### Search / Tags: WORKING (partial)
 
@@ -55,7 +57,7 @@ Basic substring search; tag add/remove/list. Search index not persisted.
 
 ### `.bluignore`: SHIPPED
 
-gitignore-style via the `ignore` crate. Shared walker for add/sync/status.
+gitignore-style via the `ignore` crate. Shared walker for backup/status.
 Always excludes `.blu/` and `.git/`. Explicit single-file paths override.
 
 ### `blu doctor`: SHIPPED (structural checks)
