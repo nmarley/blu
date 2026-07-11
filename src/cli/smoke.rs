@@ -2,12 +2,15 @@
 //!
 //! Exercises library APIs that back the CLI (init → sync → list/status →
 //! restore → delete → doctor) without requiring the agent daemon.
+//!
+//! Multi-device smokes (shared local backend, two vault dirs) lock the
+//! git-like multi-writer acceptance criteria.
 
 #![cfg(test)]
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use age::Identity;
 use tempfile::tempdir;
@@ -15,8 +18,8 @@ use tempfile::tempdir;
 use crate::blob::{BlobBuffer, BlobIndex, EncBlobReader};
 use crate::block::PlainIndex;
 use crate::cli::doctor::{diagnose, CheckStatus};
-use crate::cli::{init_vault, InitVaultParams};
-use crate::config::{self, Config};
+use crate::cli::{init_vault, open_vault, InitVaultParams, OpenVaultParams};
+use crate::config::{self, backend::BackendConfig, Config};
 use crate::dek_provider::DekProvider;
 use crate::hash::Hash;
 use crate::keys::kek::KekStore;
@@ -98,6 +101,79 @@ async fn sync_tree(cfg: &Config, keys: &DekProvider, paths: &[PathBuf]) -> (Plai
         cfg.write_blob_index(&blob, keys).unwrap();
     }
     (plain, blob)
+}
+
+/// Sync local paths then push indexes (CLI `blu sync` shape for multi-device).
+async fn sync_tree_and_push(
+    cfg: &Config,
+    keys: &DekProvider,
+    paths: &[PathBuf],
+) -> (PlainIndex, BlobIndex) {
+    let (plain, blob) = sync_tree(cfg, keys, paths).await;
+    let backend = cfg.init_storage_backend().await.unwrap();
+    cfg.push_indexes(&backend).await.unwrap();
+    (plain, blob)
+}
+
+fn point_at_shared_backend(vault_dir: &Path, backend_dir: &Path) -> Config {
+    let mut cfg = config::read_config(vault_dir).unwrap();
+    fs::create_dir_all(backend_dir).unwrap();
+    cfg.backends.clear();
+    cfg.backends.insert(
+        "remote".into(),
+        BackendConfig::Local(config::backend::LocalConfig {
+            path: backend_dir.to_path_buf(),
+        }),
+    );
+    cfg.default_backend = "remote".into();
+    cfg.save().unwrap();
+    config::read_config(vault_dir).unwrap()
+}
+
+/// Vault A owns the KEK; shared backend holds blobs + indexes.
+async fn setup_primary_vault(vault_dir: &Path, backend_dir: &Path) -> (Config, DekProvider) {
+    fs::create_dir_all(vault_dir).unwrap();
+    init_vault(
+        vault_dir,
+        InitVaultParams {
+            pq_recipient: test_pq_recipient(),
+        },
+    )
+    .unwrap();
+    let cfg = point_at_shared_backend(vault_dir, backend_dir);
+    let keys = local_keys(&cfg);
+    let backend = cfg.init_storage_backend().await.unwrap();
+    cfg.push_indexes(&backend).await.unwrap();
+    (cfg, keys)
+}
+
+/// Second machine: open existing vault from the shared backend.
+async fn setup_secondary_vault(vault_dir: &Path, backend_dir: &Path) -> (Config, DekProvider) {
+    open_vault(OpenVaultParams {
+        dir: vault_dir.to_path_buf(),
+        pq_recipient: test_pq_recipient(),
+        backend_name: "remote".into(),
+        backend: BackendConfig::Local(config::backend::LocalConfig {
+            path: backend_dir.to_path_buf(),
+        }),
+    })
+    .await
+    .unwrap();
+    let cfg = config::read_config(vault_dir).unwrap();
+    let keys = local_keys(&cfg);
+    (cfg, keys)
+}
+
+async fn pull_indexes(cfg: &Config) {
+    let backend = cfg.init_storage_backend().await.unwrap();
+    cfg.pull_indexes(&backend).await.unwrap();
+}
+
+fn basenames(plain: &PlainIndex) -> HashSet<String> {
+    list_paths(plain)
+        .into_iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect()
 }
 
 async fn restore_file_bytes(
@@ -275,5 +351,114 @@ async fn bluignore_respected_during_sync_walk() {
         !paths.iter().any(|p| p.ends_with("noise.log")),
         "ignored file should not be indexed: {:?}",
         paths
+    );
+}
+
+/// Sequential multi-writer: each side pulls before the next publish.
+///
+/// With LWW full-index replace this already works when machines always
+/// pull before mutating. Locks acceptance criteria 1-3 from the plan.
+#[tokio::test]
+async fn multi_device_sequential_adds_visible_after_pull() {
+    let tmp = tempdir().unwrap();
+    let backend_dir = tmp.path().join("backend");
+    let vault_a = tmp.path().join("vault-a");
+    let vault_b = tmp.path().join("vault-b");
+
+    let (cfg_a, keys_a) = setup_primary_vault(&vault_a, &backend_dir).await;
+
+    // A publishes a.txt
+    let a_txt = vault_a.join("a.txt");
+    fs::write(&a_txt, b"content from machine A").unwrap();
+    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_txt)).await;
+
+    // B opens and sees a.txt
+    let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
+    let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
+    assert_eq!(
+        basenames(&plain_b),
+        HashSet::from(["a.txt".into()]),
+        "B after open should see A's file"
+    );
+
+    // B publishes b.txt
+    let b_txt = vault_b.join("b.txt");
+    fs::write(&b_txt, b"content from machine B").unwrap();
+    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_txt)).await;
+
+    // A pulls and sees a.txt + b.txt
+    pull_indexes(&cfg_a).await;
+    let plain_a = cfg_a.load_plain_index(&keys_a).unwrap();
+    assert_eq!(
+        basenames(&plain_a),
+        HashSet::from(["a.txt".into(), "b.txt".into()]),
+        "A after pull should see B's add"
+    );
+
+    // A publishes a2.txt (local index already merged remote via pull)
+    let a2_txt = vault_a.join("a2.txt");
+    fs::write(&a2_txt, b"second file from A").unwrap();
+    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a2_txt)).await;
+
+    // B pulls and sees the full union
+    pull_indexes(&cfg_b).await;
+    let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
+    assert_eq!(
+        basenames(&plain_b),
+        HashSet::from(["a.txt".into(), "b.txt".into(), "a2.txt".into()]),
+        "B after pull should see A's second add"
+    );
+}
+
+/// Concurrent multi-writer: both sides add without pulling each other first.
+///
+/// Desired: after both push and both pull, the index is the union of adds.
+/// Current LWW full-index replace loses the first pusher's exclusive add.
+/// This is the red test for multi-device index merge.
+#[tokio::test]
+async fn multi_device_concurrent_adds_preserve_union() {
+    let tmp = tempdir().unwrap();
+    let backend_dir = tmp.path().join("backend");
+    let vault_a = tmp.path().join("vault-a");
+    let vault_b = tmp.path().join("vault-b");
+
+    let (cfg_a, keys_a) = setup_primary_vault(&vault_a, &backend_dir).await;
+
+    // Shared baseline so both machines start from the same remote index.
+    let base = vault_a.join("base.txt");
+    fs::write(&base, b"shared baseline").unwrap();
+    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&base)).await;
+
+    let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
+    let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
+    assert_eq!(basenames(&plain_b), HashSet::from(["base.txt".into()]));
+
+    // Divergent adds without intermediate pull.
+    let a_only = vault_a.join("a_only.txt");
+    fs::write(&a_only, b"only on A").unwrap();
+    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&a_only)).await;
+
+    let b_only = vault_b.join("b_only.txt");
+    fs::write(&b_only, b"only on B").unwrap();
+    // B still has local index {base} only; push overwrites remote and drops a_only.
+    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_only)).await;
+
+    // Both pull the surviving remote index.
+    pull_indexes(&cfg_a).await;
+    pull_indexes(&cfg_b).await;
+
+    let plain_a = cfg_a.load_plain_index(&keys_a).unwrap();
+    let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
+    let expected = HashSet::from(["base.txt".into(), "a_only.txt".into(), "b_only.txt".into()]);
+
+    assert_eq!(
+        basenames(&plain_a),
+        expected,
+        "A after concurrent push+pull should keep both machines' adds"
+    );
+    assert_eq!(
+        basenames(&plain_b),
+        expected,
+        "B after concurrent push+pull should keep both machines' adds"
     );
 }
