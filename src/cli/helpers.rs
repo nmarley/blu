@@ -159,13 +159,56 @@ pub async fn push_indexes_or_fail(
         }
     };
 
-    cfg.merge_remote_indexes(backend, keys).await.map_err(|e| {
+    // Merge remote into local, then verify the remote did not advance
+    // under us. If it did, re-merge once. If it advances again, fail
+    // rather than last-write-wins clobber.
+    let mut summary = cfg.merge_remote_indexes(backend, keys).await.map_err(|e| {
         BluError::Internal(format!(
             "Local indexes updated, but merge/push to backend `{}` failed: {}. \
-                 Re-run when the backend is reachable.",
+             Re-run when the backend is reachable.",
             resolved_name, e
         ))
     })?;
+
+    if summary.merged
+        && !cfg
+            .remote_indexes_match_digests(backend, &summary)
+            .await
+            .map_err(|e| {
+                BluError::Internal(format!(
+                    "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                     Re-run when the backend is reachable.",
+                    resolved_name, e
+                ))
+            })?
+    {
+        info!("remote indexes advanced during merge; re-merging once");
+        summary = cfg.merge_remote_indexes(backend, keys).await.map_err(|e| {
+            BluError::Internal(format!(
+                "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                 Re-run when the backend is reachable.",
+                resolved_name, e
+            ))
+        })?;
+        if summary.merged
+            && !cfg
+                .remote_indexes_match_digests(backend, &summary)
+                .await
+                .map_err(|e| {
+                    BluError::Internal(format!(
+                        "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                         Re-run when the backend is reachable.",
+                        resolved_name, e
+                    ))
+                })?
+        {
+            return Err(BluError::Internal(format!(
+                "Remote indexes on backend `{}` advanced again during push. \
+                 Pull and retry.",
+                resolved_name
+            )));
+        }
+    }
 
     cfg.push_indexes(backend).await.map_err(|e| {
         BluError::Internal(format!(
