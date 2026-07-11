@@ -37,6 +37,8 @@ pub struct PlainIndexMerge {
 ///
 /// - Files: union by content hash; path sets are unioned for matching hashes.
 /// - Blocks: union by block hash; file-hash references are unioned.
+/// - `file_times` / `deleted_files`: union by max timestamp, then LWW apply
+///   so multi-device deletes are not reanimated and re-adds can win.
 /// - Schema versions must match.
 /// - `created_at` is the earlier of the two; `updated_at` is the later.
 pub fn merge_plain_index(
@@ -85,16 +87,35 @@ pub fn merge_plain_index(
         }
     }
 
+    let mut file_times = local.file_times.clone();
+    for (hash, ts) in &remote.file_times {
+        file_times
+            .entry(hash.clone())
+            .and_modify(|t| *t = (*t).max(*ts))
+            .or_insert(*ts);
+    }
+
+    let mut deleted_files = local.deleted_files.clone();
+    for (hash, ts) in &remote.deleted_files {
+        deleted_files
+            .entry(hash.clone())
+            .and_modify(|t| *t = (*t).max(*ts))
+            .or_insert(*ts);
+    }
+
     let created_at = local.created_at.min(remote.created_at);
     let updated_at = local.updated_at.max(remote.updated_at);
 
-    let index = PlainIndex {
+    let mut index = PlainIndex {
         files,
         blocks,
         version: local.version.clone(),
         created_at,
         updated_at,
+        file_times,
+        deleted_files,
     };
+    index.apply_deletion_lww();
     let conflicts = detect_path_conflicts(&index);
 
     Ok(PlainIndexMerge { index, conflicts })
@@ -298,6 +319,48 @@ mod test {
         assert_eq!(merged.conflicts.len(), 1);
         assert_eq!(merged.conflicts[0].path, PathBuf::from("shared.txt"));
         assert_eq!(merged.conflicts[0].hashes.len(), 2);
+    }
+
+    #[test]
+    fn merge_tombstone_wins_over_stale_peer_file() {
+        let (hash, fr) = file_ref("doomed", &["gone.txt"]);
+        let mut local = plain_with(vec![(hash.clone(), fr.clone())], 1, 2);
+        local.tombstone_file(&hash);
+        assert!(local.files_map_ref().is_empty());
+        assert!(local.deleted_files_ref().contains_key(&hash));
+
+        // Remote never saw the delete and still lists the file.
+        let mut remote = PlainIndex::new_empty();
+        remote.files.insert(hash.clone(), fr);
+        remote.file_times.insert(hash.clone(), 1); // older than tombstone
+
+        let merged = merge_plain_index(&local, &remote).unwrap();
+        assert!(
+            merged.index.files_map_ref().is_empty(),
+            "tombstone should suppress stale remote file"
+        );
+        assert!(merged.index.deleted_files_ref().contains_key(&hash));
+    }
+
+    #[test]
+    fn merge_readd_after_tombstone_wins() {
+        let (hash, fr) = file_ref("phoenix", &["back.txt"]);
+        let mut local = plain_with(vec![(hash.clone(), fr.clone())], 1, 2);
+        local.tombstone_file(&hash);
+
+        // Remote re-added the same content after the delete.
+        let mut remote = PlainIndex::new_empty();
+        remote.files.insert(hash.clone(), fr);
+        remote.file_times.insert(hash.clone(), unix_far_future());
+        // Remote also cleared its tombstone by re-add; leave deleted_files empty.
+
+        let merged = merge_plain_index(&local, &remote).unwrap();
+        assert_eq!(merged.index.files_map_ref().len(), 1);
+        assert!(!merged.index.deleted_files_ref().contains_key(&hash));
+    }
+
+    fn unix_far_future() -> i64 {
+        4_000_000_000 // ~2096
     }
 
     #[test]

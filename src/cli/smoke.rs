@@ -211,17 +211,13 @@ async fn delete_all_files(cfg: &Config, keys: &DekProvider) -> (PlainIndex, Blob
             .map(|fr| fr.chunkmetas.iter().map(|cm| cm.hash.clone()).collect())
             .unwrap_or_default();
 
-        plain.files.remove(file_hash);
+        plain.tombstone_file(file_hash);
         for chunk_hash in &chunk_hashes {
-            let unreferenced = match plain.blocks.get_mut(chunk_hash) {
-                Some(br) => br.delete_fileref(file_hash),
-                None => false,
-            };
-            if unreferenced {
-                plain.blocks.remove(chunk_hash);
-                if blob.has_chunk(chunk_hash) {
-                    blob.delete_chunk(chunk_hash).unwrap();
-                }
+            if plain.blocks_map_ref().contains_key(chunk_hash) {
+                continue;
+            }
+            if blob.has_chunk(chunk_hash) {
+                blob.delete_chunk(chunk_hash).unwrap();
             }
         }
         tags.drop_all_tags(file_hash);
@@ -444,10 +440,10 @@ async fn multi_device_concurrent_adds_preserve_union() {
 
     let b_only = vault_b.join("b_only.txt");
     fs::write(&b_only, b"only on B").unwrap();
-    // B still has local index {base} only; push overwrites remote and drops a_only.
+    // B still has local index {base} only; merge-on-push keeps a_only.
     sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_only)).await;
 
-    // Both pull the surviving remote index.
+    // Both pull the merged remote index.
     pull_indexes(&cfg_a, &keys_a).await;
     pull_indexes(&cfg_b, &keys_b).await;
 
@@ -464,5 +460,61 @@ async fn multi_device_concurrent_adds_preserve_union() {
         basenames(&plain_b),
         expected,
         "B after concurrent push+pull should keep both machines' adds"
+    );
+}
+
+/// A deletes a shared file and pushes; B still has it locally and pushes
+/// without pulling first. After both pull, the tombstone must win so the
+/// file does not reanimate on either side.
+#[tokio::test]
+async fn multi_device_delete_tombstone_propagates() {
+    let tmp = tempdir().unwrap();
+    let backend_dir = tmp.path().join("backend");
+    let vault_a = tmp.path().join("vault-a");
+    let vault_b = tmp.path().join("vault-b");
+
+    let (cfg_a, keys_a) = setup_primary_vault(&vault_a, &backend_dir).await;
+
+    let shared = vault_a.join("shared.txt");
+    fs::write(&shared, b"shared content").unwrap();
+    sync_tree_and_push(&cfg_a, &keys_a, std::slice::from_ref(&shared)).await;
+
+    let (cfg_b, keys_b) = setup_secondary_vault(&vault_b, &backend_dir).await;
+    assert_eq!(
+        basenames(&cfg_b.load_plain_index(&keys_b).unwrap()),
+        HashSet::from(["shared.txt".into()])
+    );
+
+    // A deletes and publishes the tombstone.
+    let (plain_a, _blob_a) = delete_all_files(&cfg_a, &keys_a).await;
+    assert!(plain_a.files_map_ref().is_empty());
+    assert!(!plain_a.deleted_files_ref().is_empty());
+    let backend = cfg_a.init_storage_backend().await.unwrap();
+    cfg_a.merge_remote_indexes(&backend, &keys_a).await.unwrap();
+    cfg_a.push_indexes(&backend).await.unwrap();
+
+    // B never pulled the delete; still has shared.txt and pushes a new file.
+    let b_extra = vault_b.join("b_extra.txt");
+    fs::write(&b_extra, b"extra on B").unwrap();
+    sync_tree_and_push(&cfg_b, &keys_b, std::slice::from_ref(&b_extra)).await;
+
+    pull_indexes(&cfg_a, &keys_a).await;
+    pull_indexes(&cfg_b, &keys_b).await;
+
+    let plain_a = cfg_a.load_plain_index(&keys_a).unwrap();
+    let plain_b = cfg_b.load_plain_index(&keys_b).unwrap();
+    let expected = HashSet::from(["b_extra.txt".into()]);
+
+    assert_eq!(
+        basenames(&plain_a),
+        expected,
+        "A should keep B's add and not revive deleted shared.txt: {:?}",
+        basenames(&plain_a)
+    );
+    assert_eq!(
+        basenames(&plain_b),
+        expected,
+        "B should drop shared.txt after merging A's tombstone: {:?}",
+        basenames(&plain_b)
     );
 }
