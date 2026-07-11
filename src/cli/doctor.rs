@@ -189,7 +189,58 @@ pub async fn diagnose(cfg: &Config, keys: &DekProvider) -> Result<DoctorReport, 
         check_blob_presence(cfg, blob, &mut report).await;
     }
 
+    check_catalog_remote(cfg, keys, &mut report).await;
+
     Ok(report)
+}
+
+/// Report whether the local catalog is fully published to the default backend.
+async fn check_catalog_remote(cfg: &Config, keys: &DekProvider, report: &mut DoctorReport) {
+    let backend = match cfg.init_storage_backend().await {
+        Ok(b) => b,
+        Err(e) => {
+            report.warn(
+                "catalog-remote",
+                format!("unable to open default backend: {}", e),
+            );
+            return;
+        }
+    };
+
+    match cfg.catalog_remote_state(&backend, keys).await {
+        Ok(state) => {
+            use crate::config::CatalogRemoteState;
+            match state {
+                CatalogRemoteState::InSync | CatalogRemoteState::NoRemote => {
+                    report.pass("catalog-remote", state.as_str());
+                }
+                CatalogRemoteState::Ahead => {
+                    report.warn(
+                        "catalog-remote",
+                        "local catalog not fully on remote (run `blu backup`)",
+                    );
+                }
+                CatalogRemoteState::Behind => {
+                    report.warn(
+                        "catalog-remote",
+                        "remote catalog has entries not local (run `blu pull`)",
+                    );
+                }
+                CatalogRemoteState::Diverged => {
+                    report.warn(
+                        "catalog-remote",
+                        "local and remote catalogs diverged (pull, then backup)",
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            report.warn(
+                "catalog-remote",
+                format!("unable to compare with remote: {}", e),
+            );
+        }
+    }
 }
 
 fn check_config(cfg: &Config, report: &mut DoctorReport) {

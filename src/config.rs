@@ -38,6 +38,58 @@ pub struct IndexMergeSummary {
     pub remote_tag_digest: Option<[u8; 32]>,
 }
 
+/// How the local catalog compares to remote backend indexes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogRemoteState {
+    /// No remote index objects exist yet.
+    NoRemote,
+    /// Local and remote index ciphertexts match.
+    InSync,
+    /// Local has catalog content not present on remote (unpublished).
+    Ahead,
+    /// Remote has catalog content not present locally (needs pull).
+    Behind,
+    /// Both sides have exclusive catalog content.
+    Diverged,
+}
+
+impl CatalogRemoteState {
+    /// Short label for status/doctor output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoRemote => "no remote",
+            Self::InSync => "in sync",
+            Self::Ahead => "ahead",
+            Self::Behind => "behind",
+            Self::Diverged => "diverged",
+        }
+    }
+}
+
+/// Combine two set-relation outcomes (local-only / remote-only flags).
+fn combine_relation(a: (bool, bool), b: (bool, bool)) -> (bool, bool) {
+    (a.0 || b.0, a.1 || b.1)
+}
+
+/// `(local_only, remote_only)` for two hash sets.
+fn set_relation<T: Eq + std::hash::Hash>(
+    local: &std::collections::HashSet<T>,
+    remote: &std::collections::HashSet<T>,
+) -> (bool, bool) {
+    let local_only = local.iter().any(|k| !remote.contains(k));
+    let remote_only = remote.iter().any(|k| !local.contains(k));
+    (local_only, remote_only)
+}
+
+/// True when both sides are missing or both present with equal digests.
+fn ciphertext_pair_matches(local: &Option<Vec<u8>>, remote: &Option<Vec<u8>>) -> bool {
+    match (local, remote) {
+        (None, None) => true,
+        (Some(l), Some(r)) => sha256_digest(l) == sha256_digest(r),
+        _ => false,
+    }
+}
+
 /// Encryption configuration for a blu vault.
 ///
 /// The identity (private key) lives at
@@ -580,6 +632,130 @@ impl Config {
         Ok(summary)
     }
 
+    /// Compare local catalog index files to the remote backend.
+    ///
+    /// Ciphertext digests are checked first (fast path after a successful
+    /// push). When digests differ, plain and blob index content is compared
+    /// so status/doctor can report ahead / behind / diverged rather than a
+    /// silent drift.
+    pub async fn catalog_remote_state(
+        &self,
+        backend: &BackendKind,
+        keys: &DekProvider,
+    ) -> Result<CatalogRemoteState, BluError> {
+        let remote_plain_path = self.remote_plain_index_path();
+        let remote_blob_path = self.remote_blob_index_path();
+        let remote_tag_path = self.remote_tag_index_path();
+
+        let local_plain_bytes = self.read_local_index(&self.plain_index_filename);
+        let local_blob_bytes = self.read_local_index(&self.blob_index_filename);
+        let local_tag_bytes = self.read_local_index(&self.tag_index_filename);
+
+        let (remote_plain_bytes, remote_blob_bytes, remote_tag_bytes) = tokio::join!(
+            Self::read_remote_bytes(backend, &remote_plain_path),
+            Self::read_remote_bytes(backend, &remote_blob_path),
+            Self::read_remote_bytes(backend, &remote_tag_path),
+        );
+        let remote_plain_bytes = remote_plain_bytes?;
+        let remote_blob_bytes = remote_blob_bytes?;
+        let remote_tag_bytes = remote_tag_bytes?;
+
+        let has_remote = remote_plain_bytes.is_some()
+            || remote_blob_bytes.is_some()
+            || remote_tag_bytes.is_some();
+        let has_local =
+            local_plain_bytes.is_some() || local_blob_bytes.is_some() || local_tag_bytes.is_some();
+
+        if !has_remote {
+            return Ok(if has_local {
+                CatalogRemoteState::Ahead
+            } else {
+                CatalogRemoteState::NoRemote
+            });
+        }
+
+        let digests_match = ciphertext_pair_matches(&local_plain_bytes, &remote_plain_bytes)
+            && ciphertext_pair_matches(&local_blob_bytes, &remote_blob_bytes)
+            && ciphertext_pair_matches(&local_tag_bytes, &remote_tag_bytes);
+        if digests_match {
+            return Ok(CatalogRemoteState::InSync);
+        }
+
+        // Digests differ: compare catalog content so we can distinguish
+        // unpublished local work from a remote advance.
+        let local_plain = self.load_plain_index_or_default(keys);
+        let local_blob = self.load_blob_index_or_default(keys);
+
+        let remote_plain =
+            Self::read_remote_index::<PlainIndex>(backend, &remote_plain_path, keys).await?;
+        let remote_blob =
+            Self::read_remote_index::<BlobIndex>(backend, &remote_blob_path, keys).await?;
+
+        let mut local_only = false;
+        let mut remote_only = false;
+
+        let remote_plain = remote_plain
+            .map(|(idx, _)| idx)
+            .unwrap_or_else(PlainIndex::new_empty);
+        let remote_blob = remote_blob
+            .map(|(idx, _)| idx)
+            .unwrap_or_else(BlobIndex::new);
+
+        let local_files: std::collections::HashSet<_> =
+            local_plain.files_map_ref().keys().cloned().collect();
+        let remote_files: std::collections::HashSet<_> =
+            remote_plain.files_map_ref().keys().cloned().collect();
+        let file_rel = set_relation(&local_files, &remote_files);
+        (local_only, remote_only) = combine_relation((local_only, remote_only), file_rel);
+
+        let local_deleted: std::collections::HashSet<_> =
+            local_plain.deleted_files_ref().keys().cloned().collect();
+        let remote_deleted: std::collections::HashSet<_> =
+            remote_plain.deleted_files_ref().keys().cloned().collect();
+        let del_rel = set_relation(&local_deleted, &remote_deleted);
+        (local_only, remote_only) = combine_relation((local_only, remote_only), del_rel);
+
+        let local_chunks: std::collections::HashSet<_> = local_blob.map.keys().cloned().collect();
+        let remote_chunks: std::collections::HashSet<_> = remote_blob.map.keys().cloned().collect();
+        let chunk_rel = set_relation(&local_chunks, &remote_chunks);
+        (local_only, remote_only) = combine_relation((local_only, remote_only), chunk_rel);
+
+        // Tag ciphertext can differ with identical plain/blob content
+        // (tag-only edits). Treat tag-only drift as ahead when local tags
+        // exist and digests differ without plain/blob exclusives.
+        if !local_only && !remote_only {
+            let tag_pair = ciphertext_pair_matches(&local_tag_bytes, &remote_tag_bytes);
+            if !tag_pair {
+                local_only = local_tag_bytes.is_some();
+                remote_only = remote_tag_bytes.is_some() && local_tag_bytes.is_none();
+                if local_tag_bytes.is_some() && remote_tag_bytes.is_some() {
+                    // Both have tags but ciphertext differs; without a
+                    // deeper tag merge, call it diverged only if both sides
+                    // claim exclusive content elsewhere. Here treat as ahead
+                    // (local unpublished) when local is present.
+                    local_only = true;
+                }
+            }
+        }
+
+        Ok(match (local_only, remote_only) {
+            (false, false) => CatalogRemoteState::InSync,
+            (true, false) => CatalogRemoteState::Ahead,
+            (false, true) => CatalogRemoteState::Behind,
+            (true, true) => CatalogRemoteState::Diverged,
+        })
+    }
+
+    async fn read_remote_bytes(
+        backend: &BackendKind,
+        remote_path: &Path,
+    ) -> Result<Option<Vec<u8>>, BluError> {
+        if !backend.exists(remote_path).await? {
+            return Ok(None);
+        }
+        Ok(Some(backend.read_from_path(remote_path).await?))
+    }
+
     /// True when remote index ciphertexts still match digests from a merge.
     ///
     /// Missing remote objects match a `None` digest. Used to detect a
@@ -701,7 +877,8 @@ impl Config {
 #[cfg(test)]
 pub(crate) mod test {
     use super::backend::BackendConfig;
-    use super::Config;
+    use super::{CatalogRemoteState, Config};
+    use crate::block::PlainIndex;
     use std::fs;
 
     #[test]
@@ -1010,9 +1187,98 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn merge_records_remote_digests_and_match_detects_advance() {
-        use crate::block::PlainIndex;
+    async fn catalog_remote_state_in_sync_after_push() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu/indexes")).unwrap();
 
+        let keys = test_local_keys();
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        let plain = PlainIndex::new_empty();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        assert_eq!(
+            cfg.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::InSync
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_remote_state_ahead_when_local_unpublished() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        // Publish baseline empty index.
+        cfg.write_plain_index(&PlainIndex::new_empty(), &keys)
+            .unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        // Local-only add without push.
+        let mut plain = PlainIndex::new_empty();
+        let f = vault.join("only-local.txt");
+        fs::write(&f, b"local").unwrap();
+        plain.add(&f, None).unwrap();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+
+        assert_eq!(
+            cfg.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::Ahead
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_remote_state_behind_when_remote_advanced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault_a = tmp.path().join("vault-a");
+        let vault_b = tmp.path().join("vault-b");
+        fs::create_dir_all(vault_a.join(".blu/indexes")).unwrap();
+        fs::create_dir_all(vault_b.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg_a = local_backend_config(&datadir, &vault_a);
+        let cfg_b = local_backend_config(&datadir, &vault_b);
+        let backend = cfg_a.init_storage_backend().await.unwrap();
+
+        // A publishes a file; B pulls once.
+        let mut plain_a = PlainIndex::new_empty();
+        let a_file = vault_a.join("a.txt");
+        fs::write(&a_file, b"from a").unwrap();
+        plain_a.add(&a_file, None).unwrap();
+        cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        cfg_a.push_indexes(&backend).await.unwrap();
+
+        cfg_b.pull_indexes(&backend).await.unwrap();
+        assert_eq!(
+            cfg_b.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::InSync
+        );
+
+        // A publishes another file; B does not pull.
+        let a2 = vault_a.join("a2.txt");
+        fs::write(&a2, b"from a again").unwrap();
+        plain_a.add(&a2, None).unwrap();
+        cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        cfg_a.push_indexes(&backend).await.unwrap();
+
+        assert_eq!(
+            cfg_b.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::Behind
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_records_remote_digests_and_match_detects_advance() {
         let tmp = tempfile::tempdir().unwrap();
         let datadir = tmp.path().join("data");
         let vault = tmp.path().join("vault");
@@ -1055,7 +1321,6 @@ pub(crate) mod test {
 
     #[tokio::test]
     async fn push_indexes_or_fail_remerges_after_remote_advance() {
-        use crate::block::PlainIndex;
         use crate::cli::helpers::push_indexes_or_fail;
         use crate::index_merge::merge_plain_index;
 
