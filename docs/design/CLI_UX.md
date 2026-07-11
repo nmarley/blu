@@ -115,8 +115,11 @@ point at `blu restore` when entries are missing on disk.
 
 ## Follow-ups
 
-- Doctor orphan blob scan when backend `list` exists
-- Optional multi-device-safe blob GC
+- [x] Doctor orphan blob scan (`blob-orphans` via backend `list_blob_paths`)
+- Orphan blob reclaim (explicit destroy; not auto on doctor)
+- Multi-device-safe blob GC (grace period / refcount / tombstone-first)
+  before any default-on reclaim
+- Optional user-facing `backend list-blobs` operator plumbing
 - Optional `push` synonym for `backup`
 
 ## Success criteria

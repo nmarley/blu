@@ -64,7 +64,9 @@ Always excludes `.blu/` and `.git/`. Explicit single-file paths override.
 
 Config, encryption, KEK store, agent warn, index decrypt, version,
 cross-refs, encryption coverage, GC queues, `backend.exists` for indexed
-blobs. No orphan scan (needs backend `list`). No `--repair`.
+blobs, catalog-remote drift, orphan blob scan (`list_blob_paths` vs
+index). Orphan reclaim and multi-device-safe GC remain backlog (see
+TODO.md). No `--repair`.
 
 ### `blu serve`: WORKING
 

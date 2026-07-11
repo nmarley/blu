@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `blu doctor` `catalog-remote` check warns when the local catalog is not
   fully on the remote
 - Design doc `docs/design/CLI_UX.md` for the git-like vault model
+- Backend `list_blob_paths` (local + S3) for content-addressed blob
+  objects; skips `indexes/` and `keys/`
+- `blu doctor` `blob-orphans` check warns when backend objects are not
+  referenced by the catalog (detect only; reclaim deferred)
 
 ### Changed
 

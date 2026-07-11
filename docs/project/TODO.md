@@ -21,7 +21,8 @@ Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
 
 - [ ] Additional storage backends: DigitalOcean Spaces, Google Cloud
       Storage, Azure Blob Storage
-- [ ] Backend `list` API for orphan blob discovery
+- [x] Backend `list_blob_paths` API (local walk + S3 ListObjectsV2;
+      skips `indexes/` and `keys/`)
 
 ## Data Management
 
@@ -29,10 +30,18 @@ Consolidated backlog for blu. See ROADMAP.md for the sequenced milestone plan.
       adds)
 - [x] Delete tombstones with LWW re-add (plain index `deleted_files` /
       `file_times`) for multi-device delete propagation
+- [x] Doctor orphan blob detection (`blob-orphans` warn via
+      `list_blob_paths` vs `BlobIndex::path_index`)
 - [ ] Tombstone GC / compaction (drop ancient tombstones after retention)
+- [ ] Orphan blob reclaim (delete backend objects reported by
+      `blob-orphans`): dry-run first, then explicit destroy command;
+      never auto-delete on doctor
 - [ ] Multi-device-safe blob GC: do not delete backend blob objects while
       another peer may still reference a shared chunk (grace period,
-      refcount, or tombstone-first / GC-later)
+      refcount, or tombstone-first / GC-later). Required before any
+      automatic or default-on orphan reclaim
+- [ ] Optional user-facing `backend list-blobs` (or similar) plumbing
+      CLI for operators; doctor already uses the storage API
 - [ ] Event log / snapshot history if richer than LWW tombstones is needed
 
 ## Architecture
@@ -57,10 +66,10 @@ remain open by design:
       between blob upload/redb commit and encrypted index push to the
       backend)
 
-Related doctor follow-up (needs storage API first):
+Related doctor follow-up:
 
-- [ ] Backend `list` + orphan blob detection / repair in `blu doctor`
-      (same item as under Storage Backends)
+- [x] Backend `list` + orphan blob detection in `blu doctor`
+      (warn-only; reclaim/repair still under Data Management)
 
 ## UX
 
