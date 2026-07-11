@@ -187,6 +187,7 @@ pub async fn diagnose(cfg: &Config, keys: &DekProvider) -> Result<DoctorReport, 
         check_encryption_coverage(plain, blob, &mut report);
         check_gc_queues(blob, &mut report);
         check_blob_presence(cfg, blob, &mut report).await;
+        check_blob_orphans(cfg, blob, &mut report).await;
     }
 
     check_catalog_remote(cfg, keys, &mut report).await;
@@ -483,6 +484,68 @@ async fn check_blob_presence(cfg: &Config, blob: &BlobIndex, report: &mut Doctor
     }
 }
 
+/// Cap orphan path samples in doctor output.
+const MAX_ORPHAN_SAMPLES: usize = 5;
+
+/// Backend objects not referenced by the blob index (orphans).
+///
+/// Warn-only: publish completeness should prevent this; multi-device-safe
+/// reclaim is a separate follow-up.
+async fn check_blob_orphans(cfg: &Config, blob: &BlobIndex, report: &mut DoctorReport) {
+    let backend = match cfg.init_storage_backend().await {
+        Ok(b) => b,
+        Err(e) => {
+            report.warn("blob-orphans", format!("backend init failed: {}", e));
+            return;
+        }
+    };
+
+    let listed = match backend.list_blob_paths().await {
+        Ok(paths) => paths,
+        Err(e) => {
+            report.warn(
+                "blob-orphans",
+                format!("unable to list backend blobs: {}", e),
+            );
+            return;
+        }
+    };
+
+    let indexed: std::collections::HashSet<_> = blob.path_index.keys().cloned().collect();
+    let mut orphans: Vec<_> = listed
+        .into_iter()
+        .filter(|p| !indexed.contains(p))
+        .collect();
+    orphans.sort();
+
+    if orphans.is_empty() {
+        report.pass(
+            "blob-orphans",
+            format!(
+                "no unreferenced blob objects ({} indexed path(s))",
+                indexed.len()
+            ),
+        );
+        return;
+    }
+
+    let sample: Vec<String> = orphans
+        .iter()
+        .take(MAX_ORPHAN_SAMPLES)
+        .map(|p| p.display().to_string())
+        .collect();
+    let more = orphans.len().saturating_sub(sample.len());
+    let mut detail = format!("{} backend blob object(s) not in catalog", orphans.len());
+    if !sample.is_empty() {
+        detail.push_str(": ");
+        detail.push_str(&sample.join(", "));
+        if more > 0 {
+            detail.push_str(&format!(" … and {} more", more));
+        }
+    }
+    report.warn("blob-orphans", detail);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +648,43 @@ mod tests {
             .find(|c| c.name == "blob-presence")
             .expect("blob-presence check");
         assert_eq!(presence.status, CheckStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn orphan_blob_on_backend_warns() {
+        let (_tmp, cfg, keys) = setup_vault();
+
+        let backend = cfg.init_storage_backend().await.unwrap();
+        let data = b"orphan-blob-bytes";
+        let hash = Hash::from(crate::hash::multihash(data).to_bytes());
+        let orphan_path = backend.write_data(&hash, data).await.unwrap();
+
+        // Empty blob index: the written object is unreferenced.
+        cfg.write_blob_index(&BlobIndex::new(), &keys).unwrap();
+
+        let report = diagnose(&cfg, &keys).await.unwrap();
+        assert!(
+            !report.has_failures(),
+            "orphans are warn-only: {:?}",
+            report.checks
+        );
+        let orphans = report
+            .checks
+            .iter()
+            .find(|c| c.name == "blob-orphans")
+            .expect("blob-orphans check");
+        assert_eq!(orphans.status, CheckStatus::Warn);
+        assert!(
+            orphans.detail.contains("1 backend blob object"),
+            "detail={}",
+            orphans.detail
+        );
+        assert!(
+            orphans.detail.contains(&orphan_path.display().to_string())
+                || orphans.detail.contains("not in catalog"),
+            "detail={}",
+            orphans.detail
+        );
     }
 
     #[tokio::test]
