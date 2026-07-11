@@ -104,14 +104,11 @@ pub async fn backup(args: BackupArgs) -> Result<(), BluError> {
         "Backup complete: {} files indexed, {} chunks encrypted",
         files_added, chunks_encrypted
     );
-
-    if args.verbose {
-        println!("Index contains {} files total", files_map.len());
-        println!(
-            "Blob index contains {} blob files",
-            blob_index.count_blob_files()
-        );
-    }
+    println!("Index contains {} files total", files_map.len());
+    println!(
+        "Blob index contains {} blob files",
+        blob_index.count_blob_files()
+    );
 
     Ok(())
 }

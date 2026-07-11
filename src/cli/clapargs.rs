@@ -153,10 +153,6 @@ pub struct BackupArgs {
     #[arg(long)]
     pub force: bool,
 
-    /// Show verbose output
-    #[arg(long)]
-    pub verbose: bool,
-
     /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,
