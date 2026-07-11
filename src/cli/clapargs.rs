@@ -1,10 +1,10 @@
 use clap::Parser;
 
-/// blu - de-duplicated file archival system w/encrypted cloud backup
+/// Encrypted, content-addressed file vault (git-like catalog + checkout)
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The target folder for blu to run/operate in, like `git -C`
+    /// Vault directory to operate in, like `git -C`
     #[arg(long, default_value = ".")]
     pub bludir: String,
 
@@ -20,15 +20,16 @@ pub struct Args {
 /// The possible subcommands to be run from blu-cli
 #[derive(Debug, clap::Subcommand, Clone)]
 pub enum Action {
-    /// Add files to the index
+    /// Add files to the local index only (plumbing; prefer `backup`)
+    #[command(hide = true)]
     Add(AddArgs),
-    /// Initialize a new blu vault
+    /// Create a new vault
     Init(InitArgs),
     /// Open an existing vault from a remote backend
     Open(OpenArgs),
     /// Index paths, encrypt, and publish to the vault backend
     Backup(BackupArgs),
-    /// Pull indexes from remote backend
+    /// Fetch and merge remote catalog indexes (no plaintext)
     Pull(PullArgs),
     /// Write index (plumbing)
     #[command(hide = true)]
@@ -38,9 +39,9 @@ pub enum Action {
     EncryptFiles(EncryptFilesArgs),
     /// Materialize plaintext from the catalog and encrypted blobs
     Restore(RestoreArgs),
-    /// List files in the index, optionally filtered
+    /// List catalog entries, optionally filtered
     ListFiles(ListFilesArgs),
-    /// List files (alias for list-files)
+    /// List catalog entries (alias for list-files)
     #[command(alias = "list")]
     Ls(ListFilesArgs),
     /// Manipulate tags on files
@@ -48,13 +49,13 @@ pub enum Action {
     /// Print (debug) the index (plumbing)
     #[command(hide = true)]
     ReadIndex(ReadIndexArgs),
-    /// Defrag consolidates encrypted blob files
+    /// Repack partially-dead encrypted blob files
     DefragBlobs(DefragBlobsArgs),
     /// Tombstone catalog entries and cascade blob cleanup
     Rm(RmArgs),
-    /// Search filenames, tags
+    /// Search filenames and tags in the catalog
     Search(SearchArgs),
-    /// Status command, show changes not in index (and not encrypted?)
+    /// Show working tree vs catalog vs remote
     Status(StatusArgs),
     /// Run vault health diagnostics
     Doctor(DoctorArgs),

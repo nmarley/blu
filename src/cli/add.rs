@@ -2,7 +2,9 @@ use crate::cli::clapargs::AddArgs;
 use crate::cli::helpers::{load_config_and_keys, push_indexes_or_fail, LoadOptions};
 use crate::error::BluError;
 
-/// Add local files to the index
+/// Add local files to the plain index only (plumbing).
+///
+/// Prefer `blu backup`, which indexes, encrypts, and publishes in one step.
 pub async fn add(args: AddArgs) -> Result<(), BluError> {
     info!("Started add");
 
@@ -23,8 +25,8 @@ pub async fn add(args: AddArgs) -> Result<(), BluError> {
 
     cfg.write_plain_index(&plain_index, &keys)?;
 
-    // Sync the updated index to the backend so the source of truth is
-    // never behind the local working copy.
+    // Publish the updated index so the remote catalog is never behind
+    // the local working copy.
     push_indexes_or_fail(&cfg, &keys, None, None).await?;
 
     Ok(())
