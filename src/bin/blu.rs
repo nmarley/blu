@@ -72,7 +72,6 @@ pub async fn run() -> Result<(), BluError> {
     // TODO: Should key(s) be read and stored here in some kind of state or context?
 
     match args.action {
-        clapargs::Action::Add(a) => cli::add(a).await,
         clapargs::Action::Backend(a) => cli::backend(a).await,
         clapargs::Action::DefragBlobs(a) => cli::defrag_blobs(a).await,
         clapargs::Action::Rm(a) => cli::rm(a).await,
