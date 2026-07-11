@@ -134,6 +134,9 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
 /// backend. Reuses an already-initialized backend when the caller
 /// passes one via `backend`, avoiding a redundant client construction.
 ///
+/// Before upload, remote indexes are fetch+merged into local so
+/// concurrent multi-device adds are not clobbered by last-write-wins.
+///
 /// This is the shared seam that keeps index-push behavior uniform
 /// across every index-modifying CLI command. Pushing is not optional:
 /// the backend is the source of truth, so a push failure is a hard
@@ -141,6 +144,7 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
 /// written and only the remote copy is behind.
 pub async fn push_indexes_or_fail(
     cfg: &Config,
+    keys: &DekProvider,
     backend_name: Option<&str>,
     backend: Option<&crate::storage::BackendKind>,
 ) -> Result<()> {
@@ -154,6 +158,57 @@ pub async fn push_indexes_or_fail(
             &owned
         }
     };
+
+    // Merge remote into local, then verify the remote did not advance
+    // under us. If it did, re-merge once. If it advances again, fail
+    // rather than last-write-wins clobber.
+    let mut summary = cfg.merge_remote_indexes(backend, keys).await.map_err(|e| {
+        BluError::Internal(format!(
+            "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+             Re-run when the backend is reachable.",
+            resolved_name, e
+        ))
+    })?;
+
+    if summary.merged
+        && !cfg
+            .remote_indexes_match_digests(backend, &summary)
+            .await
+            .map_err(|e| {
+                BluError::Internal(format!(
+                    "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                     Re-run when the backend is reachable.",
+                    resolved_name, e
+                ))
+            })?
+    {
+        info!("remote indexes advanced during merge; re-merging once");
+        summary = cfg.merge_remote_indexes(backend, keys).await.map_err(|e| {
+            BluError::Internal(format!(
+                "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                 Re-run when the backend is reachable.",
+                resolved_name, e
+            ))
+        })?;
+        if summary.merged
+            && !cfg
+                .remote_indexes_match_digests(backend, &summary)
+                .await
+                .map_err(|e| {
+                    BluError::Internal(format!(
+                        "Local indexes updated, but merge/push to backend `{}` failed: {}. \
+                         Re-run when the backend is reachable.",
+                        resolved_name, e
+                    ))
+                })?
+        {
+            return Err(BluError::Internal(format!(
+                "Remote indexes on backend `{}` advanced again during push. \
+                 Pull and retry.",
+                resolved_name
+            )));
+        }
+    }
 
     cfg.push_indexes(backend).await.map_err(|e| {
         BluError::Internal(format!(
@@ -213,8 +268,12 @@ mod test {
         std::fs::write(idxdir.join("blob_index.dat"), b"blob-bytes").unwrap();
         std::fs::write(idxdir.join("tags.dat"), b"tag-bytes").unwrap();
 
-        // Push via the shared helper (resolves the default backend).
-        push_indexes_or_fail(&cfg, None, None).await.unwrap();
+        // No remote indexes yet, so merge is a no-op; dummy keys suffice.
+        let keys = DekProvider::Local {
+            kek: crate::keys::kek::Kek::generate(),
+            kek_version: 0,
+        };
+        push_indexes_or_fail(&cfg, &keys, None, None).await.unwrap();
 
         // Each index must now exist under the backend datadir at the
         // `indexes/` prefix, byte-for-byte.
@@ -249,12 +308,16 @@ mod test {
         std::fs::create_dir_all(&idxdir).unwrap();
         std::fs::write(idxdir.join("index.dat"), b"plain-bytes").unwrap();
 
-        let err = push_indexes_or_fail(&cfg, None, None)
+        let keys = DekProvider::Local {
+            kek: crate::keys::kek::Kek::generate(),
+            kek_version: 0,
+        };
+        let err = push_indexes_or_fail(&cfg, &keys, None, None)
             .await
             .expect_err("push must fail when the backend is unwritable");
         let msg = err.to_string();
         assert!(
-            msg.contains("Local indexes updated, but push to backend `local` failed"),
+            msg.contains("Local indexes updated, but") && msg.contains("backend `local` failed"),
             "unexpected error message: {msg}"
         );
         assert!(

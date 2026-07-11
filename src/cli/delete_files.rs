@@ -89,26 +89,18 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
             None => continue,
         };
 
-        // Remove file from plain index
-        plain_index.files.remove(file_hash);
+        // Tombstone + remove from plain index (multi-device merge).
+        plain_index.tombstone_file(file_hash);
 
-        // For each chunk, remove this file's reference from the block
+        // Cascade unreferenced chunks into the blob index.
         for chunk_hash in &chunk_hashes {
-            let block_unreferenced = match plain_index.blocks.get_mut(chunk_hash) {
-                Some(block_ref) => block_ref.delete_fileref(file_hash),
-                None => false,
-            };
-
-            if block_unreferenced {
-                // Block has no remaining references; remove it
-                plain_index.blocks.remove(chunk_hash);
-                blocks_removed += 1;
-
-                // Remove chunk from blob index (if encrypted)
-                if blob_index.has_chunk(chunk_hash) {
-                    blob_index.delete_chunk(chunk_hash)?;
-                    chunks_deleted += 1;
-                }
+            if plain_index.blocks_map_ref().contains_key(chunk_hash) {
+                continue;
+            }
+            blocks_removed += 1;
+            if blob_index.has_chunk(chunk_hash) {
+                blob_index.delete_chunk(chunk_hash)?;
+                chunks_deleted += 1;
             }
         }
 
@@ -177,7 +169,7 @@ pub async fn delete_files(args: DeleteFilesArgs) -> Result<(), BluError> {
     // Sync the indexes to the backend. Reuse the backend handle if one
     // was initialized for blob deletion; otherwise the helper resolves
     // it by name.
-    push_indexes_or_fail(&cfg, args.backend.as_deref(), backend.as_ref()).await?;
+    push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), backend.as_ref()).await?;
 
     println!(
         "Deleted {} file(s), removed {} unreferenced blocks, \

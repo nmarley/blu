@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Multi-device index sync: pull and push union-merge plain, blob, and tag
+  indexes by content hash so concurrent adds from two machines survive
+- Last-write-wins delete tombstones on the plain index (`file_times` /
+  `deleted_files`) so multi-device deletes are not reanimated by a stale peer
+- Push re-merges once when remote index ciphertext advances mid-push;
+  fails with a clear error if the remote races again
+- Multi-device smoke tests (sequential adds, concurrent adds, delete
+  tombstone propagation) on a shared local backend
+
+### Changed
+
+- `blu pull` merges remote indexes into local by default (no longer
+  requires `--force` for routine refresh)
+- `blu pull --force` is a hard reset: discard local indexes and take the
+  remote copy only
+- Shared push path (`sync`, `add`, `delete-files`, tags, defrag) always
+  fetch+merges before upload
+
 ## [0.7.1] - 2026-07-10
 
 ### Changed

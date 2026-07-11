@@ -38,6 +38,15 @@ pub struct PlainIndex {
     pub(crate) created_at: NaiveDateTime,
     #[serde(with = "datetime_format")]
     pub(crate) updated_at: NaiveDateTime,
+    /// Last add/update time (Unix UTC seconds) per content hash.
+    /// Used with [`Self::deleted_files`] for last-write-wins multi-device merge.
+    #[serde(default)]
+    pub(crate) file_times: HashMap<Hash, i64>,
+    /// Tombstones: content hash -> delete time (Unix UTC seconds).
+    /// Survives multi-device merge so deletes are not reanimated by an
+    /// older peer that still lists the file.
+    #[serde(default)]
+    pub(crate) deleted_files: HashMap<Hash, i64>,
 }
 
 impl PlainIndex {
@@ -135,10 +144,15 @@ impl PlainIndex {
 
         // add path to this hash in file index
         self.files
-            .entry(file_hash)
+            .entry(file_hash.clone())
             .or_insert_with(|| FileRef::new(chunkmetas))
             .paths
             .insert(path);
+
+        // Re-add clears any tombstone and records the add time for LWW merge.
+        self.deleted_files.remove(&file_hash);
+        self.file_times.insert(file_hash, unix_now());
+        self.updated_at = now();
 
         Ok(())
     }
@@ -153,7 +167,67 @@ impl PlainIndex {
             version: CURRENT_INDEX_VERSION.to_string(),
             created_at: now(),
             updated_at: now(),
+            file_times: HashMap::new(),
+            deleted_files: HashMap::new(),
         }
+    }
+
+    /// Record a tombstone for a content hash and remove it from the live maps.
+    ///
+    /// Returns the removed [`FileRef`] when the file was present. Block
+    /// references are cleaned up; blob-index cascade is the caller's job.
+    pub fn tombstone_file(&mut self, file_hash: &Hash) -> Option<FileRef> {
+        self.deleted_files.insert(file_hash.clone(), unix_now());
+        self.file_times.remove(file_hash);
+        self.updated_at = now();
+        self.remove_file_entry(file_hash)
+    }
+
+    /// Remove a file from the live file/block maps without recording a tombstone.
+    pub fn remove_file_entry(&mut self, file_hash: &Hash) -> Option<FileRef> {
+        let fileref = self.files.remove(file_hash)?;
+        for cm in &fileref.chunkmetas {
+            let unreferenced = match self.blocks.get_mut(&cm.hash) {
+                Some(block_ref) => block_ref.delete_fileref(file_hash),
+                None => false,
+            };
+            if unreferenced {
+                self.blocks.remove(&cm.hash);
+            }
+        }
+        Some(fileref)
+    }
+
+    /// Apply LWW between [`Self::file_times`] and [`Self::deleted_files`].
+    ///
+    /// A tombstone wins when its timestamp is greater than or equal to the
+    /// file's last-add time (or when no add time is recorded). Winning
+    /// tombstones remove live file entries; winning adds drop the tombstone.
+    pub fn apply_deletion_lww(&mut self) {
+        let mut hashes: HashSet<Hash> = self.deleted_files.keys().cloned().collect();
+        hashes.extend(self.file_times.keys().cloned());
+        hashes.extend(self.files.keys().cloned());
+
+        for hash in hashes {
+            let file_ts = self.file_times.get(&hash).copied().unwrap_or(0);
+            let del_ts = self.deleted_files.get(&hash).copied();
+            match del_ts {
+                Some(d) if d >= file_ts => {
+                    self.remove_file_entry(&hash);
+                    // Keep the tombstone so peers still learn about the delete.
+                }
+                Some(_) => {
+                    // Add is newer than delete: clear tombstone.
+                    self.deleted_files.remove(&hash);
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// Shared reference to deletion tombstones (content hash -> Unix seconds).
+    pub fn deleted_files_ref(&self) -> &HashMap<Hash, i64> {
+        &self.deleted_files
     }
 
     /// Returns the number of unique bytes indexed.
@@ -351,6 +425,10 @@ gen_std_enc_serde!(PlainIndex);
 fn now() -> chrono::NaiveDateTime {
     // returns a NaiveDateTime without milli/nano seconds
     chrono::Utc::now().naive_utc().with_nanosecond(0).unwrap()
+}
+
+fn unix_now() -> i64 {
+    chrono::Utc::now().timestamp()
 }
 
 #[cfg(test)]

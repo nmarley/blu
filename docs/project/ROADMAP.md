@@ -43,8 +43,7 @@ dependencies.
 - Additional storage backends (DigitalOcean Spaces, GCS, Azure Blob)
 - Streaming index I/O (memory-mapped or streaming reads instead of
   loading full index into memory)
-- Event collision handling (delete from one backend, sync from another
-  where data is still active)
+- Tombstone GC after multi-device LWW deletes (shipped: merge + tombstones)
 - `--verbose` option for `list-files` (chunk count, size, encryption
   status)
 - Color output

@@ -3,16 +3,40 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
+
 use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
 use crate::block::{PlainIndex, INDEX_FILENAME};
 use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result as BluResult};
+use crate::index_merge::{merge_blob_index, merge_plain_index, merge_tag_index, PathConflict};
 use crate::io::EncryptedSerializable;
 use crate::storage::{AmazonS3, BackendKind, Local};
 use crate::tag::{TagIndex, TAG_INDEX_FILENAME};
 
+fn sha256_digest(data: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out.copy_from_slice(Sha256::digest(data).as_slice());
+    out
+}
+
 /// Backend config structures, one for each supported backend.
 pub mod backend;
+
+/// Summary of a merge of remote indexes into the local vault.
+#[derive(Debug, Clone, Default)]
+pub struct IndexMergeSummary {
+    /// Path conflicts detected while merging plain indexes.
+    pub conflicts: Vec<PathConflict>,
+    /// True when remote indexes existed and were merged.
+    pub merged: bool,
+    /// SHA-256 of the remote plain-index ciphertext used for this merge.
+    pub remote_plain_digest: Option<[u8; 32]>,
+    /// SHA-256 of the remote blob-index ciphertext used for this merge.
+    pub remote_blob_digest: Option<[u8; 32]>,
+    /// SHA-256 of the remote tag-index ciphertext used for this merge.
+    pub remote_tag_digest: Option<[u8; 32]>,
+}
 
 /// Encryption configuration for a blu vault.
 ///
@@ -465,6 +489,160 @@ impl Config {
         Ok(())
     }
 
+    /// Fetch remote indexes (if any), union-merge into local, rewrite local.
+    ///
+    /// No-op when the remote has no plain or blob index. Used before push
+    /// so concurrent multi-device adds are preserved, and by pull (merge
+    /// mode) so local-only entries are not discarded.
+    ///
+    /// The returned summary includes ciphertext digests of the remote
+    /// indexes that were merged, so the caller can detect a concurrent
+    /// remote advance before uploading.
+    pub async fn merge_remote_indexes(
+        &self,
+        backend: &BackendKind,
+        keys: &DekProvider,
+    ) -> Result<IndexMergeSummary, BluError> {
+        let remote_plain_path = self.remote_plain_index_path();
+        let remote_blob_path = self.remote_blob_index_path();
+        let remote_tag_path = self.remote_tag_index_path();
+
+        let has_remote = backend.exists(&remote_plain_path).await?
+            || backend.exists(&remote_blob_path).await?
+            || backend.exists(&remote_tag_path).await?;
+        if !has_remote {
+            return Ok(IndexMergeSummary::default());
+        }
+
+        let local_plain = self.load_plain_index_or_default(keys);
+        let local_blob = self.load_blob_index_or_default(keys);
+        let local_tag = self.load_tag_index_or_default(keys);
+
+        let remote_plain =
+            Self::read_remote_index::<PlainIndex>(backend, &remote_plain_path, keys).await?;
+        let remote_blob =
+            Self::read_remote_index::<BlobIndex>(backend, &remote_blob_path, keys).await?;
+        let remote_tag =
+            Self::read_remote_index::<TagIndex>(backend, &remote_tag_path, keys).await?;
+
+        let mut conflicts = Vec::new();
+        let mut remote_plain_digest = None;
+        let mut remote_blob_digest = None;
+        let mut remote_tag_digest = None;
+
+        let plain = match remote_plain {
+            Some((remote, digest)) => {
+                remote_plain_digest = Some(digest);
+                let merged = merge_plain_index(&local_plain, &remote)?;
+                conflicts = merged.conflicts;
+                merged.index
+            }
+            None => local_plain,
+        };
+        let blob = match remote_blob {
+            Some((remote, digest)) => {
+                remote_blob_digest = Some(digest);
+                merge_blob_index(&local_blob, &remote)
+            }
+            None => local_blob,
+        };
+        let tag = match remote_tag {
+            Some((remote, digest)) => {
+                remote_tag_digest = Some(digest);
+                merge_tag_index(&local_tag, &remote)
+            }
+            None => local_tag,
+        };
+
+        self.write_plain_index(&plain, keys)?;
+        self.write_blob_index(&blob, keys)?;
+        self.write_tag_index(&tag, keys)?;
+
+        Ok(IndexMergeSummary {
+            conflicts,
+            merged: true,
+            remote_plain_digest,
+            remote_blob_digest,
+            remote_tag_digest,
+        })
+    }
+
+    /// Pull indexes by union-merging remote into local (not overwrite).
+    ///
+    /// Also refreshes the KEK store from the backend.
+    pub async fn pull_indexes_merged(
+        &self,
+        backend: &BackendKind,
+        keys: &DekProvider,
+    ) -> Result<IndexMergeSummary, BluError> {
+        let summary = self.merge_remote_indexes(backend, keys).await?;
+        self.pull_kek_store(backend).await?;
+        Ok(summary)
+    }
+
+    /// True when remote index ciphertexts still match digests from a merge.
+    ///
+    /// Missing remote objects match a `None` digest. Used to detect a
+    /// concurrent writer advancing the backend between merge and push.
+    pub async fn remote_indexes_match_digests(
+        &self,
+        backend: &BackendKind,
+        summary: &IndexMergeSummary,
+    ) -> Result<bool, BluError> {
+        Ok(Self::remote_object_matches(
+            backend,
+            &self.remote_plain_index_path(),
+            summary.remote_plain_digest.as_ref(),
+        )
+        .await?
+            && Self::remote_object_matches(
+                backend,
+                &self.remote_blob_index_path(),
+                summary.remote_blob_digest.as_ref(),
+            )
+            .await?
+            && Self::remote_object_matches(
+                backend,
+                &self.remote_tag_index_path(),
+                summary.remote_tag_digest.as_ref(),
+            )
+            .await?)
+    }
+
+    async fn remote_object_matches(
+        backend: &BackendKind,
+        remote_path: &Path,
+        expected: Option<&[u8; 32]>,
+    ) -> Result<bool, BluError> {
+        let exists = backend.exists(remote_path).await?;
+        match (exists, expected) {
+            (false, None) => Ok(true),
+            (false, Some(_)) => Ok(false),
+            (true, None) => Ok(false),
+            (true, Some(want)) => {
+                let data = backend.read_from_path(remote_path).await?;
+                Ok(&sha256_digest(&data) == want)
+            }
+        }
+    }
+
+    async fn read_remote_index<T: EncryptedSerializable>(
+        backend: &BackendKind,
+        remote_path: &Path,
+        keys: &DekProvider,
+    ) -> Result<Option<(T, [u8; 32])>, BluError> {
+        if !backend.exists(remote_path).await? {
+            return Ok(None);
+        }
+        let data = backend.read_from_path(remote_path).await?;
+        let digest = sha256_digest(&data);
+        let idx = T::read(&data[..], keys).map_err(|e| BluError::IndexLoadFailed {
+            path: remote_path.to_path_buf(),
+            reason: e.to_string(),
+        })?;
+        Ok(Some((idx, digest)))
+    }
+
     /// Pull a single file from the backend if it exists remotely.
     async fn pull_one_file(
         &self,
@@ -822,5 +1000,119 @@ pub(crate) mod test {
             b"legacy"
         );
         assert!(!vault.join(".blu/keys/kek.toml").exists());
+    }
+
+    fn test_local_keys() -> crate::dek_provider::DekProvider {
+        crate::dek_provider::DekProvider::Local {
+            kek: crate::keys::kek::Kek::generate(),
+            kek_version: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn merge_records_remote_digests_and_match_detects_advance() {
+        use crate::block::PlainIndex;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        // Seed remote with an encrypted empty plain index.
+        let remote_plain = PlainIndex::new_empty();
+        cfg.write_plain_index(&remote_plain, &keys).unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        // Local starts empty; merge against remote.
+        let summary = cfg.merge_remote_indexes(&backend, &keys).await.unwrap();
+        assert!(summary.merged);
+        assert!(summary.remote_plain_digest.is_some());
+        assert!(
+            cfg.remote_indexes_match_digests(&backend, &summary)
+                .await
+                .unwrap(),
+            "digests should match immediately after merge"
+        );
+
+        // Concurrent writer replaces remote plain index ciphertext.
+        let mut other = PlainIndex::new_empty();
+        // Bump updated_at so ciphertext differs after re-encrypt.
+        other.updated_at += chrono::Duration::seconds(1);
+        cfg.write_plain_index(&other, &keys).unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        assert!(
+            !cfg.remote_indexes_match_digests(&backend, &summary)
+                .await
+                .unwrap(),
+            "digests should miss after remote advance"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_indexes_or_fail_remerges_after_remote_advance() {
+        use crate::block::PlainIndex;
+        use crate::cli::helpers::push_indexes_or_fail;
+        use crate::index_merge::merge_plain_index;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault_a = tmp.path().join("vault-a");
+        let vault_b = tmp.path().join("vault-b");
+        fs::create_dir_all(vault_a.join(".blu/indexes")).unwrap();
+        fs::create_dir_all(vault_b.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg_a = local_backend_config(&datadir, &vault_a);
+        let cfg_b = local_backend_config(&datadir, &vault_b);
+        let backend = cfg_a.init_storage_backend().await.unwrap();
+
+        // A publishes baseline.
+        let mut plain_a = PlainIndex::new_empty();
+        let a_file = vault_a.join("a.txt");
+        fs::write(&a_file, b"from a").unwrap();
+        plain_a.add(&a_file, None).unwrap();
+        cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        cfg_a.push_indexes(&backend).await.unwrap();
+
+        // B opens from remote (pull bytes), then prepares local-only add.
+        cfg_b.pull_indexes(&backend).await.unwrap();
+        let mut plain_b = cfg_b.load_plain_index(&keys).unwrap();
+        let b_file = vault_b.join("b.txt");
+        fs::write(&b_file, b"from b").unwrap();
+        plain_b.add(&b_file, None).unwrap();
+        cfg_b.write_plain_index(&plain_b, &keys).unwrap();
+
+        // A advances remote with another file before B pushes.
+        let a2 = vault_a.join("a2.txt");
+        fs::write(&a2, b"from a again").unwrap();
+        plain_a.add(&a2, None).unwrap();
+        cfg_a.write_plain_index(&plain_a, &keys).unwrap();
+        cfg_a.push_indexes(&backend).await.unwrap();
+
+        // B push should merge A's a2 in (via re-merge or first merge).
+        push_indexes_or_fail(&cfg_b, &keys, None, Some(&backend))
+            .await
+            .unwrap();
+
+        // A pulls and should see a, b, a2.
+        cfg_a.pull_indexes_merged(&backend, &keys).await.unwrap();
+        let final_a = cfg_a.load_plain_index(&keys).unwrap();
+        let names: std::collections::HashSet<_> = final_a
+            .files_map_ref()
+            .values()
+            .flat_map(|fr| fr.paths.iter())
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert!(names.contains("a.txt"), "{names:?}");
+        assert!(names.contains("b.txt"), "{names:?}");
+        assert!(names.contains("a2.txt"), "{names:?}");
+
+        let merged = merge_plain_index(&plain_a, &plain_b).unwrap();
+        assert!(merged.index.files_map_ref().len() >= 2);
     }
 }

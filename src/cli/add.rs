@@ -25,7 +25,7 @@ pub async fn add(args: AddArgs) -> Result<(), BluError> {
 
     // Sync the updated index to the backend so the source of truth is
     // never behind the local working copy.
-    push_indexes_or_fail(&cfg, None, None).await?;
+    push_indexes_or_fail(&cfg, &keys, None, None).await?;
 
     Ok(())
 }

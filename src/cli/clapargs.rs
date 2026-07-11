@@ -160,7 +160,7 @@ pub struct SyncArgs {
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
 pub struct PullArgs {
-    /// Force overwrite local indexes even if they exist
+    /// Discard local indexes and take the remote copy only (hard reset)
     #[arg(long)]
     pub force: bool,
 

@@ -541,10 +541,17 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
     // KEK store, so push them to the destination after a real
     // (non-dry-run) mirror completes. push_indexes also uploads keys,
     // making the destination a complete, recoverable replica.
+    // Verbatim push (no merge): destination should receive this vault's
+    // indexes as-is, not fold destination state back into local.
     if !dry_run {
         println!("Syncing indexes and KEK store to \"{}\"...", args.to);
-        crate::cli::helpers::push_indexes_or_fail(&cfg, Some(&args.to), Some(&to_backend_for_push))
-            .await?;
+        cfg.push_indexes(&to_backend_for_push).await.map_err(|e| {
+            BluError::Internal(format!(
+                "Local indexes updated, but push to backend `{}` failed: {}. \
+                 Re-run when the backend is reachable.",
+                args.to, e
+            ))
+        })?;
     }
 
     Ok(())

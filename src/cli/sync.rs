@@ -96,7 +96,7 @@ pub async fn sync(args: SyncArgs) -> Result<(), BluError> {
     // Sync indexes to the backend. The backend is the source of truth,
     // so this is not optional: the same backend that received the blobs
     // must also receive the updated indexes.
-    push_indexes_or_fail(&cfg, args.backend.as_deref(), Some(&backend)).await?;
+    push_indexes_or_fail(&cfg, &keys, args.backend.as_deref(), Some(&backend)).await?;
 
     // Print summary
     println!(
