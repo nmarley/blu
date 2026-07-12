@@ -71,6 +71,9 @@ Optional later (not required for this design): `push` as a synonym for
 
 2. **Merge before publish.** The shared push path always fetch+merges
    remote indexes before upload. That is the only multi-writer path.
+   When the merge result equals remote content, remote ciphertext is
+   adopted (vault of record). When it equals local, local ciphertext is
+   kept. Only a real union that differs from both sides re-encrypts.
 
 3. **Pull never writes plaintext** by default.
 
@@ -87,7 +90,9 @@ Optional later (not required for this design): `push` as a synonym for
 1. What local files are not yet in the catalog / not published?
 2. What catalog entries are not checked out on disk (count + total size)?
 3. Is the local catalog in sync with, ahead of, behind, or diverged from
-   the remote?
+   the remote? Comparison is by logical catalog content (file hashes,
+   tombstones, blob chunks, tags), not index ciphertext digests alone.
+   Re-encrypted indexes with identical content are in sync.
 
 Illustrative output (wording free to refine in implementation):
 
