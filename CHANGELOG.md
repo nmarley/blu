@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-07-11
+
 ### Fixed
 
 - `blu status` / `blu doctor` catalog-remote no longer report ahead when
@@ -16,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merge result matches remote, and keeps local ciphertext when it matches
   local. Only a true two-sided union re-encrypts. Noop pulls no longer
   forge false ahead.
+- Fix clap panic on `blu backup --verbose` (global `-v` is a count; drop
+  the conflicting bool subcommand flag and always print backup summary).
 
 ### Changed
 
@@ -27,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each chunk is size+hash verified and the whole file hash is checked.
 - `blu doctor` `encryption-coverage` is a failure (not a warning) when
   plain-index chunks lack blob-index ciphertext.
+- Default CLI log level is Warn (was Debug). `-v` enables info, `-vv`
+  debug. `blu serve` and the agent daemon still log Info without `-v`.
 
 ## [0.7.5] - 2026-07-11
 
