@@ -43,7 +43,7 @@ pub struct IndexMergeSummary {
 pub enum CatalogRemoteState {
     /// No remote index objects exist yet.
     NoRemote,
-    /// Local and remote index ciphertexts match.
+    /// Local and remote catalog content match (ciphertext or logical).
     InSync,
     /// Local has catalog content not present on remote (unpublished).
     Ahead,
@@ -88,6 +88,28 @@ fn ciphertext_pair_matches(local: &Option<Vec<u8>>, remote: &Option<Vec<u8>>) ->
         (Some(l), Some(r)) => sha256_digest(l) == sha256_digest(r),
         _ => false,
     }
+}
+
+/// `(local_only, remote_only)` for tag associations (file hash + tag string).
+fn tag_content_relation(local: &TagIndex, remote: &TagIndex) -> (bool, bool) {
+    if local == remote {
+        return (false, false);
+    }
+    let local_only = local
+        .file_tags
+        .iter()
+        .any(|(hash, tags)| match remote.file_tags.get(hash) {
+            None => !tags.is_empty(),
+            Some(remote_tags) => tags.iter().any(|t| !remote_tags.contains(t)),
+        });
+    let remote_only = remote
+        .file_tags
+        .iter()
+        .any(|(hash, tags)| match local.file_tags.get(hash) {
+            None => !tags.is_empty(),
+            Some(local_tags) => tags.iter().any(|t| !local_tags.contains(t)),
+        });
+    (local_only, remote_only)
 }
 
 /// Encryption configuration for a blu vault.
@@ -682,14 +704,18 @@ impl Config {
         }
 
         // Digests differ: compare catalog content so we can distinguish
-        // unpublished local work from a remote advance.
+        // unpublished local work from a remote advance. Ciphertext drift
+        // alone (re-encrypt on merge) is not ahead/behind.
         let local_plain = self.load_plain_index_or_default(keys);
         let local_blob = self.load_blob_index_or_default(keys);
+        let local_tag = self.load_tag_index_or_default(keys);
 
         let remote_plain =
             Self::read_remote_index::<PlainIndex>(backend, &remote_plain_path, keys).await?;
         let remote_blob =
             Self::read_remote_index::<BlobIndex>(backend, &remote_blob_path, keys).await?;
+        let remote_tag =
+            Self::read_remote_index::<TagIndex>(backend, &remote_tag_path, keys).await?;
 
         let mut local_only = false;
         let mut remote_only = false;
@@ -700,6 +726,7 @@ impl Config {
         let remote_blob = remote_blob
             .map(|(idx, _)| idx)
             .unwrap_or_else(BlobIndex::new);
+        let remote_tag = remote_tag.map(|(idx, _)| idx).unwrap_or_else(TagIndex::new);
 
         let local_files: std::collections::HashSet<_> =
             local_plain.files_map_ref().keys().cloned().collect();
@@ -720,23 +747,8 @@ impl Config {
         let chunk_rel = set_relation(&local_chunks, &remote_chunks);
         (local_only, remote_only) = combine_relation((local_only, remote_only), chunk_rel);
 
-        // Tag ciphertext can differ with identical plain/blob content
-        // (tag-only edits). Treat tag-only drift as ahead when local tags
-        // exist and digests differ without plain/blob exclusives.
-        if !local_only && !remote_only {
-            let tag_pair = ciphertext_pair_matches(&local_tag_bytes, &remote_tag_bytes);
-            if !tag_pair {
-                local_only = local_tag_bytes.is_some();
-                remote_only = remote_tag_bytes.is_some() && local_tag_bytes.is_none();
-                if local_tag_bytes.is_some() && remote_tag_bytes.is_some() {
-                    // Both have tags but ciphertext differs; without a
-                    // deeper tag merge, call it diverged only if both sides
-                    // claim exclusive content elsewhere. Here treat as ahead
-                    // (local unpublished) when local is present.
-                    local_only = true;
-                }
-            }
-        }
+        let tag_rel = tag_content_relation(&local_tag, &remote_tag);
+        (local_only, remote_only) = combine_relation((local_only, remote_only), tag_rel);
 
         Ok(match (local_only, remote_only) {
             (false, false) => CatalogRemoteState::InSync,
@@ -877,8 +889,10 @@ impl Config {
 #[cfg(test)]
 pub(crate) mod test {
     use super::backend::BackendConfig;
-    use super::{CatalogRemoteState, Config};
+    use super::{sha256_digest, CatalogRemoteState, Config};
+    use crate::blob::BlobIndex;
     use crate::block::PlainIndex;
+    use crate::tag::TagIndex;
     use std::fs;
 
     #[test]
@@ -1274,6 +1288,82 @@ pub(crate) mod test {
         assert_eq!(
             cfg_b.catalog_remote_state(&backend, &keys).await.unwrap(),
             CatalogRemoteState::Behind
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_remote_state_in_sync_when_only_ciphertext_differs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        let plain = PlainIndex::new_empty();
+        let blob = BlobIndex::new();
+        let tags = TagIndex::new();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        cfg.write_blob_index(&blob, &keys).unwrap();
+        cfg.write_tag_index(&tags, &keys).unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        let before_plain = fs::read(cfg.idxdir().join(&cfg.plain_index_filename)).unwrap();
+        let before_blob = fs::read(cfg.idxdir().join(&cfg.blob_index_filename)).unwrap();
+        let before_tag = fs::read(cfg.idxdir().join(&cfg.tag_index_filename)).unwrap();
+
+        // Re-encrypt identical catalog content; all ciphertexts change.
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        cfg.write_blob_index(&blob, &keys).unwrap();
+        cfg.write_tag_index(&tags, &keys).unwrap();
+        assert_ne!(
+            sha256_digest(&before_plain),
+            sha256_digest(&fs::read(cfg.idxdir().join(&cfg.plain_index_filename)).unwrap())
+        );
+        assert_ne!(
+            sha256_digest(&before_blob),
+            sha256_digest(&fs::read(cfg.idxdir().join(&cfg.blob_index_filename)).unwrap())
+        );
+        assert_ne!(
+            sha256_digest(&before_tag),
+            sha256_digest(&fs::read(cfg.idxdir().join(&cfg.tag_index_filename)).unwrap())
+        );
+
+        assert_eq!(
+            cfg.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::InSync
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_remote_state_ahead_on_tag_only_local_edit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join(".blu/indexes")).unwrap();
+
+        let keys = test_local_keys();
+        let cfg = local_backend_config(&datadir, &vault);
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        cfg.write_plain_index(&PlainIndex::new_empty(), &keys)
+            .unwrap();
+        cfg.write_blob_index(&BlobIndex::new(), &keys).unwrap();
+        cfg.write_tag_index(&TagIndex::new(), &keys).unwrap();
+        cfg.push_indexes(&backend).await.unwrap();
+
+        let mut tags = TagIndex::new();
+        let file_hash = crate::hash::Hash::from(
+            "1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        tags.add_tag(&file_hash, "local-only");
+        cfg.write_tag_index(&tags, &keys).unwrap();
+
+        assert_eq!(
+            cfg.catalog_remote_state(&backend, &keys).await.unwrap(),
+            CatalogRemoteState::Ahead
         );
     }
 
