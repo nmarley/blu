@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `blu status` / `blu doctor` catalog-remote no longer report ahead when
+  only index ciphertext differs (same logical catalog after re-encrypt).
+  Tag content is compared after decrypt, not by ciphertext digest alone.
+- Default `blu pull` (merge) preserves remote index ciphertext when the
+  merge result matches remote, and keeps local ciphertext when it matches
+  local. Only a true two-sided union re-encrypts. Noop pulls no longer
+  forge false ahead.
+
 ### Changed
 
 - **Breaking:** remove hidden `blu add`. Catalog-only publish is gone;
