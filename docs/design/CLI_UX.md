@@ -51,7 +51,7 @@ Removed from user-facing help (plumbing only, or deleted if unused):
 - `sync` (replaced by `backup`)
 - `restore-files` (replaced by `restore`)
 - `delete-files` (replaced by `rm`)
-- `add` (not a first-class staging area in this model)
+- `add` (deleted; not a staging area in this model)
 - `encrypt-files`, `write-index` (already hidden)
 
 Optional later (not required for this design): `push` as a synonym for
@@ -65,7 +65,9 @@ Optional later (not required for this design): `push` as a synonym for
 1. **Publish completeness.** After `backup`, `rm`, or any command that
    mutates catalog + blobs, either the remote catalog reflects the new
    state or the command fails with a clear error. No silent success with
-   blobs uploaded and indexes unpublished.
+   blobs uploaded and indexes unpublished. Indexes are never pushed when
+   live plain-index chunks lack blob-index ciphertext (catalog without
+   content is not a valid durable state).
 
 2. **Merge before publish.** The shared push path always fetch+merges
    remote indexes before upload. That is the only multi-writer path.

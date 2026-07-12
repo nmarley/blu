@@ -127,6 +127,29 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
     Ok(DekProvider::Agent { client, kek_dir })
 }
 
+/// Refuse to publish when the plain index lists chunks that are not in
+/// the blob index. Catalog without ciphertext is never a valid durable
+/// state on a shared backend.
+pub fn ensure_encryption_coverage(
+    plain: &crate::block::PlainIndex,
+    blob: &crate::blob::BlobIndex,
+) -> Result<()> {
+    let missing = plain
+        .blocks_map_ref()
+        .keys()
+        .filter(|h| !blob.has_chunk(h))
+        .count();
+    if missing == 0 {
+        return Ok(());
+    }
+    let total = plain.count_blocks();
+    Err(BluError::Internal(format!(
+        "Refusing to publish incomplete catalog: {}/{} chunks have no ciphertext \
+         (run `blu backup` to encrypt and upload missing content).",
+        missing, total
+    )))
+}
+
 /// Push the local index files to a backend, resolved by optional name.
 ///
 /// Resolves the backend the same way every command does: the named
@@ -136,6 +159,8 @@ fn load_keys_via_agent(cfg: &Config, passphrase: &str) -> Result<DekProvider> {
 ///
 /// Before upload, remote indexes are fetch+merged into local so
 /// concurrent multi-device adds are not clobbered by last-write-wins.
+/// Push is refused if any live plain-index chunk lacks a blob-index
+/// entry (publish completeness).
 ///
 /// This is the shared seam that keeps index-push behavior uniform
 /// across every index-modifying CLI command. Pushing is not optional:
@@ -210,6 +235,11 @@ pub async fn push_indexes_or_fail(
         }
     }
 
+    // After merge, indexes on disk are the candidate publish set.
+    let plain = cfg.load_plain_index_or_default(keys);
+    let blob = cfg.load_blob_index_or_default(keys);
+    ensure_encryption_coverage(&plain, &blob)?;
+
     cfg.push_indexes(backend).await.map_err(|e| {
         BluError::Internal(format!(
             "Local indexes updated, but push to backend `{}` failed: {}. \
@@ -232,6 +262,9 @@ pub fn load_config() -> Result<Config> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::blob::{BlobBuffer, BlobIndex};
+    use crate::block::PlainIndex;
+    use crate::storage::BackendKind;
 
     /// Build a `Config` with a single local backend named `local`
     /// pointing at `datadir`, with `basedir` set to `basedir`. The
@@ -254,6 +287,35 @@ mod test {
         cfg
     }
 
+    fn local_keys() -> DekProvider {
+        DekProvider::Local {
+            kek: crate::keys::kek::Kek::generate(),
+            kek_version: 0,
+        }
+    }
+
+    async fn encrypt_plain_chunks(
+        cfg: &Config,
+        keys: &DekProvider,
+        plain: &PlainIndex,
+        backend: &BackendKind,
+    ) {
+        let mut blob = cfg.load_blob_index_or_default(keys);
+        let mut buf = BlobBuffer::new(backend, keys.clone());
+        for fileref in plain.files_map_ref().values() {
+            for cm in &fileref.chunkmetas {
+                if blob.has_chunk(&cm.hash) {
+                    continue;
+                }
+                let block_ref = plain.blocks_map_ref().get(&cm.hash).unwrap();
+                let mut data = plain.read_block_bytes(block_ref).unwrap();
+                buf.add_chunk(&mut data, &mut blob).await.unwrap();
+            }
+        }
+        buf.finalize(&mut blob).await.unwrap();
+        cfg.write_blob_index(&blob, keys).unwrap();
+    }
+
     #[tokio::test]
     async fn push_indexes_or_fail_uploads_local_indexes() {
         let tmp = tempfile::tempdir().unwrap();
@@ -269,10 +331,9 @@ mod test {
         std::fs::write(idxdir.join("tags.dat"), b"tag-bytes").unwrap();
 
         // No remote indexes yet, so merge is a no-op; dummy keys suffice.
-        let keys = DekProvider::Local {
-            kek: crate::keys::kek::Kek::generate(),
-            kek_version: 0,
-        };
+        // Raw non-envelope bytes fail decrypt and load as empty indexes,
+        // which satisfy encryption coverage (zero chunks).
+        let keys = local_keys();
         push_indexes_or_fail(&cfg, &keys, None, None).await.unwrap();
 
         // Each index must now exist under the backend datadir at the
@@ -308,10 +369,7 @@ mod test {
         std::fs::create_dir_all(&idxdir).unwrap();
         std::fs::write(idxdir.join("index.dat"), b"plain-bytes").unwrap();
 
-        let keys = DekProvider::Local {
-            kek: crate::keys::kek::Kek::generate(),
-            kek_version: 0,
-        };
+        let keys = local_keys();
         let err = push_indexes_or_fail(&cfg, &keys, None, None)
             .await
             .expect_err("push must fail when the backend is unwritable");
@@ -324,5 +382,70 @@ mod test {
             msg.contains("Re-run when the backend is reachable"),
             "unexpected error message: {msg}"
         );
+    }
+
+    #[test]
+    fn ensure_encryption_coverage_passes_when_complete() {
+        let plain = PlainIndex::new_empty();
+        let blob = BlobIndex::default();
+        ensure_encryption_coverage(&plain, &blob).unwrap();
+    }
+
+    #[tokio::test]
+    async fn push_indexes_or_fail_refuses_incomplete_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let basedir = tmp.path().join("vault");
+        std::fs::create_dir_all(basedir.join(".blu/indexes")).unwrap();
+        let cfg = local_config(&datadir, &basedir);
+        let keys = local_keys();
+
+        let f = basedir.join("only-plain.txt");
+        std::fs::write(&f, b"catalog without ciphertext").unwrap();
+        let mut plain = PlainIndex::new_empty();
+        plain.add(&f, None).unwrap();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        // Deliberately no blob index / no encrypt.
+
+        let err = push_indexes_or_fail(&cfg, &keys, None, None)
+            .await
+            .expect_err("push must refuse incomplete catalog");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Refusing to publish incomplete catalog"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("blu backup"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            !datadir.join("indexes/index.dat").exists(),
+            "incomplete catalog must not reach the backend"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_indexes_or_fail_allows_complete_catalog() {
+        let tmp = tempfile::tempdir().unwrap();
+        let datadir = tmp.path().join("data");
+        let basedir = tmp.path().join("vault");
+        std::fs::create_dir_all(basedir.join(".blu/indexes")).unwrap();
+        let cfg = local_config(&datadir, &basedir);
+        let keys = local_keys();
+        let backend = cfg.init_storage_backend().await.unwrap();
+
+        let f = basedir.join("complete.txt");
+        std::fs::write(&f, b"indexed and encrypted").unwrap();
+        let mut plain = PlainIndex::new_empty();
+        plain.add(&f, None).unwrap();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        encrypt_plain_chunks(&cfg, &keys, &plain, &backend).await;
+
+        push_indexes_or_fail(&cfg, &keys, None, Some(&backend))
+            .await
+            .unwrap();
+        assert!(datadir.join("indexes/index.dat").exists());
+        assert!(datadir.join("indexes/blob_index.dat").exists());
     }
 }

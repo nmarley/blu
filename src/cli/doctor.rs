@@ -408,10 +408,10 @@ fn check_encryption_coverage(plain: &PlainIndex, blob: &BlobIndex, report: &mut 
             format!("{}/{} chunks encrypted ({:.1}%)", encrypted, total, pct),
         );
     } else {
-        report.warn(
+        report.fail(
             "encryption-coverage",
             format!(
-                "{}/{} chunks encrypted ({:.1}%); {} unencrypted",
+                "{}/{} chunks encrypted ({:.1}%); {} unencrypted (run `blu backup`)",
                 encrypted,
                 total,
                 pct,
@@ -708,5 +708,31 @@ mod tests {
             .find(|c| c.name == "cross-refs")
             .expect("cross-refs check");
         assert_eq!(xref.status, CheckStatus::Fail);
+    }
+
+    #[tokio::test]
+    async fn incomplete_encryption_coverage_fails() {
+        let (tmp, cfg, keys) = setup_vault();
+
+        let file_path = tmp.path().join("plain-only.txt");
+        fs::write(&file_path, b"catalog without ciphertext").unwrap();
+        let mut plain = PlainIndex::new_empty();
+        plain.add(&file_path, None).unwrap();
+        cfg.write_plain_index(&plain, &keys).unwrap();
+        // No blob index / encrypt: coverage incomplete.
+
+        let report = diagnose(&cfg, &keys).await.unwrap();
+        assert!(report.has_failures());
+        let cov = report
+            .checks
+            .iter()
+            .find(|c| c.name == "encryption-coverage")
+            .expect("encryption-coverage check");
+        assert_eq!(cov.status, CheckStatus::Fail);
+        assert!(
+            cov.detail.contains("unencrypted") && cov.detail.contains("blu backup"),
+            "detail={}",
+            cov.detail
+        );
     }
 }

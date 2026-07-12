@@ -5,7 +5,6 @@ pub mod helpers;
 /// unified CLI output structs for all CLI modules
 pub mod output;
 
-mod add;
 mod agent_cmd;
 mod backend_cmd;
 mod backup;
@@ -27,7 +26,6 @@ mod status;
 mod tagger;
 mod write_index;
 
-pub use add::add;
 pub use agent_cmd::agent;
 pub use agent_cmd::lock;
 pub use agent_cmd::unlock;

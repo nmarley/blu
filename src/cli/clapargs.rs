@@ -24,9 +24,6 @@ pub struct Args {
 /// The possible subcommands to be run from blu-cli
 #[derive(Debug, clap::Subcommand, Clone)]
 pub enum Action {
-    /// Add files to the local index only (plumbing; prefer `backup`)
-    #[command(hide = true)]
-    Add(AddArgs),
     /// Create a new vault
     Init(InitArgs),
     /// Open an existing vault from a remote backend
@@ -135,12 +132,6 @@ pub struct OpenArgs {
     /// Do not prompt for passphrase (fail if identity is encrypted)
     #[arg(long)]
     pub no_passphrase: bool,
-}
-
-#[allow(missing_docs)]
-#[derive(Parser, Debug, Clone)]
-pub struct AddArgs {
-    pub add_paths: Vec<String>,
 }
 
 #[allow(missing_docs)]
