@@ -64,6 +64,8 @@ pub mod serve;
 pub mod storage;
 /// tag index, probably should rename this
 pub mod tag;
+/// plan file selection to blob sets and cold-storage thaw needs
+pub mod thaw;
 /// XDG Base Directory paths for user-global state
 pub mod user_paths;
 /// v2 file format: envelope encryption with KEK/DEK hierarchy
