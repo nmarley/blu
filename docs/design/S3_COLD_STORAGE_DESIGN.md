@@ -7,12 +7,9 @@ instantly available. Cooling is infrastructure. Thawing is product.
 
 ## Status
 
-**In progress (partially shipped).** Design is canonical. Shipped in
-code: blob/catalog put tags and storage classes, archive stat/restore
-APIs, thaw planner and `blu thaw`, restore `--thaw`/`--wait`, doctor
-`catalog-hot` / `blob-cold-status`, and
-`blu backend intelligent-tiering print`. Still open: `blu serve`
-archived-blob client errors.
+**Shipped** for the cold-storage product path (puts, thaw, restore
+hooks, doctor, Intelligent-Tiering print, serve InvalidObjectState).
+This document remains the design reference.
 
 ## Goals
 
@@ -266,7 +263,7 @@ Order of work (each unit one reviewable commit):
 4. `blu thaw` (+ status) and `restore` fail-fast / `--thaw` / optional `--wait` (shipped)
 5. Doctor cold-storage checks (shipped)
 6. Docs and `blu backend intelligent-tiering print` (shipped)
-7. `blu serve` clear errors for archived backend reads (open)
+7. `blu serve` clear errors for archived backend reads (shipped)
 
 ## Locked preferences
 

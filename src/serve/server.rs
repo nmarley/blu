@@ -8,7 +8,7 @@
 //! decrypted blobs. Internal endpoints live under `/_` prefix
 //! (e.g., `/_health`) to avoid collision with S3 bucket names.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -39,6 +39,7 @@ use crate::serve::index_sync;
 use crate::serve::redb_store::RedbStore;
 use crate::serve::s3xml;
 use crate::storage::BackendKind;
+use crate::thaw::availability_blocks_get;
 
 /// Default listen address for the serve daemon. Localhost only; the
 /// agent daemon is the trust boundary, not the HTTP server.
@@ -763,7 +764,8 @@ async fn head_object_handler(
 
 /// `GET /{bucket}/{*key}` -- GetObject, with optional `Range` support.
 /// Returns the full file (200) or a byte range (206 Partial Content).
-/// 404 if the key does not exist, 416 if the range is unsatisfiable.
+/// 404 if the key does not exist, 416 if the range is unsatisfiable,
+/// 403 InvalidObjectState if a required blob is in an archive tier.
 async fn get_object_handler(
     state: axum::extract::State<Arc<OnceLock<ServeState>>>,
     Path((bucket, key)): Path<(String, String)>,
@@ -792,14 +794,15 @@ async fn get_object_handler(
             return s3xml::error_response(StatusCode::NOT_FOUND, "NoSuchKey", &key).into_response();
         }
         Err(e) => {
-            return s3xml::error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "InternalError",
-                &e.to_string(),
-            )
-            .into_response();
+            return read_error_response(&e).into_response();
         }
     };
+
+    // Fail fast before streaming so clients get a clear S3 error instead
+    // of a truncated body when a blob is in Deep Archive Access.
+    if let Err(e) = ensure_file_blobs_readable(&s.redb, &s.backend, &fileref).await {
+        return read_error_response(&e).into_response();
+    }
 
     let total = fileref.total_size();
 
@@ -839,12 +842,7 @@ async fn get_object_handler(
                 match fetch_range_bytes(&fileref, &s.redb, &s.blob_reader, r.start, r.end).await {
                     Ok(d) => d,
                     Err(e) => {
-                        return s3xml::error_response(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "InternalError",
-                            &e.to_string(),
-                        )
-                        .into_response();
+                        return read_error_response(&e).into_response();
                     }
                 };
 
@@ -871,6 +869,91 @@ async fn get_object_handler(
                 .into_response()
         }
     }
+}
+
+/// Map a read-path [`BluError`] to an S3 XML error response.
+///
+/// Archived blobs become 403 `InvalidObjectState` (same code real S3
+/// uses for Glacier / Intelligent-Tiering archive tiers) with a thaw
+/// hint. Other errors stay 500 `InternalError`.
+fn read_error_response(
+    err: &BluError,
+) -> (
+    StatusCode,
+    [(axum::http::header::HeaderName, &'static str); 1],
+    String,
+) {
+    match err {
+        BluError::ObjectArchived {
+            path,
+            storage_class,
+            access_tier,
+        } => {
+            let mut msg = format!(
+                "object is in an archive tier and is not available for download: {}",
+                path.display()
+            );
+            if let Some(sc) = storage_class {
+                msg.push_str(&format!(" (class={sc})"));
+            }
+            if let Some(tier) = access_tier {
+                msg.push_str(&format!(" (tier={tier})"));
+            }
+            msg.push_str(
+                "; run `blu thaw` for the vault selection, then retry \
+                 (Deep Archive Access is typically multi-hour)",
+            );
+            s3xml::error_response(StatusCode::FORBIDDEN, "InvalidObjectState", &msg)
+        }
+        other => s3xml::error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            &other.to_string(),
+        ),
+    }
+}
+
+/// Unique blob backend paths referenced by a file's chunks.
+fn unique_blob_paths_for_file(
+    redb: &RedbStore,
+    fileref: &FileRef,
+) -> Result<Vec<PathBuf>, BluError> {
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut paths = Vec::new();
+    for chunkmeta in &fileref.chunkmetas {
+        let location =
+            redb.get_blob_location(&chunkmeta.hash)?
+                .ok_or_else(|| BluError::BlockNotFound {
+                    hash: chunkmeta.hash.to_string(),
+                })?;
+        let path = location.blob_path().clone();
+        if seen.insert(path.clone()) {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// HeadObject-probe every blob needed for `fileref` and error if any
+/// are archived or restoring (do not GET; does not re-warm IT tiers).
+async fn ensure_file_blobs_readable(
+    redb: &RedbStore,
+    backend: &BackendKind,
+    fileref: &FileRef,
+) -> Result<(), BluError> {
+    let paths = unique_blob_paths_for_file(redb, fileref)?;
+    for path in paths {
+        let stat = backend.stat_object(&path).await?;
+        if availability_blocks_get(&stat.availability) {
+            return Err(BluError::ObjectArchived {
+                path,
+                storage_class: stat.storage_class,
+                access_tier: stat.archive_status,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// `PUT /{bucket}/{*key}` -- PutObject (or UploadPart when the query
@@ -1714,6 +1797,42 @@ mod test {
             .naive_utc();
         let formatted = http_date(dt);
         assert_eq!(formatted, "Sun, 13 Sep 2020 12:26:40 GMT");
+    }
+
+    #[test]
+    fn read_error_maps_object_archived_to_403_invalid_object_state() {
+        let err = BluError::ObjectArchived {
+            path: PathBuf::from("d/dd4/blob"),
+            storage_class: Some("INTELLIGENT_TIERING".into()),
+            access_tier: Some("DEEP_ARCHIVE_ACCESS".into()),
+        };
+        let (status, _headers, body) = read_error_response(&err);
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("InvalidObjectState"));
+        assert!(body.contains("archive tier"));
+        assert!(body.contains("blu thaw"));
+        assert!(body.contains("d/dd4/blob"));
+    }
+
+    #[test]
+    fn read_error_maps_other_to_500_internal() {
+        let err = BluError::Internal("boom".into());
+        let (status, _headers, body) = read_error_response(&err);
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("InternalError"));
+        assert!(body.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn ensure_file_blobs_readable_local_ok() {
+        let file_data = b"serve-cold-preflight";
+        let (state, _) = data_state("hot.txt", file_data).await;
+        let (fileref, _) = resolve_path(&state.redb, "hot.txt")
+            .unwrap()
+            .expect("path present");
+        ensure_file_blobs_readable(&state.redb, &state.backend, &fileref)
+            .await
+            .unwrap();
     }
 
     /// Build a `ServeState` with real blob data. Writes `file_data`
