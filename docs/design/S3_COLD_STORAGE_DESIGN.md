@@ -7,9 +7,12 @@ instantly available. Cooling is infrastructure. Thawing is product.
 
 ## Status
 
-**Designed, not implemented.** This document is the source of truth for
-upcoming storage, CLI, doctor, and serve work. Do not treat thaw
-commands or S3 put tags as shipped until code and CHANGELOG say so.
+**In progress (partially shipped).** Design is canonical. Shipped in
+code: blob/catalog put tags and storage classes, archive stat/restore
+APIs, thaw planner and `blu thaw`, restore `--thaw`/`--wait`, doctor
+`catalog-hot` / `blob-cold-status`, and
+`blu backend intelligent-tiering print`. Still open: `blu serve`
+archived-blob client errors.
 
 ## Goals
 
@@ -103,9 +106,43 @@ one-shot helper that prints JSON):
 3. Archive Access tier optional (document; not required for v1 minimum)
 4. Do not re-apply this configuration from every `blu backup`
 
-Blu may later emit the configuration JSON
-(e.g. `blu backend intelligent-tiering print`). Applying it remains
-operator-owned unless an explicit apply command is added later.
+Emit the configuration JSON with:
+
+```sh
+blu backend intelligent-tiering print
+# optional: --backend NAME --days 365 --id blu-blobs-deep-archive
+```
+
+Applying it remains operator-owned (console, Terraform, or `aws s3api`).
+Blu does not re-apply this on backup.
+
+### Operator setup (one-time per bucket)
+
+1. Create the S3 bucket (or reuse one). Prefer a dedicated media vault
+   bucket or a unique key prefix per vault.
+2. Ensure IAM can `s3:PutObject`, `GetObject`, `HeadObject`,
+   `DeleteObject`, `ListBucket`, `RestoreObject`, and
+   `s3:PutIntelligentTieringConfiguration` (apply only).
+3. Point the vault at the bucket (`blu backend add` / `blu open --type s3`).
+4. Print and apply Intelligent-Tiering archive config for **blobs only**:
+
+```sh
+blu backend intelligent-tiering print > blu-it-config.json
+aws s3api put-bucket-intelligent-tiering-configuration \
+  --bucket YOUR_BUCKET \
+  --id blu-blobs-deep-archive \
+  --intelligent-tiering-configuration file://blu-it-config.json
+```
+
+5. Confirm: new blobs upload as `INTELLIGENT_TIERING` with tag
+   `blu-role=blob`; indexes/keys as `STANDARD` with `blu-role=catalog`.
+6. After long idle (365 days no access on a blob), Deep Archive Access
+   may apply. Use `blu thaw` / `blu restore --thaw` before materializing
+   plaintext. `blu doctor` reports `catalog-hot` and `blob-cold-status`.
+
+Do **not** put a whole-bucket lifecycle rule to the `DEEP_ARCHIVE`
+storage class; that can cold-store catalog objects and is not the
+access-driven model this design uses.
 
 ## Blu product model (application)
 
@@ -223,14 +260,13 @@ Cold-storage checks (when implemented):
 
 Order of work (each unit one reviewable commit):
 
-1. This design document (shipped with the doc)
-2. S3 put tagging and storage class; `stat` / `restore` / archived errors
-3. Blob-set planner: path/file selection to unique blob keys needing thaw
-4. `blu thaw` (+ status) and `restore` fail-fast / `--thaw` / optional `--wait`
-5. Doctor cold-storage checks
-6. Docs (and optional print helper) for bucket Intelligent-Tiering setup
-   with Deep Archive Access at 365 days
-7. `blu serve` clear errors for archived backend reads
+1. This design document (shipped)
+2. S3 put tagging and storage class; `stat` / `restore` / archived errors (shipped)
+3. Blob-set planner: path/file selection to unique blob keys needing thaw (shipped)
+4. `blu thaw` (+ status) and `restore` fail-fast / `--thaw` / optional `--wait` (shipped)
+5. Doctor cold-storage checks (shipped)
+6. Docs and `blu backend intelligent-tiering print` (shipped)
+7. `blu serve` clear errors for archived backend reads (open)
 
 ## Locked preferences
 
