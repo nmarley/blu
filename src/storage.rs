@@ -7,8 +7,78 @@ mod s3;
 use crate::error::BluError;
 use crate::hash::Hash;
 
-// Storage adapter
-// types: local, s3, do, azure_blob, gcs
+/// Object tag key for blu role classification on S3 puts.
+pub const TAG_ROLE_KEY: &str = "blu-role";
+/// Tag value for content-addressed blob objects (Intelligent-Tiering candidates).
+pub const TAG_ROLE_BLOB: &str = "blob";
+/// Tag value for catalog material (`indexes/`, `keys/`); stays STANDARD.
+pub const TAG_ROLE_CATALOG: &str = "catalog";
+
+/// How quickly S3 should process an archive restore request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RestoreTier {
+    /// Cheapest; multi-hour for Deep Archive Access.
+    #[default]
+    Bulk,
+    /// Faster standard restore (still hours for Deep Archive Access).
+    Standard,
+}
+
+/// Parameters for [`BackendKind::restore_object`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreOptions {
+    /// Days a temporary Glacier copy stays available (classic Glacier /
+    /// Deep Archive storage classes only; ignored for Intelligent-Tiering).
+    pub days: u32,
+    /// Retrieval tier for the restore job.
+    pub tier: RestoreTier,
+}
+
+impl Default for RestoreOptions {
+    fn default() -> Self {
+        Self {
+            days: 14,
+            tier: RestoreTier::Bulk,
+        }
+    }
+}
+
+/// Whether an object can be read with GET without waiting on a restore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ObjectAvailability {
+    /// Immediate GET works (hot / IA / Archive Instant / local).
+    Available,
+    /// In an archive tier; call restore before GET.
+    Archived,
+    /// Restore job is in progress.
+    Restoring,
+    /// Temporarily restored (classic Glacier) or mid re-warm; GET works.
+    Restored {
+        /// Optional expiry hint from the S3 restore header.
+        expiry_hint: Option<String>,
+    },
+}
+
+/// Metadata from a non-GET object probe (HeadObject on S3).
+///
+/// Prefer this over GET for status and doctor so probes do not count as
+/// access that re-warms Intelligent-Tiering objects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectStat {
+    /// Relative backend path that was probed.
+    pub path: PathBuf,
+    /// S3 storage class string when known (e.g. `INTELLIGENT_TIERING`).
+    pub storage_class: Option<String>,
+    /// Intelligent-Tiering archive status when present
+    /// (`ARCHIVE_ACCESS` / `DEEP_ARCHIVE_ACCESS`).
+    pub archive_status: Option<String>,
+    /// Derived availability for GET.
+    pub availability: ObjectAvailability,
+    /// Raw `x-amz-restore` header value when present.
+    pub restore_header: Option<String>,
+    /// Object size in bytes when known.
+    pub content_length: Option<u64>,
+}
 
 /// Concrete enum dispatch over supported storage backends.
 ///
@@ -110,6 +180,28 @@ impl BackendKind {
         match self {
             Self::Local(b) => b.list_blob_paths().await,
             Self::AmazonS3(b) => b.list_blob_paths().await,
+        }
+    }
+
+    /// Probe object metadata without a GET (HeadObject on S3).
+    ///
+    /// Used to detect archive tiers and restore progress without
+    /// counting as Intelligent-Tiering access.
+    pub async fn stat_object(&self, path: &Path) -> Result<ObjectStat, BluError> {
+        match self {
+            Self::Local(b) => b.stat_object(path).await,
+            Self::AmazonS3(b) => b.stat_object(path).await,
+        }
+    }
+
+    /// Initiate an archive restore for the object at `path`.
+    ///
+    /// Idempotent when a restore is already in progress or the object
+    /// is already in an active tier. Local backend is a no-op.
+    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+        match self {
+            Self::Local(b) => b.restore_object(path, opts).await,
+            Self::AmazonS3(b) => b.restore_object(path, opts).await,
         }
     }
 }
@@ -350,6 +442,45 @@ mod test {
         let storage = BackendKind::Local(Local::new(datadir.path().join("missing")));
         let listed = storage.list_blob_paths().await.unwrap();
         assert!(listed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn local_stat_object_available() {
+        use super::{ObjectAvailability, RestoreOptions};
+
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir.path()));
+        let data = b"stat-me";
+        let path = storage
+            .write_data(&Hash::from(multihash(data).to_bytes()), data)
+            .await
+            .unwrap();
+
+        let stat = storage.stat_object(&path).await.unwrap();
+        assert_eq!(stat.availability, ObjectAvailability::Available);
+        assert_eq!(stat.content_length, Some(data.len() as u64));
+        assert!(stat.storage_class.is_none());
+
+        storage
+            .restore_object(&path, &RestoreOptions::default())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_stat_missing_is_not_found() {
+        let datadir = tempdir().unwrap();
+        let storage = BackendKind::Local(Local::new(datadir.path()));
+        let err = storage
+            .stat_object(Path::new("no/such/blob"))
+            .await
+            .unwrap_err();
+        match err {
+            crate::error::BluError::StorageFileNotFound { path } => {
+                assert_eq!(path, PathBuf::from("no/such/blob"));
+            }
+            other => panic!("expected StorageFileNotFound, got {other:?}"),
+        }
     }
 }
 

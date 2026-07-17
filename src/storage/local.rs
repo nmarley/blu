@@ -141,6 +141,37 @@ impl Local {
             .await
             .map_err(|e| BluError::Internal(format!("list_blob_paths join: {}", e)))?
     }
+
+    /// Local files are always immediately available.
+    pub async fn stat_object(&self, path: &Path) -> Result<super::ObjectStat, BluError> {
+        let full_path = self.datadir.join(path);
+        let meta = tokio::fs::metadata(&full_path).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                BluError::StorageFileNotFound {
+                    path: path.to_path_buf(),
+                }
+            } else {
+                BluError::Io(e)
+            }
+        })?;
+        Ok(super::ObjectStat {
+            path: path.to_path_buf(),
+            storage_class: None,
+            archive_status: None,
+            availability: super::ObjectAvailability::Available,
+            restore_header: None,
+            content_length: Some(meta.len()),
+        })
+    }
+
+    /// No-op: local objects are never archived.
+    pub async fn restore_object(
+        &self,
+        _path: &Path,
+        _opts: &super::RestoreOptions,
+    ) -> Result<(), BluError> {
+        Ok(())
+    }
 }
 
 fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {

@@ -1,9 +1,17 @@
 //! Amazon S3 storage backend implementation.
 
+use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::operation::restore_object::RestoreObjectError;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{GlacierJobParameters, RestoreRequest, StorageClass, Tier};
 use std::path::{Path, PathBuf};
 
+use super::{
+    ObjectAvailability, ObjectStat, RestoreOptions, RestoreTier, TAG_ROLE_BLOB, TAG_ROLE_CATALOG,
+    TAG_ROLE_KEY,
+};
 use crate::error::BluError;
 use crate::hash::Hash;
 
@@ -11,6 +19,9 @@ use crate::hash::Hash;
 ///
 /// This backend stores encrypted blob files in an S3 bucket. All I/O
 /// is async and driven by the caller's Tokio runtime.
+///
+/// Blob puts use `INTELLIGENT_TIERING` and tag `blu-role=blob`. Catalog
+/// puts (`indexes/`, `keys/`) use `STANDARD` and tag `blu-role=catalog`.
 ///
 /// `Clone` is cheap: `aws_sdk_s3::Client` is `Arc`-backed internally.
 #[derive(Clone)]
@@ -79,7 +90,7 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| map_get_error(path, e))?;
 
         let body = object
             .body
@@ -111,7 +122,7 @@ impl AmazonS3 {
             .range(format!("bytes={}-{}", start, end - 1))
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| map_get_error(path, e))?;
 
         let body = object
             .body
@@ -122,6 +133,9 @@ impl AmazonS3 {
     }
 
     /// Write data to a content-addressed path derived from the hash.
+    ///
+    /// Puts as `INTELLIGENT_TIERING` with `blu-role=blob` so bucket
+    /// Intelligent-Tiering archive configs can filter blob objects.
     pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         let path = super::path_for(hash)?;
         let key = self.path_to_key(&path);
@@ -134,6 +148,8 @@ impl AmazonS3 {
             .bucket(&self.bucket)
             .key(&key)
             .body(body)
+            .storage_class(StorageClass::IntelligentTiering)
+            .tagging(role_tagging_query(TAG_ROLE_BLOB))
             .send()
             .await
             .map_err(|e| BluError::S3Error(e.to_string()))?;
@@ -182,6 +198,10 @@ impl AmazonS3 {
     }
 
     /// Write data to a known path in the backend (not hash-derived).
+    ///
+    /// Catalog paths (`indexes/`, `keys/`) are put as `STANDARD` with
+    /// `blu-role=catalog`. Other known paths default to the same catalog
+    /// policy so non-blob objects stay hot.
     pub async fn write_to_path(&self, path: &Path, data: &[u8]) -> Result<(), BluError> {
         let key = self.path_to_key(path);
 
@@ -193,6 +213,8 @@ impl AmazonS3 {
             .bucket(&self.bucket)
             .key(&key)
             .body(body)
+            .storage_class(StorageClass::Standard)
+            .tagging(role_tagging_query(TAG_ROLE_CATALOG))
             .send()
             .await
             .map_err(|e| BluError::S3Error(e.to_string()))?;
@@ -211,7 +233,7 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| map_get_error(path, e))?;
 
         let body = object
             .body
@@ -293,12 +315,291 @@ impl AmazonS3 {
         out.sort();
         Ok(out)
     }
+
+    /// HeadObject probe for storage class, archive status, and restore state.
+    pub async fn stat_object(&self, path: &Path) -> Result<ObjectStat, BluError> {
+        let key = self.path_to_key(path);
+
+        let resp = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|err| {
+                if let Some(service_err) = err.as_service_error() {
+                    if matches!(service_err, HeadObjectError::NotFound(_)) {
+                        return BluError::StorageFileNotFound {
+                            path: path.to_path_buf(),
+                        };
+                    }
+                }
+                BluError::S3Error(err.to_string())
+            })?;
+
+        let storage_class = resp.storage_class().map(|c| c.as_str().to_string());
+        let archive_status = resp.archive_status().map(|s| s.as_str().to_string());
+        let restore_header = resp.restore().map(|s| s.to_string());
+        let content_length = resp.content_length().map(|n| n as u64);
+
+        let availability = classify_availability(
+            storage_class.as_deref(),
+            archive_status.as_deref(),
+            restore_header.as_deref(),
+        );
+
+        Ok(ObjectStat {
+            path: path.to_path_buf(),
+            storage_class,
+            archive_status,
+            availability,
+            restore_header,
+            content_length,
+        })
+    }
+
+    /// Initiate RestoreObject for an archived object.
+    ///
+    /// Intelligent-Tiering archive tiers use `Tier` only (no `Days`).
+    /// Classic Glacier / Deep Archive storage classes use `Days` plus
+    /// `GlacierJobParameters`. Already-in-progress and already-hot
+    /// errors are treated as success (idempotent).
+    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+        let key = self.path_to_key(path);
+        let stat = self.stat_object(path).await?;
+
+        match stat.availability {
+            ObjectAvailability::Available | ObjectAvailability::Restored { .. } => {
+                return Ok(());
+            }
+            ObjectAvailability::Restoring => return Ok(()),
+            ObjectAvailability::Archived => {}
+        }
+
+        let tier = match opts.tier {
+            RestoreTier::Bulk => Tier::Bulk,
+            RestoreTier::Standard => Tier::Standard,
+        };
+
+        let restore_request = build_restore_request(stat.storage_class.as_deref(), opts.days, tier);
+
+        let result = self
+            .client
+            .restore_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .restore_request(restore_request)
+            .send()
+            .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => map_restore_error(err),
+        }
+    }
+}
+
+fn role_tagging_query(role: &str) -> String {
+    format!("{TAG_ROLE_KEY}={role}")
+}
+
+fn map_get_error(path: &Path, err: SdkError<GetObjectError>) -> BluError {
+    if let Some(GetObjectError::InvalidObjectState(state)) = err.as_service_error() {
+        return BluError::ObjectArchived {
+            path: path.to_path_buf(),
+            storage_class: state.storage_class().map(|c| c.as_str().to_string()),
+            access_tier: state.access_tier().map(|t| t.as_str().to_string()),
+        };
+    }
+    BluError::S3Error(err.to_string())
+}
+
+fn map_restore_error(err: SdkError<RestoreObjectError>) -> Result<(), BluError> {
+    if let Some(service_err) = err.as_service_error() {
+        if matches!(
+            service_err,
+            RestoreObjectError::ObjectAlreadyInActiveTierError(_)
+        ) {
+            return Ok(());
+        }
+        if service_err.code() == Some("RestoreAlreadyInProgress") {
+            return Ok(());
+        }
+    }
+    if err.code() == Some("RestoreAlreadyInProgress") {
+        return Ok(());
+    }
+    Err(BluError::S3Error(err.to_string()))
+}
+
+fn build_restore_request(storage_class: Option<&str>, days: u32, tier: Tier) -> RestoreRequest {
+    let days_i32 = i32::try_from(days).unwrap_or(i32::MAX);
+    match storage_class {
+        Some("INTELLIGENT_TIERING") => RestoreRequest::builder().tier(tier).build(),
+        Some("GLACIER") | Some("DEEP_ARCHIVE") | Some("GLACIER_IR") => {
+            let glacier = GlacierJobParameters::builder()
+                .tier(tier)
+                .build()
+                .expect("tier required");
+            RestoreRequest::builder()
+                .days(days_i32)
+                .glacier_job_parameters(glacier)
+                .build()
+        }
+        // Unknown or missing class: send both forms S3 accepts for archive
+        // restores (days + top-level tier). Prefer glacier-style days for
+        // classic archive classes; IT ignores days when tier is set.
+        _ => RestoreRequest::builder()
+            .days(days_i32)
+            .tier(tier.clone())
+            .glacier_job_parameters(
+                GlacierJobParameters::builder()
+                    .tier(tier)
+                    .build()
+                    .expect("tier required"),
+            )
+            .build(),
+    }
+}
+
+/// Parse the S3 `x-amz-restore` header.
+///
+/// Examples:
+/// - `ongoing-request="true"`
+/// - `ongoing-request="false", expiry-date="Fri, 01 Jan 2027 00:00:00 GMT"`
+fn parse_restore_header(header: &str) -> (bool, Option<String>) {
+    let ongoing = header.contains("ongoing-request=\"true\"");
+    let expiry_hint = header
+        .split("expiry-date=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .map(|s| s.to_string());
+    (ongoing, expiry_hint)
+}
+
+/// Classify GET availability from HeadObject fields.
+fn classify_availability(
+    storage_class: Option<&str>,
+    archive_status: Option<&str>,
+    restore_header: Option<&str>,
+) -> ObjectAvailability {
+    let (ongoing, expiry_hint) = match restore_header {
+        Some(h) => parse_restore_header(h),
+        None => (false, None),
+    };
+
+    if ongoing {
+        return ObjectAvailability::Restoring;
+    }
+
+    // Temporary restore copy present (classic Glacier / Deep Archive).
+    if restore_header.is_some() && !ongoing {
+        return ObjectAvailability::Restored { expiry_hint };
+    }
+
+    match storage_class {
+        Some("GLACIER") | Some("DEEP_ARCHIVE") => ObjectAvailability::Archived,
+        Some("INTELLIGENT_TIERING") => match archive_status {
+            Some("ARCHIVE_ACCESS") | Some("DEEP_ARCHIVE_ACCESS") => ObjectAvailability::Archived,
+            _ => ObjectAvailability::Available,
+        },
+        _ => ObjectAvailability::Available,
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::hash::multihash;
+
+    #[test]
+    fn role_tagging_query_blob_and_catalog() {
+        assert_eq!(role_tagging_query(TAG_ROLE_BLOB), "blu-role=blob");
+        assert_eq!(role_tagging_query(TAG_ROLE_CATALOG), "blu-role=catalog");
+    }
+
+    #[test]
+    fn parse_restore_header_ongoing() {
+        let (ongoing, expiry) = parse_restore_header("ongoing-request=\"true\"");
+        assert!(ongoing);
+        assert!(expiry.is_none());
+    }
+
+    #[test]
+    fn parse_restore_header_restored() {
+        let (ongoing, expiry) = parse_restore_header(
+            "ongoing-request=\"false\", expiry-date=\"Fri, 01 Jan 2027 00:00:00 GMT\"",
+        );
+        assert!(!ongoing);
+        assert_eq!(expiry.as_deref(), Some("Fri, 01 Jan 2027 00:00:00 GMT"));
+    }
+
+    #[test]
+    fn classify_intelligent_tiering_deep_archive() {
+        let avail = classify_availability(
+            Some("INTELLIGENT_TIERING"),
+            Some("DEEP_ARCHIVE_ACCESS"),
+            None,
+        );
+        assert_eq!(avail, ObjectAvailability::Archived);
+    }
+
+    #[test]
+    fn classify_intelligent_tiering_hot() {
+        let avail = classify_availability(Some("INTELLIGENT_TIERING"), None, None);
+        assert_eq!(avail, ObjectAvailability::Available);
+    }
+
+    #[test]
+    fn classify_glacier_restoring() {
+        let avail =
+            classify_availability(Some("DEEP_ARCHIVE"), None, Some("ongoing-request=\"true\""));
+        assert_eq!(avail, ObjectAvailability::Restoring);
+    }
+
+    #[test]
+    fn classify_glacier_restored() {
+        let avail = classify_availability(
+            Some("DEEP_ARCHIVE"),
+            None,
+            Some("ongoing-request=\"false\", expiry-date=\"Fri, 01 Jan 2027 00:00:00 GMT\""),
+        );
+        match avail {
+            ObjectAvailability::Restored { expiry_hint } => {
+                assert_eq!(
+                    expiry_hint.as_deref(),
+                    Some("Fri, 01 Jan 2027 00:00:00 GMT")
+                );
+            }
+            other => panic!("expected Restored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_standard_available() {
+        let avail = classify_availability(Some("STANDARD"), None, None);
+        assert_eq!(avail, ObjectAvailability::Available);
+    }
+
+    #[test]
+    fn build_restore_request_it_has_tier_no_days() {
+        let req = build_restore_request(Some("INTELLIGENT_TIERING"), 14, Tier::Bulk);
+        assert!(req.days().is_none());
+        assert_eq!(req.tier(), Some(&Tier::Bulk));
+        assert!(req.glacier_job_parameters().is_none());
+    }
+
+    #[test]
+    fn build_restore_request_deep_archive_has_days() {
+        let req = build_restore_request(Some("DEEP_ARCHIVE"), 14, Tier::Standard);
+        assert_eq!(req.days(), Some(14));
+        assert!(req.glacier_job_parameters().is_some());
+        assert_eq!(
+            req.glacier_job_parameters().unwrap().tier(),
+            &Tier::Standard
+        );
+    }
 
     /// Live S3 range-read test. Ignored by default because it needs a
     /// real bucket and credentials. Run with:
