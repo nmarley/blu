@@ -256,6 +256,111 @@ pub async fn plan_cold(
     Ok((set, cold))
 }
 
+/// All content-addressed blob paths known to the blob index.
+pub fn all_indexed_blob_paths(blob_index: &BlobIndex) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = blob_index.path_index.keys().cloned().collect();
+    paths.sort();
+    paths
+}
+
+/// Result of initiating RestoreObject on archived blobs.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThawInitResult {
+    /// Paths for which RestoreObject was requested successfully.
+    pub initiated: Vec<PathBuf>,
+    /// Paths already restoring (no new request needed).
+    pub already_restoring: Vec<PathBuf>,
+    /// Paths that failed to initiate (path + error).
+    pub failed: Vec<(PathBuf, String)>,
+}
+
+/// Initiate archive restores for archived blobs in `plan`.
+///
+/// Blobs already restoring are counted but not re-requested.
+/// Available and restored blobs are ignored.
+pub async fn initiate_thaw(
+    backend: &BackendKind,
+    plan: &ColdPlan,
+    opts: &RestoreOptions,
+    concurrency: usize,
+) -> Result<ThawInitResult, BluError> {
+    let mut result = ThawInitResult {
+        already_restoring: plan.restoring.iter().map(|b| b.path.clone()).collect(),
+        ..ThawInitResult::default()
+    };
+    result.already_restoring.sort();
+
+    if plan.archived.is_empty() {
+        return Ok(result);
+    }
+
+    let concurrency = concurrency.max(1);
+    let sem = Arc::new(Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(plan.archived.len());
+
+    for cold in &plan.archived {
+        let backend = backend.clone();
+        let path = cold.path.clone();
+        let opts = *opts;
+        let sem = Arc::clone(&sem);
+        handles.push(tokio::spawn(async move {
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| BluError::Internal(format!("semaphore closed: {e}")))?;
+            match backend.restore_object(&path, &opts).await {
+                Ok(()) => Ok::<_, BluError>((path, None)),
+                Err(e) => Ok((path, Some(e.to_string()))),
+            }
+        }));
+    }
+
+    for handle in handles {
+        let (path, err) = handle
+            .await
+            .map_err(|e| BluError::Internal(format!("initiate_thaw join: {e}")))??;
+        match err {
+            None => result.initiated.push(path),
+            Some(msg) => result.failed.push((path, msg)),
+        }
+    }
+
+    result.initiated.sort();
+    result.failed.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
+}
+
+/// Re-classify `blob_paths` until none are blocked, or `timeout` elapses.
+///
+/// Returns the final cold plan. When `timeout` is `None`, polls until
+/// readable or the process is interrupted.
+pub async fn wait_until_readable(
+    backend: &BackendKind,
+    blob_paths: &[PathBuf],
+    concurrency: usize,
+    poll_interval: std::time::Duration,
+    timeout: Option<std::time::Duration>,
+) -> Result<ColdPlan, BluError> {
+    let started = std::time::Instant::now();
+    loop {
+        let plan = classify_blobs(backend, blob_paths, concurrency).await?;
+        if plan.blocked_count() == 0 && plan.errors.is_empty() {
+            return Ok(plan);
+        }
+        if let Some(limit) = timeout {
+            if started.elapsed() >= limit {
+                return Err(BluError::StorageError(format!(
+                    "timed out waiting for {} archived blob(s) to become readable \
+                     ({} still restoring)",
+                    plan.archived.len(),
+                    plan.restoring.len(),
+                )));
+            }
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
 /// True when availability blocks an immediate GET.
 pub fn availability_blocks_get(availability: &ObjectAvailability) -> bool {
     matches!(
@@ -272,6 +377,31 @@ pub fn default_restore_options() -> RestoreOptions {
 /// Whether `path` looks like catalog material (never a thaw target).
 pub fn is_catalog_path(path: &Path) -> bool {
     storage::is_non_blob_prefix(path)
+}
+
+/// Human-readable summary of a cold plan for CLI output.
+pub fn format_cold_summary(plan: &ColdPlan) -> String {
+    format!(
+        "available={} restored={} restoring={} archived={} missing={} errors={}",
+        plan.available.len(),
+        plan.restored.len(),
+        plan.restoring.len(),
+        plan.archived.len(),
+        plan.missing.len(),
+        plan.errors.len(),
+    )
+}
+
+/// Build a fail-fast error when restore cannot proceed due to archive tiers.
+pub fn blocked_restore_error(plan: &ColdPlan) -> BluError {
+    BluError::StorageError(format!(
+        "{} blob(s) are not readable yet ({}); run `blu thaw` with the same \
+         selection (or `blu restore ... --thaw`), then retry after restore \
+         completes (Deep Archive Access is typically ~12h with Standard, longer \
+         with Bulk)",
+        plan.blocked_count(),
+        format_cold_summary(plan),
+    ))
 }
 
 #[cfg(test)]
@@ -454,5 +584,37 @@ mod test {
         assert!(is_catalog_path(Path::new("indexes/index.dat")));
         assert!(is_catalog_path(Path::new("keys/kek.toml")));
         assert!(!is_catalog_path(&blob_path_for("x")));
+    }
+
+    #[tokio::test]
+    async fn initiate_thaw_local_noop() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(datadir.path()));
+        let path = blob_path_for("local-blob");
+        backend
+            .write_data(&hash_of("local-blob"), b"payload")
+            .await
+            .unwrap();
+        let plan = classify_blobs(&backend, &[path], 2).await.unwrap();
+        let init = initiate_thaw(&backend, &plan, &RestoreOptions::default(), 2)
+            .await
+            .unwrap();
+        assert!(init.initiated.is_empty());
+        assert!(init.failed.is_empty());
+        assert!(plan.all_readable());
+    }
+
+    #[test]
+    fn format_cold_summary_counts() {
+        let plan = ColdPlan {
+            available: vec![PathBuf::from("a")],
+            archived: vec![],
+            restoring: vec![],
+            restored: vec![],
+            missing: vec![PathBuf::from("m")],
+            errors: vec![],
+        };
+        assert!(format_cold_summary(&plan).contains("available=1"));
+        assert!(format_cold_summary(&plan).contains("missing=1"));
     }
 }

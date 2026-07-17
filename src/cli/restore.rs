@@ -18,9 +18,16 @@ use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, D
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::{self, Hash, SHA2_512};
-use crate::storage;
-use crate::thaw::{self, Selection};
+use crate::storage::{self, RestoreTier};
+use crate::thaw::{
+    self, blocked_restore_error, classify_blobs, default_restore_options, format_cold_summary,
+    initiate_thaw, wait_until_readable, Selection,
+};
 use crate::v3format;
+
+const COLD_CLASSIFY_CONCURRENCY: usize = 16;
+const COLD_THAW_CONCURRENCY: usize = 8;
+const COLD_POLL_SECS: u64 = 30;
 
 /// Progress event sent from prefetch workers to the progress consumer.
 enum PrefetchEvent {
@@ -66,6 +73,77 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
 
     let unique_hashes: HashSet<Hash> = blob_set.file_hashes.iter().cloned().collect();
     println!("Found {} file(s) to restore", unique_hashes.len());
+
+    let do_thaw = args.thaw || args.wait;
+    if !blob_set.blob_paths.is_empty() {
+        let mut cold =
+            classify_blobs(&backend, &blob_set.blob_paths, COLD_CLASSIFY_CONCURRENCY).await?;
+        if cold.blocked_count() > 0 || !cold.errors.is_empty() || !cold.missing.is_empty() {
+            println!("Cold status: {}", format_cold_summary(&cold));
+        }
+        if !cold.errors.is_empty() {
+            return Err(BluError::StorageError(format!(
+                "{} blob stat error(s) before restore",
+                cold.errors.len()
+            )));
+        }
+        if !cold.missing.is_empty() {
+            return Err(BluError::StorageError(format!(
+                "{} blob(s) missing from backend",
+                cold.missing.len()
+            )));
+        }
+        if cold.blocked_count() > 0 {
+            if !do_thaw {
+                return Err(blocked_restore_error(&cold));
+            }
+            let mut opts = default_restore_options();
+            if args.standard {
+                opts.tier = RestoreTier::Standard;
+            }
+            if !cold.archived.is_empty() {
+                println!(
+                    "Initiating thaw for {} archived blob(s)...",
+                    cold.archived.len()
+                );
+                let init = initiate_thaw(&backend, &cold, &opts, COLD_THAW_CONCURRENCY).await?;
+                if !init.failed.is_empty() {
+                    for (path, err) in &init.failed {
+                        eprintln!("  failed {}: {}", path.display(), err);
+                    }
+                    return Err(BluError::StorageError(format!(
+                        "{} blob restore request(s) failed",
+                        init.failed.len()
+                    )));
+                }
+                cold = classify_blobs(&backend, &blob_set.blob_paths, COLD_CLASSIFY_CONCURRENCY)
+                    .await?;
+            }
+            if cold.blocked_count() > 0 {
+                if !args.wait {
+                    return Err(blocked_restore_error(&cold));
+                }
+                println!(
+                    "Waiting for {} blob(s) to become readable...",
+                    cold.blocked_count()
+                );
+                let timeout = args
+                    .timeout_hours
+                    .map(|h| std::time::Duration::from_secs(h * 3600));
+                cold = wait_until_readable(
+                    &backend,
+                    &blob_set.blob_paths,
+                    COLD_CLASSIFY_CONCURRENCY,
+                    std::time::Duration::from_secs(COLD_POLL_SECS),
+                    timeout,
+                )
+                .await?;
+            }
+            if cold.blocked_count() > 0 {
+                return Err(blocked_restore_error(&cold));
+            }
+        }
+    }
 
     let mut needed_blob_paths: HashMap<Hash, PathBuf> = HashMap::new();
     for path in &blob_set.blob_paths {
