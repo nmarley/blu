@@ -1,14 +1,19 @@
 //! Vault health diagnostics (`blu doctor`).
 
+use std::path::PathBuf;
+
 use crate::agent::AgentClient;
-use crate::blob::BlobIndex;
-use crate::block::{PlainIndex, CURRENT_INDEX_VERSION};
+use crate::blob::{BlobIndex, BLOB_INDEX_FILENAME};
+use crate::block::{PlainIndex, CURRENT_INDEX_VERSION, INDEX_FILENAME};
 use crate::cli::clapargs::DoctorArgs;
 use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::config::Config;
 use crate::dek_provider::DekProvider;
 use crate::error::BluError;
 use crate::keys::kek::KekStore;
+use crate::storage::{BackendKind, ObjectAvailability};
+use crate::tag::TAG_INDEX_FILENAME;
+use crate::thaw::{all_indexed_blob_paths, classify_blobs, format_cold_summary};
 
 /// Outcome of a single doctor check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,8 +193,10 @@ pub async fn diagnose(cfg: &Config, keys: &DekProvider) -> Result<DoctorReport, 
         check_gc_queues(blob, &mut report);
         check_blob_presence(cfg, blob, &mut report).await;
         check_blob_orphans(cfg, blob, &mut report).await;
+        check_blob_cold_status(cfg, blob, &mut report).await;
     }
 
+    check_catalog_hot(cfg, &mut report).await;
     check_catalog_remote(cfg, keys, &mut report).await;
 
     Ok(report)
@@ -546,6 +553,222 @@ async fn check_blob_orphans(cfg: &Config, blob: &BlobIndex, report: &mut DoctorR
     report.warn("blob-orphans", detail);
 }
 
+/// Max concurrent HeadObject probes for cold-storage doctor checks.
+const COLD_STAT_CONCURRENCY: usize = 16;
+
+/// Ensure catalog objects (indexes + keys) are immediately readable.
+///
+/// Uses HeadObject-style [`BackendKind::stat_object`] so probes do not
+/// re-warm Intelligent-Tiering objects. Fail if any present catalog
+/// object is archived. Warn when S3 storage class is not STANDARD.
+async fn check_catalog_hot(cfg: &Config, report: &mut DoctorReport) {
+    let backend = match cfg.init_storage_backend().await {
+        Ok(b) => b,
+        Err(e) => {
+            report.warn("catalog-hot", format!("backend init failed: {}", e));
+            return;
+        }
+    };
+
+    if matches!(backend, BackendKind::Local(_)) {
+        report.pass("catalog-hot", "local backend (always hot)");
+        return;
+    }
+
+    let paths = catalog_object_paths(cfg);
+    if paths.is_empty() {
+        report.pass("catalog-hot", "no catalog objects to probe");
+        return;
+    }
+
+    let mut checked = 0usize;
+    let mut missing = 0usize;
+    let mut non_standard = 0usize;
+    let mut archived: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    for path in &paths {
+        match backend.stat_object(path).await {
+            Ok(stat) => {
+                checked += 1;
+                if matches!(
+                    stat.availability,
+                    ObjectAvailability::Archived | ObjectAvailability::Restoring
+                ) {
+                    archived.push(format!(
+                        "{} ({})",
+                        path.display(),
+                        match &stat.availability {
+                            ObjectAvailability::Archived => "archived",
+                            ObjectAvailability::Restoring => "restoring",
+                            _ => "blocked",
+                        }
+                    ));
+                }
+                if let Some(ref class) = stat.storage_class {
+                    if class != "STANDARD" {
+                        non_standard += 1;
+                    }
+                }
+            }
+            Err(BluError::StorageFileNotFound { .. }) => {
+                missing += 1;
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", path.display(), e));
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        report.fail(
+            "catalog-hot",
+            format!(
+                "stat failed for {} catalog object(s): {}",
+                errors.len(),
+                errors.join("; ")
+            ),
+        );
+        return;
+    }
+
+    if !archived.is_empty() {
+        report.fail(
+            "catalog-hot",
+            format!(
+                "{} catalog object(s) not immediately readable: {}",
+                archived.len(),
+                archived.join(", ")
+            ),
+        );
+        return;
+    }
+
+    if checked == 0 {
+        report.pass(
+            "catalog-hot",
+            format!(
+                "no catalog objects on backend yet ({} path(s) absent)",
+                missing
+            ),
+        );
+        return;
+    }
+
+    if non_standard > 0 {
+        report.warn(
+            "catalog-hot",
+            format!(
+                "{} present object(s) readable; {} not STANDARD storage class \
+                 (indexes/keys should stay STANDARD)",
+                checked, non_standard
+            ),
+        );
+    } else {
+        report.pass(
+            "catalog-hot",
+            format!(
+                "{} present catalog object(s) immediately readable ({} absent)",
+                checked, missing
+            ),
+        );
+    }
+}
+
+/// Summarize archive tier status for indexed content-addressed blobs.
+///
+/// Informational for cold media vaults: archived blobs are expected after
+/// long idle periods. Fail only on stat errors (missing covered by
+/// blob-presence). Prefer HeadObject via classify (no GET).
+async fn check_blob_cold_status(cfg: &Config, blob: &BlobIndex, report: &mut DoctorReport) {
+    if blob.path_index.is_empty() {
+        report.pass("blob-cold-status", "no indexed blobs");
+        return;
+    }
+
+    let backend = match cfg.init_storage_backend().await {
+        Ok(b) => b,
+        Err(e) => {
+            report.warn("blob-cold-status", format!("backend init failed: {}", e));
+            return;
+        }
+    };
+
+    if matches!(backend, BackendKind::Local(_)) {
+        report.pass(
+            "blob-cold-status",
+            format!(
+                "local backend ({} blob path(s) always available)",
+                blob.path_index.len()
+            ),
+        );
+        return;
+    }
+
+    let paths = all_indexed_blob_paths(blob);
+    let plan = match classify_blobs(&backend, &paths, COLD_STAT_CONCURRENCY).await {
+        Ok(p) => p,
+        Err(e) => {
+            report.warn(
+                "blob-cold-status",
+                format!("unable to classify blobs: {}", e),
+            );
+            return;
+        }
+    };
+
+    if !plan.errors.is_empty() {
+        report.fail(
+            "blob-cold-status",
+            format!(
+                "{} blob stat error(s); {}",
+                plan.errors.len(),
+                format_cold_summary(&plan)
+            ),
+        );
+        return;
+    }
+
+    let detail = format!(
+        "{} indexed blob(s): {}",
+        paths.len(),
+        format_cold_summary(&plan)
+    );
+
+    if plan.blocked_count() > 0 {
+        report.warn(
+            "blob-cold-status",
+            format!("{detail}; run `blu thaw --status` / `blu thaw --all` before full restore"),
+        );
+    } else {
+        report.pass("blob-cold-status", detail);
+    }
+}
+
+/// Remote catalog object paths that must stay hot (indexes + KEK material).
+fn catalog_object_paths(cfg: &Config) -> Vec<PathBuf> {
+    let mut paths = vec![
+        PathBuf::from("indexes").join(INDEX_FILENAME),
+        PathBuf::from("indexes").join(BLOB_INDEX_FILENAME),
+        PathBuf::from("indexes").join(TAG_INDEX_FILENAME),
+        PathBuf::from("keys/kek.toml"),
+    ];
+
+    let store = KekStore::new(&cfg.bludir());
+    if store.exists() {
+        if let Ok(meta) = store.load_metadata() {
+            for version in meta.versions {
+                paths.push(PathBuf::from(format!(
+                    "keys/kek_v{}/wrapped.age",
+                    version.version
+                )));
+            }
+        }
+    }
+
+    paths
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -621,6 +844,14 @@ mod tests {
             .checks
             .iter()
             .any(|c| c.name == "blob-presence" && c.status == CheckStatus::Pass));
+        assert!(report
+            .checks
+            .iter()
+            .any(|c| c.name == "catalog-hot" && c.status == CheckStatus::Pass));
+        assert!(report
+            .checks
+            .iter()
+            .any(|c| c.name == "blob-cold-status" && c.status == CheckStatus::Pass));
     }
 
     #[tokio::test]
