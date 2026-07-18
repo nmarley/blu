@@ -210,12 +210,21 @@ impl BackendKind {
 
     /// Initiate an archive restore for the object at `path`.
     ///
+    /// `prior` is an optional earlier probe (e.g. from a thaw
+    /// classification); when provided it is trusted and no new HEAD
+    /// is issued. Pass `None` to re-probe current state first.
+    ///
     /// Idempotent when a restore is already in progress or the object
     /// is already in an active tier. Local backend is a no-op.
-    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+    pub async fn restore_object(
+        &self,
+        path: &Path,
+        prior: Option<&ObjectStat>,
+        opts: &RestoreOptions,
+    ) -> Result<(), BluError> {
         match self {
-            Self::Local(b) => b.restore_object(path, opts).await,
-            Self::AmazonS3(b) => b.restore_object(path, opts).await,
+            Self::Local(b) => b.restore_object(path, prior, opts).await,
+            Self::AmazonS3(b) => b.restore_object(path, prior, opts).await,
         }
     }
 }
@@ -487,7 +496,7 @@ mod test {
         assert!(stat.storage_class.is_none());
 
         storage
-            .restore_object(&path, &RestoreOptions::default())
+            .restore_object(&path, None, &RestoreOptions::default())
             .await
             .unwrap();
     }

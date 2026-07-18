@@ -301,6 +301,9 @@ pub async fn initiate_thaw(
     for cold in &plan.archived {
         let backend = backend.clone();
         let path = cold.path.clone();
+        // Hand the classification stat to restore_object so the thaw
+        // does not issue a second HEAD per blob.
+        let stat = cold.stat.clone();
         let opts = *opts;
         let sem = Arc::clone(&sem);
         handles.push(tokio::spawn(async move {
@@ -308,7 +311,7 @@ pub async fn initiate_thaw(
                 .acquire()
                 .await
                 .map_err(|e| BluError::Internal(format!("semaphore closed: {e}")))?;
-            match backend.restore_object(&path, &opts).await {
+            match backend.restore_object(&path, Some(&stat), &opts).await {
                 Ok(()) => Ok::<_, BluError>((path, None)),
                 Err(e) => Ok((path, Some(e.to_string()))),
             }
@@ -330,10 +333,16 @@ pub async fn initiate_thaw(
     Ok(result)
 }
 
+/// Consecutive polls containing stat errors before `wait_until_readable`
+/// gives up (guards against infinite error loops when no timeout is set).
+const MAX_CONSECUTIVE_ERROR_POLLS: u32 = 5;
+
 /// Re-classify `blob_paths` until none are blocked, or `timeout` elapses.
 ///
 /// Returns the final cold plan. When `timeout` is `None`, polls until
-/// readable or the process is interrupted.
+/// readable or the process is interrupted. Missing blobs are terminal
+/// (waiting cannot bring them back), and a run of consecutive polls
+/// with stat errors bails out instead of looping forever.
 pub async fn wait_until_readable(
     backend: &BackendKind,
     blob_paths: &[PathBuf],
@@ -342,11 +351,38 @@ pub async fn wait_until_readable(
     timeout: Option<std::time::Duration>,
 ) -> Result<ColdPlan, BluError> {
     let started = std::time::Instant::now();
+    let mut error_polls = 0u32;
     loop {
         let plan = classify_blobs(backend, blob_paths, concurrency).await?;
+
+        if !plan.missing.is_empty() {
+            return Err(BluError::StorageError(format!(
+                "{} blob(s) missing from backend (e.g. {}); cannot wait for \
+                 objects that do not exist",
+                plan.missing.len(),
+                plan.missing[0].display(),
+            )));
+        }
+
         if plan.blocked_count() == 0 && plan.errors.is_empty() {
             return Ok(plan);
         }
+
+        if plan.errors.is_empty() {
+            error_polls = 0;
+        } else {
+            error_polls += 1;
+            if error_polls >= MAX_CONSECUTIVE_ERROR_POLLS {
+                return Err(BluError::StorageError(format!(
+                    "{} consecutive poll(s) with stat errors ({} error(s) in last \
+                     poll, e.g. {}); giving up",
+                    error_polls,
+                    plan.errors.len(),
+                    plan.errors[0].1,
+                )));
+            }
+        }
+
         if let Some(limit) = timeout {
             if started.elapsed() >= limit {
                 return Err(BluError::StorageError(format!(
@@ -553,7 +589,9 @@ mod test {
             .await
             .unwrap();
 
-        let plan = classify_blobs(&backend, &[path.clone()], 4).await.unwrap();
+        let plan = classify_blobs(&backend, std::slice::from_ref(&path), 4)
+            .await
+            .unwrap();
         assert_eq!(plan.available, vec![path]);
         assert!(plan.all_readable());
         assert_eq!(plan.blocked_count(), 0);
@@ -564,7 +602,9 @@ mod test {
         let datadir = tempdir().unwrap();
         let backend = BackendKind::Local(Local::new(datadir.path()));
         let path = blob_path_for("missing-blob");
-        let plan = classify_blobs(&backend, &[path.clone()], 2).await.unwrap();
+        let plan = classify_blobs(&backend, std::slice::from_ref(&path), 2)
+            .await
+            .unwrap();
         assert_eq!(plan.missing, vec![path]);
         assert!(!plan.all_readable());
     }
@@ -602,6 +642,47 @@ mod test {
         assert!(init.initiated.is_empty());
         assert!(init.failed.is_empty());
         assert!(plan.all_readable());
+    }
+
+    #[tokio::test]
+    async fn wait_until_readable_local_available_immediately() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(datadir.path()));
+        let path = blob_path_for("local-blob");
+        backend
+            .write_data(&hash_of("local-blob"), b"payload")
+            .await
+            .unwrap();
+
+        let plan = wait_until_readable(
+            &backend,
+            std::slice::from_ref(&path),
+            2,
+            std::time::Duration::from_millis(10),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(plan.all_readable());
+    }
+
+    #[tokio::test]
+    async fn wait_until_readable_missing_is_terminal() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(datadir.path()));
+        let path = blob_path_for("missing-blob");
+
+        // No timeout set: a missing blob must fail fast, not loop.
+        let err = wait_until_readable(
+            &backend,
+            std::slice::from_ref(&path),
+            2,
+            std::time::Duration::from_millis(10),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("missing"), "{err}");
     }
 
     #[test]

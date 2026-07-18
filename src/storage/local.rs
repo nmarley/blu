@@ -170,6 +170,7 @@ impl Local {
     pub async fn restore_object(
         &self,
         _path: &Path,
+        _prior: Option<&super::ObjectStat>,
         _opts: &super::RestoreOptions,
     ) -> Result<(), BluError> {
         Ok(())

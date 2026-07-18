@@ -359,13 +359,29 @@ impl AmazonS3 {
 
     /// Initiate RestoreObject for an archived object.
     ///
+    /// `prior` is an optional earlier HeadObject probe (e.g. from a
+    /// thaw classification); when provided it is trusted and no new
+    /// HEAD is issued. Pass `None` to re-probe current state first.
+    ///
     /// Intelligent-Tiering archive tiers use `Tier` only (no `Days`).
     /// Classic Glacier / Deep Archive storage classes use `Days` plus
     /// `GlacierJobParameters`. Already-in-progress and already-hot
     /// errors are treated as success (idempotent).
-    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+    pub async fn restore_object(
+        &self,
+        path: &Path,
+        prior: Option<&ObjectStat>,
+        opts: &RestoreOptions,
+    ) -> Result<(), BluError> {
         let key = self.path_to_key(path);
-        let stat = self.stat_object(path).await?;
+        let owned;
+        let stat = match prior {
+            Some(s) => s,
+            None => {
+                owned = self.stat_object(path).await?;
+                &owned
+            }
+        };
 
         match stat.availability {
             ObjectAvailability::Available | ObjectAvailability::Restored { .. } => {
@@ -435,7 +451,9 @@ fn build_restore_request(storage_class: Option<&str>, days: u32, tier: Tier) -> 
     let days_i32 = i32::try_from(days).unwrap_or(i32::MAX);
     match storage_class {
         Some("INTELLIGENT_TIERING") => RestoreRequest::builder().tier(tier).build(),
-        Some("GLACIER") | Some("DEEP_ARCHIVE") | Some("GLACIER_IR") => {
+        // GLACIER_IR is instant retrieval: it classifies as Available
+        // and never reaches restore request building.
+        Some("GLACIER") | Some("DEEP_ARCHIVE") => {
             let glacier = GlacierJobParameters::builder()
                 .tier(tier)
                 .build()
