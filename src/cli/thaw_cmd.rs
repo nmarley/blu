@@ -15,6 +15,11 @@ const CLASSIFY_CONCURRENCY: usize = 16;
 const THAW_CONCURRENCY: usize = 8;
 const DEFAULT_POLL_SECS: u64 = 30;
 
+/// Max indexed blobs a bare `blu thaw --status` will HEAD without an
+/// explicit selection. Larger indexes need `--all --status` (explicit
+/// opt-in to the full scan) or a narrowed `--path` / `--file-hashes`.
+const FULL_STATUS_SCAN_LIMIT: usize = 5_000;
+
 /// Initiate or report archive restores for blobs needed by a catalog selection.
 pub async fn thaw(args: ThawArgs) -> Result<(), BluError> {
     info!("Started thaw");
@@ -42,7 +47,16 @@ pub async fn thaw(args: ThawArgs) -> Result<(), BluError> {
                     .into(),
             ));
         }
-        all_indexed_blob_paths(&blob_index)
+        let all = all_indexed_blob_paths(&blob_index);
+        if all.len() > FULL_STATUS_SCAN_LIMIT {
+            return Err(BluError::Internal(format!(
+                "{} indexed blobs; a bare --status scan issues that many HEAD \
+                 requests. Narrow with --path or --file-hashes, or re-run with \
+                 `--all --status` to confirm a full scan.",
+                all.len()
+            )));
+        }
+        all
     } else {
         let set = plan_blob_set(&plain_index, &blob_index, &selection)?;
         if set.file_hashes.is_empty() {

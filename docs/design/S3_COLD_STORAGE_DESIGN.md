@@ -119,8 +119,9 @@ Blu does not re-apply this on backup.
 1. Create the S3 bucket (or reuse one). Prefer a dedicated media vault
    bucket or a unique key prefix per vault.
 2. Ensure IAM can `s3:PutObject`, `GetObject`, `HeadObject`,
-   `DeleteObject`, `ListBucket`, `RestoreObject`, and
-   `s3:PutIntelligentTieringConfiguration` (apply only).
+   `DeleteObject`, `ListBucket`, `RestoreObject`,
+   `s3:GetIntelligentTieringConfiguration` (doctor `bucket-it-config`
+   check), and `s3:PutIntelligentTieringConfiguration` (apply only).
 3. Point the vault at the bucket (`blu backend add` / `blu open --type s3`).
 4. Print and apply Intelligent-Tiering archive config for **blobs only**:
 

@@ -175,6 +175,13 @@ impl Local {
     ) -> Result<(), BluError> {
         Ok(())
     }
+
+    /// No bucket configuration exists for local backends.
+    pub async fn intelligent_tiering_summary(
+        &self,
+    ) -> Result<Option<super::ItConfigSummary>, BluError> {
+        Ok(None)
+    }
 }
 
 fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {

@@ -263,6 +263,23 @@ pub fn all_indexed_blob_paths(blob_index: &BlobIndex) -> Vec<PathBuf> {
     paths
 }
 
+/// Evenly sample up to `cap` paths from a sorted slice.
+///
+/// Deterministic stride sampling (`i * len / cap`) so repeated doctor
+/// runs cover the whole keyspace instead of always probing the same
+/// shard region. Returns the input unchanged when it fits under `cap`.
+pub fn sample_evenly(paths: &[PathBuf], cap: usize) -> Vec<PathBuf> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    if paths.len() <= cap {
+        return paths.to_vec();
+    }
+    (0..cap)
+        .map(|i| paths[i * paths.len() / cap].clone())
+        .collect()
+}
+
 /// Result of initiating RestoreObject on archived blobs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ThawInitResult {
@@ -683,6 +700,28 @@ mod test {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("missing"), "{err}");
+    }
+
+    #[test]
+    fn sample_evenly_returns_all_under_cap() {
+        let paths = vec![PathBuf::from("a"), PathBuf::from("b")];
+        assert_eq!(sample_evenly(&paths, 4), paths);
+        assert_eq!(sample_evenly(&paths, 2), paths);
+        assert!(sample_evenly(&paths, 0).is_empty());
+    }
+
+    #[test]
+    fn sample_evenly_covers_keyspace() {
+        let paths: Vec<PathBuf> = (0..1000)
+            .map(|i| PathBuf::from(format!("p{:04}", i)))
+            .collect();
+        let sampled = sample_evenly(&paths, 10);
+        assert_eq!(sampled.len(), 10);
+        // Stride i * len / cap hits first, last-ish, and evenly between.
+        assert_eq!(sampled[0], PathBuf::from("p0000"));
+        assert_eq!(sampled[9], PathBuf::from("p0900"));
+        // Deterministic across calls.
+        assert_eq!(sample_evenly(&paths, 10), sampled);
     }
 
     #[test]

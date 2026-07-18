@@ -5,12 +5,15 @@ use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::operation::restore_object::RestoreObjectError;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{GlacierJobParameters, RestoreRequest, StorageClass, Tier};
+use aws_sdk_s3::types::{
+    GlacierJobParameters, IntelligentTieringAccessTier, IntelligentTieringStatus, RestoreRequest,
+    StorageClass, Tier,
+};
 use std::path::{Path, PathBuf};
 
 use super::{
-    ObjectAvailability, ObjectStat, RestoreOptions, RestoreTier, TAG_ROLE_BLOB, TAG_ROLE_CATALOG,
-    TAG_ROLE_KEY,
+    ItConfigSummary, ObjectAvailability, ObjectStat, RestoreOptions, RestoreTier, TAG_ROLE_BLOB,
+    TAG_ROLE_CATALOG, TAG_ROLE_KEY,
 };
 use crate::error::BluError;
 use crate::hash::Hash;
@@ -411,6 +414,59 @@ impl AmazonS3 {
             Ok(_) => Ok(()),
             Err(err) => map_restore_error(err),
         }
+    }
+
+    /// List the bucket's Intelligent-Tiering configurations and
+    /// summarize whether any enabled config archives to Deep Archive.
+    ///
+    /// Heuristic: filter contents are not matched against blu paths,
+    /// only the presence of an enabled Deep Archive Access tiering is
+    /// checked. Requires `s3:GetIntelligentTieringConfiguration`; an
+    /// IAM denial surfaces as [`BluError::S3Error`] for the caller to
+    /// downgrade.
+    pub async fn intelligent_tiering_summary(&self) -> Result<Option<ItConfigSummary>, BluError> {
+        let mut ids = Vec::new();
+        let mut deep_archive_enabled = false;
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .list_bucket_intelligent_tiering_configurations()
+                .bucket(&self.bucket);
+            if let Some(token) = continuation.take() {
+                req = req.continuation_token(token);
+            }
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| BluError::S3Error(e.to_string()))?;
+
+            for cfg in resp.intelligent_tiering_configuration_list() {
+                ids.push(cfg.id().to_string());
+                let enabled = matches!(cfg.status(), IntelligentTieringStatus::Enabled);
+                let has_deep_archive = cfg
+                    .tierings()
+                    .iter()
+                    .any(|t| t.access_tier() == &IntelligentTieringAccessTier::DeepArchiveAccess);
+                if enabled && has_deep_archive {
+                    deep_archive_enabled = true;
+                }
+            }
+
+            if resp.is_truncated().unwrap_or(false) {
+                continuation = resp.next_continuation_token().map(|s| s.to_string());
+                if continuation.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        ids.sort();
+        Ok(Some(ItConfigSummary {
+            ids,
+            deep_archive_enabled,
+        }))
     }
 }
 

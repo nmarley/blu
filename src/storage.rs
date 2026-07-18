@@ -93,6 +93,20 @@ pub struct ObjectStat {
     pub content_length: Option<u64>,
 }
 
+/// Summary of a bucket's Intelligent-Tiering configurations.
+///
+/// Used by doctor to verify the bucket actually archives blobs;
+/// blobs upload as `INTELLIGENT_TIERING` but never reach Deep Archive
+/// Access without an operator-applied bucket configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItConfigSummary {
+    /// Ids of all Intelligent-Tiering configurations on the bucket.
+    pub ids: Vec<String>,
+    /// True when at least one enabled configuration includes a Deep
+    /// Archive Access tiering.
+    pub deep_archive_enabled: bool,
+}
+
 /// Concrete enum dispatch over supported storage backends.
 ///
 /// All I/O methods are async and driven by the caller's Tokio runtime.
@@ -225,6 +239,18 @@ impl BackendKind {
         match self {
             Self::Local(b) => b.restore_object(path, prior, opts).await,
             Self::AmazonS3(b) => b.restore_object(path, prior, opts).await,
+        }
+    }
+
+    /// Summarize the bucket's Intelligent-Tiering configurations.
+    ///
+    /// Returns `Ok(None)` for backends without bucket configuration
+    /// (local). Errors when IAM denies reading bucket configuration;
+    /// callers should treat that as warn-only.
+    pub async fn intelligent_tiering_summary(&self) -> Result<Option<ItConfigSummary>, BluError> {
+        match self {
+            Self::Local(b) => b.intelligent_tiering_summary().await,
+            Self::AmazonS3(b) => b.intelligent_tiering_summary().await,
         }
     }
 }
