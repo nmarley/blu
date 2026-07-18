@@ -14,6 +14,12 @@ pub use intelligent_tiering::{
     DEFAULT_IT_CONFIG_ID, MAX_ARCHIVE_DAYS, MIN_DEEP_ARCHIVE_DAYS,
 };
 
+/// Top-level backend directory holding all content-addressed blobs.
+///
+/// Catalog material lives in sibling directories (`indexes/`, `keys/`),
+/// so bucket filters and listing can scope to this prefix alone.
+pub const BLOB_PREFIX: &str = "blobs";
+
 /// Object tag key for blu role classification on S3 puts.
 pub const TAG_ROLE_KEY: &str = "blu-role";
 /// Tag value for content-addressed blob objects (Intelligent-Tiering candidates).
@@ -179,10 +185,11 @@ impl BackendKind {
 
     /// List relative paths of content-addressed blob objects.
     ///
-    /// Skips catalog and key material (`indexes/`, `keys/`). Returned
-    /// paths match the shape of `BlobIndex::path_index` keys and
-    /// [`path_for`] output. Collects the full set into memory; large
-    /// backends may be slow.
+    /// Lists only objects under [`BLOB_PREFIX`]; catalog and key
+    /// material (`indexes/`, `keys/`) is never walked. Returned paths
+    /// match the shape of `BlobIndex::path_index` keys and [`path_for`]
+    /// output. Collects the full set into memory; large backends may
+    /// be slow.
     pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
         match self {
             Self::Local(b) => b.list_blob_paths().await,
@@ -213,23 +220,30 @@ impl BackendKind {
     }
 }
 
-/// True when a relative backend path is catalog or key material, not a blob.
-pub fn is_non_blob_prefix(path: &Path) -> bool {
+/// True when a relative backend path lives under [`BLOB_PREFIX`].
+pub fn is_blob_path(path: &Path) -> bool {
     path.components()
         .next()
-        .is_some_and(|c| matches!(c.as_os_str().to_str(), Some("indexes") | Some("keys")))
+        .is_some_and(|c| c.as_os_str().to_str() == Some(BLOB_PREFIX))
+}
+
+/// True when a relative backend path is not a content-addressed blob:
+/// catalog material (`indexes/`, `keys/`) or anything outside
+/// [`BLOB_PREFIX`].
+pub fn is_non_blob_prefix(path: &Path) -> bool {
+    !is_blob_path(path)
 }
 
 /// Get a path for the encrypted data.
 ///
 /// This is generally the hash of the data, but broken into a dir structure also with the
-/// multihash prefix(es) removed from the front...
+/// multihash prefix(es) removed from the front, under the top-level `blobs/` directory...
 ///
 /// example, this hash ... :
 /// 1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
 /// ... would be stored in:
-/// DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+/// DATADIR / blobs / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
 pub fn path_for(hash: &Hash) -> Result<PathBuf, BluError> {
     // use multihash lib to properly separate multihash header code and size
@@ -244,6 +258,7 @@ pub fn path_for(hash: &Hash) -> Result<PathBuf, BluError> {
     // dbg!(&hash_str);
 
     let rel_path = PathBuf::new()
+        .join(BLOB_PREFIX)
         .join(&hash_str[0..1])
         .join(&hash_str[0..3])
         .join(&hash_str[0..5])
@@ -285,26 +300,26 @@ mod test {
         };
     }
 
-    // DATADIR / d / dd4 / dd4ce38e / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+    // DATADIR / blobs / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
     test_path_for!(
         path_for_sha2_512,
         "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6",
-        "d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+        "blobs/d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
     );
     test_path_for!(
         path_for_sha2_256,
         "12209b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d",
-        "9/9b2/9b2f4/9b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d"
+        "blobs/9/9b2/9b2f4/9b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d"
     );
     test_path_for!(
         path_for_sha3_256,
         "16202a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e",
-        "2/2a6/2a62d/2a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e"
+        "blobs/2/2a6/2a62d/2a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e"
     );
     test_path_for!(
         path_for_blake2b_256,
         "a0e4022064982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36",
-        "6/649/64982/64982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36"
+        "blobs/6/649/64982/64982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36"
     );
 
     use std::path::Path;
@@ -400,14 +415,15 @@ mod test {
     }
 
     #[tokio::test]
-    async fn local_list_blob_paths_skips_indexes_and_keys() {
+    async fn local_list_blob_paths_scoped_to_blob_prefix() {
         use super::is_non_blob_prefix;
         use std::fs;
 
         assert!(is_non_blob_prefix(Path::new("indexes/index.dat")));
         assert!(is_non_blob_prefix(Path::new("keys/kek.toml")));
+        assert!(is_non_blob_prefix(Path::new("d/dd4/legacy-shard")));
         assert!(!is_non_blob_prefix(Path::new(
-            "d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+            "blobs/d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
         )));
 
         let datadir = tempdir().unwrap();
@@ -433,14 +449,16 @@ mod test {
             .write_to_path(Path::new("keys/kek.toml"), b"kek-meta")
             .await
             .unwrap();
-        // Empty shard dirs alone should not produce entries (files only).
+        // Stray top-level dirs and empty shard dirs under blobs/ are
+        // not files, so neither produces entries.
         fs::create_dir_all(datadir.path().join("z/zzz/zzzzz")).unwrap();
+        fs::create_dir_all(datadir.path().join("blobs/z/zzz/zzzzz")).unwrap();
 
         let listed = storage.list_blob_paths().await.unwrap();
         assert_eq!(listed.len(), 2, "listed={listed:?}");
         assert!(listed.contains(&path_a));
         assert!(listed.contains(&path_b));
-        assert!(!listed.iter().any(|p| is_non_blob_prefix(p)));
+        assert!(listed.iter().all(|p| !is_non_blob_prefix(p)));
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@
 //! automatically; the operator applies it once per bucket.
 
 use crate::error::BluError;
-use crate::storage::{TAG_ROLE_BLOB, TAG_ROLE_KEY};
+use crate::storage::{BLOB_PREFIX, TAG_ROLE_BLOB, TAG_ROLE_KEY};
 
 /// Default configuration id for blu blob Deep Archive Access.
 pub const DEFAULT_IT_CONFIG_ID: &str = "blu-blobs-deep-archive";
@@ -21,9 +21,9 @@ pub const MAX_ARCHIVE_DAYS: u32 = 730;
 
 /// Build the Intelligent-Tiering configuration JSON for blu blob objects.
 ///
-/// Filter is tag `blu-role=blob` so catalog objects (`blu-role=catalog`)
-/// are never archived. When `prefix` is set, the filter is AND of prefix
-/// and that tag (vaults sharing a bucket).
+/// Filter is AND of the `blobs/` key prefix (scoped by the vault prefix
+/// when set) and tag `blu-role=blob`, so catalog objects
+/// (`indexes/`, `keys/`, `blu-role=catalog`) are never archived.
 ///
 /// Output matches the shape expected by
 /// `aws s3api put-bucket-intelligent-tiering-configuration
@@ -45,23 +45,17 @@ pub fn config_json(
         ));
     }
 
-    let filter = match normalize_prefix(prefix) {
-        Some(p) => serde_json::json!({
-            "And": {
-                "Prefix": p,
-                "Tags": [{
-                    "Key": TAG_ROLE_KEY,
-                    "Value": TAG_ROLE_BLOB,
-                }]
-            }
-        }),
-        None => serde_json::json!({
-            "Tag": {
+    let vault_prefix = normalize_prefix(prefix).unwrap_or_default();
+    let blob_prefix = format!("{}{}/", vault_prefix, BLOB_PREFIX);
+    let filter = serde_json::json!({
+        "And": {
+            "Prefix": blob_prefix,
+            "Tags": [{
                 "Key": TAG_ROLE_KEY,
                 "Value": TAG_ROLE_BLOB,
-            }
-        }),
-    };
+            }]
+        }
+    });
 
     let doc = serde_json::json!({
         "Id": id,
@@ -107,23 +101,24 @@ mod test {
     use super::*;
 
     #[test]
-    fn config_json_tag_only() {
+    fn config_json_blob_prefix_and_tag() {
         let json = config_json(DEFAULT_IT_CONFIG_ID, None, DEFAULT_DEEP_ARCHIVE_DAYS).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["Id"], DEFAULT_IT_CONFIG_ID);
         assert_eq!(v["Status"], "Enabled");
-        assert_eq!(v["Filter"]["Tag"]["Key"], TAG_ROLE_KEY);
-        assert_eq!(v["Filter"]["Tag"]["Value"], TAG_ROLE_BLOB);
+        assert_eq!(v["Filter"]["And"]["Prefix"], "blobs/");
+        assert_eq!(v["Filter"]["And"]["Tags"][0]["Key"], TAG_ROLE_KEY);
+        assert_eq!(v["Filter"]["And"]["Tags"][0]["Value"], TAG_ROLE_BLOB);
         assert_eq!(v["Tierings"][0]["Days"], 365);
         assert_eq!(v["Tierings"][0]["AccessTier"], "DEEP_ARCHIVE_ACCESS");
-        assert!(v["Filter"].get("And").is_none());
+        assert!(v["Filter"].get("Tag").is_none());
     }
 
     #[test]
     fn config_json_with_prefix() {
         let json = config_json("blu-media", Some("vaults/photos"), 365).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["Filter"]["And"]["Prefix"], "vaults/photos/");
+        assert_eq!(v["Filter"]["And"]["Prefix"], "vaults/photos/blobs/");
         assert_eq!(v["Filter"]["And"]["Tags"][0]["Value"], TAG_ROLE_BLOB);
         assert!(v["Filter"].get("Tag").is_none());
     }

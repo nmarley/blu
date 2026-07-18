@@ -73,10 +73,11 @@ are fully eligible for tiering.
 
 ## What cools vs what stays hot
 
-Backend layout under the vault prefix (today):
+Backend layout under the vault prefix:
 
 - **Blobs** (tiering candidates): content-addressed paths from
-  `storage::path_for` (e.g. `d/dd4/dd4ce/...`)
+  `storage::path_for` under the `blobs/` prefix (e.g.
+  `blobs/d/dd4/dd4ce/...`)
 - **Catalog / keys** (must stay hot): `indexes/*`, `keys/*`
 
 | Object role | Put storage class | Object tag | Intelligent-Tiering archive filter |
@@ -88,17 +89,17 @@ If indexes or KEK wrappers enter Deep Archive Access, `open`, `pull`,
 and `doctor` become multi-hour failures. That must never happen by
 default.
 
-Tagging is preferred for filters with the current root-sharded blob
-paths (avoids sixteen hex-prefix rules). A future `blobs/` prefix is an
-optional layout cleanup, not required for the first implementation.
+All blobs live under the `blobs/` prefix, so the archive filter is AND
+of that prefix (plus the vault prefix when set) and tag `blu-role=blob`.
+The tag is defense in depth: the prefix alone would suffice.
 
 ## Bucket configuration (infrastructure)
 
 Operator-owned, applied once per bucket (console, Terraform, or a
 one-shot helper that prints JSON):
 
-1. Intelligent-Tiering configuration with filter on tag
-   `blu-role=blob` (and optional vault prefix)
+1. Intelligent-Tiering configuration with filter on the `blobs/`
+   prefix (scoped by the vault prefix when set) AND tag `blu-role=blob`
 2. Deep Archive Access after **365** consecutive days of no access
 3. Archive Access tier optional (document; not required for v1 minimum)
 4. Do not re-apply this configuration from every `blu backup`

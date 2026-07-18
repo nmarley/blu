@@ -246,12 +246,13 @@ impl AmazonS3 {
     /// List relative paths of content-addressed blob objects under the
     /// backend prefix.
     ///
-    /// Uses paginated `ListObjectsV2`. Skips `indexes/` and `keys/`
-    /// relative to the backend prefix. Keys are returned without the
-    /// configured prefix, matching local relative paths.
+    /// Uses paginated `ListObjectsV2` scoped to the `blobs/` prefix, so
+    /// catalog material (`indexes/`, `keys/`) is never listed. Keys are
+    /// returned without the configured prefix, matching local relative
+    /// paths.
     pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
         let mut out = Vec::new();
-        let list_prefix = {
+        let vault_prefix = {
             let p = self.prefix.to_string_lossy();
             if p.is_empty() {
                 String::new()
@@ -261,6 +262,7 @@ impl AmazonS3 {
                 format!("{}/", p)
             }
         };
+        let list_prefix = format!("{}{}/", vault_prefix, super::BLOB_PREFIX);
 
         let mut continuation: Option<String> = None;
         loop {
@@ -268,10 +270,8 @@ impl AmazonS3 {
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
+                .prefix(&list_prefix)
                 .max_keys(1000);
-            if !list_prefix.is_empty() {
-                req = req.prefix(&list_prefix);
-            }
             if let Some(token) = continuation.take() {
                 req = req.continuation_token(token);
             }
@@ -285,9 +285,11 @@ impl AmazonS3 {
                 let Some(key) = obj.key() else {
                     continue;
                 };
-                let rel = if list_prefix.is_empty() {
+                // Strip the vault prefix (not the blobs/ component) so
+                // relative paths match `path_for` output.
+                let rel = if vault_prefix.is_empty() {
                     key.to_string()
-                } else if let Some(stripped) = key.strip_prefix(&list_prefix) {
+                } else if let Some(stripped) = key.strip_prefix(&vault_prefix) {
                     stripped.to_string()
                 } else {
                     continue;
@@ -295,11 +297,7 @@ impl AmazonS3 {
                 if rel.is_empty() || rel.ends_with('/') {
                     continue;
                 }
-                let path = PathBuf::from(&rel);
-                if super::is_non_blob_prefix(&path) {
-                    continue;
-                }
-                out.push(path);
+                out.push(PathBuf::from(&rel));
             }
 
             if resp.is_truncated().unwrap_or(false) {
