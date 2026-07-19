@@ -20,14 +20,13 @@ use crate::format::human_bytes;
 use crate::hash::{self, Hash, SHA2_512};
 use crate::storage::{self, RestoreTier};
 use crate::thaw::{
-    self, blocked_restore_error, classify_blobs, default_restore_options, format_cold_summary,
-    initiate_thaw, wait_until_readable, Selection,
+    self, blocked_restore_error, classify_blobs, default_poll_backoff, default_restore_options,
+    format_cold_summary, initiate_thaw, wait_until_readable, Selection,
 };
 use crate::v3format;
 
 const COLD_CLASSIFY_CONCURRENCY: usize = 16;
 const COLD_THAW_CONCURRENCY: usize = 8;
-const COLD_POLL_SECS: u64 = 30;
 
 /// Progress event sent from prefetch workers to the progress consumer.
 enum PrefetchEvent {
@@ -134,7 +133,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
                     &backend,
                     &blob_set.blob_paths,
                     COLD_CLASSIFY_CONCURRENCY,
-                    std::time::Duration::from_secs(COLD_POLL_SECS),
+                    default_poll_backoff(),
                     timeout,
                 )
                 .await?;

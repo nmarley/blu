@@ -354,17 +354,55 @@ pub async fn initiate_thaw(
 /// gives up (guards against infinite error loops when no timeout is set).
 const MAX_CONSECUTIVE_ERROR_POLLS: u32 = 5;
 
+/// Initial poll interval for cold waits.
+pub const WAIT_POLL_INITIAL_SECS: u64 = 30;
+
+/// Upper bound for the cold wait poll interval.
+pub const WAIT_POLL_MAX_SECS: u64 = 300;
+
+/// Exponential backoff between cold wait classification passes.
+///
+/// Deep Archive restores run for hours, so a fixed short interval
+/// wastes HEAD requests and floods logs. The interval doubles from
+/// `initial` up to `max`; both are clamped to a sane nonzero range.
+#[derive(Debug, Clone)]
+pub struct PollBackoff {
+    next: std::time::Duration,
+    max: std::time::Duration,
+}
+
+impl PollBackoff {
+    /// Backoff starting at `initial` and doubling up to `max`.
+    pub fn new(initial: std::time::Duration, max: std::time::Duration) -> Self {
+        let floor = std::time::Duration::from_millis(1);
+        let max = max.max(floor);
+        Self {
+            next: initial.clamp(floor, max),
+            max,
+        }
+    }
+
+    /// Current interval; the following call returns at most double,
+    /// capped at `max`.
+    pub fn next_interval(&mut self) -> std::time::Duration {
+        let current = self.next;
+        self.next = self.next.saturating_mul(2).min(self.max);
+        current
+    }
+}
+
 /// Re-classify `blob_paths` until none are blocked, or `timeout` elapses.
 ///
 /// Returns the final cold plan. When `timeout` is `None`, polls until
 /// readable or the process is interrupted. Missing blobs are terminal
 /// (waiting cannot bring them back), and a run of consecutive polls
-/// with stat errors bails out instead of looping forever.
+/// with stat errors bails out instead of looping forever. `backoff`
+/// spaces out classification passes (see [`PollBackoff`]).
 pub async fn wait_until_readable(
     backend: &BackendKind,
     blob_paths: &[PathBuf],
     concurrency: usize,
-    poll_interval: std::time::Duration,
+    mut backoff: PollBackoff,
     timeout: Option<std::time::Duration>,
 ) -> Result<ColdPlan, BluError> {
     let started = std::time::Instant::now();
@@ -410,7 +448,7 @@ pub async fn wait_until_readable(
                 )));
             }
         }
-        tokio::time::sleep(poll_interval).await;
+        tokio::time::sleep(backoff.next_interval()).await;
     }
 }
 
@@ -425,6 +463,14 @@ pub fn availability_blocks_get(availability: &ObjectAvailability) -> bool {
 /// Default restore options for thaw initiation (Bulk, 14 days).
 pub fn default_restore_options() -> RestoreOptions {
     RestoreOptions::default()
+}
+
+/// Default cold wait backoff: 30s initial, doubling to a 5min cap.
+pub fn default_poll_backoff() -> PollBackoff {
+    PollBackoff::new(
+        std::time::Duration::from_secs(WAIT_POLL_INITIAL_SECS),
+        std::time::Duration::from_secs(WAIT_POLL_MAX_SECS),
+    )
 }
 
 /// Whether `path` looks like catalog material (never a thaw target).
@@ -675,7 +721,10 @@ mod test {
             &backend,
             std::slice::from_ref(&path),
             2,
-            std::time::Duration::from_millis(10),
+            PollBackoff::new(
+                std::time::Duration::from_millis(10),
+                std::time::Duration::from_millis(40),
+            ),
             None,
         )
         .await
@@ -694,7 +743,10 @@ mod test {
             &backend,
             std::slice::from_ref(&path),
             2,
-            std::time::Duration::from_millis(10),
+            PollBackoff::new(
+                std::time::Duration::from_millis(10),
+                std::time::Duration::from_millis(40),
+            ),
             None,
         )
         .await
@@ -722,6 +774,28 @@ mod test {
         assert_eq!(sampled[9], PathBuf::from("p0900"));
         // Deterministic across calls.
         assert_eq!(sample_evenly(&paths, 10), sampled);
+    }
+
+    #[test]
+    fn poll_backoff_doubles_up_to_cap() {
+        use std::time::Duration;
+        let mut backoff = PollBackoff::new(Duration::from_secs(30), Duration::from_secs(300));
+        let seq: Vec<u64> = (0..7).map(|_| backoff.next_interval().as_secs()).collect();
+        assert_eq!(seq, vec![30, 60, 120, 240, 300, 300, 300]);
+    }
+
+    #[test]
+    fn poll_backoff_clamps_degenerate_ranges() {
+        use std::time::Duration;
+        // Initial above the cap starts at the cap.
+        let mut backoff = PollBackoff::new(Duration::from_secs(600), Duration::from_secs(300));
+        assert_eq!(backoff.next_interval(), Duration::from_secs(300));
+        // Zero initial is floored to a nonzero yield, never a spin loop.
+        let mut backoff = PollBackoff::new(Duration::ZERO, Duration::from_millis(4));
+        assert_eq!(backoff.next_interval(), Duration::from_millis(1));
+        assert_eq!(backoff.next_interval(), Duration::from_millis(2));
+        assert_eq!(backoff.next_interval(), Duration::from_millis(4));
+        assert_eq!(backoff.next_interval(), Duration::from_millis(4));
     }
 
     #[test]
