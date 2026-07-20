@@ -11,7 +11,7 @@ use crate::hash::Hash;
 pub use intelligent_tiering::{
     apply_command_hint as intelligent_tiering_apply_hint,
     config_json as intelligent_tiering_config_json, DEFAULT_DEEP_ARCHIVE_DAYS,
-    DEFAULT_IT_CONFIG_ID, MAX_ARCHIVE_DAYS, MIN_DEEP_ARCHIVE_DAYS,
+    DEFAULT_IT_CONFIG_ID, MAX_ARCHIVE_DAYS, MIN_ARCHIVE_DAYS, MIN_DEEP_ARCHIVE_DAYS,
 };
 
 /// Top-level backend directory holding all content-addressed blobs.
