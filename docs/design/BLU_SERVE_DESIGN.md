@@ -467,7 +467,7 @@ When a client writes a file (e.g., `PUT /documents/report.pdf`):
 2. **Chunk**: split into ~512 KiB fixed-size chunks (same
    `Chunkerator` logic, but operating on in-memory data or a temp
    file instead of a source path)
-3. **Hash**: SHA-512 multihash each chunk and the whole file
+3. **Hash**: Blake3-256 multihash each chunk and the whole file
 4. **Dedup**: check `BlobIndex.has_chunk(chunk_hash)` for each chunk;
    skip chunks that already exist
 5. **Pack**: feed new chunks into `BlobBuffer`, which seals and

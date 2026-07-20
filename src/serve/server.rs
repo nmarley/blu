@@ -1426,7 +1426,7 @@ fn generate_upload_id() -> String {
 }
 
 /// Spool an HTTP request body to a [`tempfile::NamedTempFile`] and
-/// compute the SHA-512 digest incrementally. RAII cleanup happens when
+/// compute the Blake3-256 digest incrementally. RAII cleanup happens when
 /// the returned file is dropped. Returns the temp file and the raw
 /// digest bytes (used for the part ETag).
 async fn spool_part_body(body: Body) -> Result<(tempfile::NamedTempFile, Vec<u8>), BluError> {

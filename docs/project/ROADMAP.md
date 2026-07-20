@@ -54,7 +54,6 @@ dependencies.
 
 Items that may land eventually but are not blocking any milestone.
 
-- Configurable hashing algorithm with multihash support
 - Snapshot/versioning model with retention policies
 - File notes (larger text bodies than tags, searchable)
 - Hardware key support (YubiKey/Ledger for UK storage)

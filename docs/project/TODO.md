@@ -83,10 +83,8 @@ Related doctor follow-up:
 
 ## Ideas (Low Priority)
 
-- [ ] Configurable hashing algorithm (with backward compat: old
-      hashes compared using the algorithm that produced them)
-- [ ] Global hash table with multihash support (integer IDs mapping
-      to multihash arrays for smaller indexes and algorithm agility)
+- [ ] Global hash table (integer IDs mapping to multihashes for
+      smaller indexes)
 - [ ] Web UI for browsing vaults
 - [ ] Hardware key support (YubiKey/Ledger for UK storage)
 - [ ] Vault sharing via URL (`blu://vault/s3:bucket:prefix?invite=...`)

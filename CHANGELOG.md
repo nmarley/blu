@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** content hashes switch from SHA-512 to Blake3-256
+  multihash; existing vaults must be re-initialized and re-backed-up
 - **Breaking:** blobs move under the `blobs/` backend prefix
   (`blobs/d/dd4/...`); existing vaults must be recreated
 - Bare `blu thaw --status` refuses full-index scans above 5,000 blobs;

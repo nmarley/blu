@@ -203,8 +203,8 @@ async fn restore_file_bytes(
         out.extend_from_slice(&chunk);
     }
     let whole = crate::hash::Hash::from(crate::hash::multihash(&out).to_bytes());
-    // Whole-file hash is incremental SHA-512 over chunks (same as multihash of
-    // full bytes when the file is the concatenation of its chunks).
+    // Whole-file hash is incremental Blake3-256 over chunks (same as multihash
+    // of full bytes when the file is the concatenation of its chunks).
     assert_eq!(&whole, file_hash, "restored file hash mismatch");
     out
 }
