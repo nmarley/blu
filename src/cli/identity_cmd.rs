@@ -300,7 +300,13 @@ fn save_identity_meta(
 
 /// Attempt to set up biometric unlock. Returns true if successful.
 /// On failure or unsupported platforms, prints a message and returns false.
+/// BLU_NO_BIOMETRIC (any value, even empty) skips setup entirely, so
+/// scripts never touch the platform keychain.
 fn setup_biometric_if_available(seed: &mnemonic::Seed) -> bool {
+    if std::env::var_os(biometric::NO_BIOMETRIC_ENV_VAR).is_some() {
+        return false;
+    }
+
     if !biometric::is_available() {
         return false;
     }
@@ -321,4 +327,32 @@ fn prompt_optional_passphrase(prompt: &str) -> Result<String, BluError> {
     let pass = rpassword::prompt_password(prompt)
         .map_err(|e| BluError::Internal(format!("failed to read passphrase: {}", e)))?;
     Ok(pass)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn test_seed() -> mnemonic::Seed {
+        let m = mnemonic::parse_mnemonic(mnemonic::TEST_MNEMONIC).unwrap();
+        mnemonic::mnemonic_to_seed(&m, "")
+    }
+
+    #[test]
+    fn biometric_setup_skipped_when_env_set() {
+        // Presence of BLU_NO_BIOMETRIC (any value, even empty) skips
+        // Touch ID setup before anything touches the platform keychain.
+        let original = std::env::var_os(biometric::NO_BIOMETRIC_ENV_VAR);
+
+        std::env::set_var(biometric::NO_BIOMETRIC_ENV_VAR, "1");
+        assert!(!setup_biometric_if_available(&test_seed()));
+
+        std::env::set_var(biometric::NO_BIOMETRIC_ENV_VAR, "");
+        assert!(!setup_biometric_if_available(&test_seed()));
+
+        match original {
+            Some(v) => std::env::set_var(biometric::NO_BIOMETRIC_ENV_VAR, v),
+            None => std::env::remove_var(biometric::NO_BIOMETRIC_ENV_VAR),
+        }
+    }
 }

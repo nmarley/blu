@@ -26,6 +26,11 @@ const KEYCHAIN_SERVICE: &str = "com.blu.agent";
 #[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "device-key";
 
+/// Environment variable that disables biometric (Touch ID) setup when
+/// present, regardless of value. Scripts and CI set this so identity
+/// commands never touch the platform keychain.
+pub const NO_BIOMETRIC_ENV_VAR: &str = "BLU_NO_BIOMETRIC";
+
 /// Resolve the path to `$XDG_DATA_HOME/blu/identity.enc`.
 fn identity_enc_path() -> Result<PathBuf> {
     Ok(UserPaths::resolve()?.identity_enc)
