@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 // See:
 // https://github.com/multiformats/multicodec/blob/master/table.csv
-pub(crate) const SHA2_512: u64 = 0x13;
 pub(crate) const BLAKE3_256: u64 = 0x1e;
 
 /// Returns a Blake3-256 multihash of the given data.

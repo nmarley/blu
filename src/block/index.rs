@@ -1,7 +1,5 @@
 use chrono::{NaiveDateTime, Timelike};
-use multihash::Multihash;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha512};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -10,7 +8,7 @@ use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, decompress};
 use crate::error::BluError;
 use crate::format::datetime_format;
-use crate::hash::{Hash, SHA2_512};
+use crate::hash::{Hash, StreamingHash};
 use crate::ignore::walk_files;
 use crate::io::{gen_std_enc_serde, Position};
 
@@ -111,16 +109,13 @@ impl PlainIndex {
     ) -> Result<(), BluError> {
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
-        // TODO: extensible hashing -- get hasher type from config / hasher from
-        // factory
-        let mut hasher = Sha512::new();
+        let mut hasher = StreamingHash::new();
         let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
         for chunk in chunker {
             chunkmetas.push(ChunkMeta::new(&chunk));
             hasher.update(&chunk);
         }
-        let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &hasher.finalize())?;
-        let file_hash = Hash::from(file_mh.to_bytes());
+        let file_hash = hasher.finalize();
 
         // block index
         let mut offset = 0;

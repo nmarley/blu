@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use multihash::Multihash;
-use sha2::{Digest, Sha512};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::blob::BlobBlockLocation;
@@ -17,7 +15,7 @@ use crate::compression::decompress;
 use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, DekProvider};
 use crate::error::BluError;
 use crate::format::human_bytes;
-use crate::hash::{self, Hash, SHA2_512};
+use crate::hash::{self, Hash, StreamingHash};
 use crate::storage::{self, RestoreTier};
 use crate::thaw::{
     self, blocked_restore_error, classify_blobs, default_poll_backoff, default_restore_options,
@@ -286,7 +284,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
         let started = Instant::now();
         let mut offset = 0u64;
         let total_chunks = fileref.chunkmetas.len();
-        let mut file_hasher = Sha512::new();
+        let mut file_hasher = StreamingHash::new();
 
         let write_result: Result<(), BluError> = (|| {
             for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
@@ -322,9 +320,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
                 )));
             }
 
-            let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &file_hasher.finalize())
-                .map_err(|e| BluError::Internal(format!("file multihash wrap: {}", e)))?;
-            let actual = Hash::from(file_mh.to_bytes());
+            let actual = file_hasher.finalize();
             if actual != file_hash {
                 return Err(BluError::Internal(format!(
                     "file hash mismatch: expected {}, got {}",
