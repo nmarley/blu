@@ -1,3 +1,6 @@
+> Archived plan — fully implemented. See commit history and
+> `../../design/S3_COLD_STORAGE_DESIGN.md` for the canonical reference.
+
 # PLAN: S3 Intelligent-Tiering cold storage
 
 ## Goal

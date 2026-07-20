@@ -1,7 +1,10 @@
+> Archived plan — fully implemented. See commit history and
+> `../../design/S3_COLD_STORAGE_DESIGN.md` for the canonical reference.
+
 # PLAN: Cold storage follow-up hardening
 
 Follow-up work for the S3 Intelligent-Tiering cold storage feature (see
-`PLAN-glacier-cold-storage.md` and `docs/design/S3_COLD_STORAGE_DESIGN.md`).
+`PLAN-glacier-cold-storage.md` and `../../design/S3_COLD_STORAGE_DESIGN.md`).
 Lands as atomic commits on the `s3-glacier` branch.
 
 ## Goal
