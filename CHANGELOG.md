@@ -28,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Backend `stat_object` / `restore_object` APIs and typed
   `BluError::ObjectArchived`
 - Design doc `docs/design/S3_COLD_STORAGE_DESIGN.md`
+- Scriptable passphrases: `BLU_PASSPHRASE` covers agent unlock paths and
+  identity-file encryption, `BLU_MNEMONIC_PASSPHRASE` supplies the BIP39
+  25th word, and `blu identity init --yes` skips interactive
+  confirmations, so the whole pipeline (identity, init, backup, restore,
+  doctor) runs headless
+- `BLU_NO_BIOMETRIC` skips Touch ID keychain setup during
+  `blu identity init` / `recover` for scripts and CI
+- `scripts/e2e-passphrase-smoke.sh`: headless end-to-end smoke
+  (sandboxed XDG dirs, encrypted-identity assertion, content diff)
 
 ### Changed
 

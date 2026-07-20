@@ -12,6 +12,7 @@ cargo clippy                 # lint (see allowed lints below)
 cargo fmt -- --check         # format check (max_width = 100)
 bash scripts/check-version.sh  # crate version vs latest v* tag
 bash scripts/install-local.sh  # cargo install --path . --force (+ macOS codesign)
+bash scripts/e2e-passphrase-smoke.sh  # headless e2e (sandboxed XDG + BLU_PASSPHRASE)
 ```
 
 CI: `.github/workflows/ci.yml` on push/PR (`macos-15`, `ubuntu-24.04`).
@@ -42,6 +43,10 @@ This is a solo-developer project with no external users. Breaking changes are we
 - **Agent**: delegates DEK wrapping/unwrapping to the agent daemon over a Unix socket. Key material never leaves the daemon.
 
 All bulk data encryption is local (ChaCha20-Poly1305 with the DEK). `DekProvider` controls only who wraps/unwraps the DEK. Free functions `encrypt_envelope()` and `decrypt_envelope()` handle the full envelope format. The seam is in `src/cli/helpers.rs` (`load_config_and_keys()`).
+
+### Passphrase env seam (`src/cli/passphrase.rs`)
+
+Every passphrase prompt has an env override for headless runs: `BLU_PASSPHRASE` (identity file encryption and agent unlock), `BLU_MNEMONIC_PASSPHRASE` (BIP39 25th word at identity init/recover). Precedence on unlock paths: unlocked agent, empty attempt, env, then TTY prompt; a wrong env value fails rather than prompting. `blu identity init --yes` skips interactive confirmations; `BLU_NO_BIOMETRIC` skips Touch ID keychain setup. Resolvers return `Zeroizing<String>`; passphrases are never logged. Wired in `helpers.rs`, `agent_cmd.rs`, `init.rs`, `open.rs`, `identity_cmd.rs`.
 
 ### Key hierarchy (envelope encryption)
 
@@ -82,6 +87,7 @@ macOS). Defaults: `~/.config/blu`, `~/.local/share/blu`,
 - `src/bin/blu.rs` -- CLI entrypoint, clap dispatch, vault discovery (walks parents for `.blu/`)
 - `src/cli/` -- one file per subcommand; `clapargs.rs` defines all clap structs
 - `src/cli/helpers.rs` -- constructs `DekProvider` (agent or local); key seam
+- `src/cli/passphrase.rs` -- env-var passphrase resolvers for headless automation
 - `src/dek_provider.rs` -- `DekProvider` enum, `encrypt_envelope`/`decrypt_envelope`
 - `src/age.rs` -- passphrase-based encryption for identity files
 - `src/keys/` -- KEK, DEK, BIP39 mnemonic, PQ hybrid KEM (mlkem768x25519), HPKE
