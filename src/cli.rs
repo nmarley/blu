@@ -24,6 +24,7 @@ mod search;
 mod smoke;
 mod status;
 mod tagger;
+mod thaw_cmd;
 mod write_index;
 
 pub use agent_cmd::agent;
@@ -46,6 +47,7 @@ pub use rm::rm;
 pub use search::search;
 pub use status::status;
 pub use tagger::tagger;
+pub use thaw_cmd::thaw;
 pub use write_index::write_index;
 
 pub(crate) use write_index::{check_outfile_writable, write_index_file};

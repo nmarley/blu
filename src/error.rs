@@ -83,6 +83,20 @@ pub enum BluError {
     #[error("S3 error: {0}")]
     S3Error(String),
 
+    /// Object is in an archive tier and must be restored before GET
+    #[error(
+        "object archived (restore required): {path}{}",
+        format_archived_detail(storage_class.as_deref(), access_tier.as_deref())
+    )]
+    ObjectArchived {
+        /// Relative backend path of the archived object
+        path: PathBuf,
+        /// S3 storage class, when known (e.g. `INTELLIGENT_TIERING`, `DEEP_ARCHIVE`)
+        storage_class: Option<String>,
+        /// Intelligent-Tiering access tier, when known (e.g. `DEEP_ARCHIVE_ACCESS`)
+        access_tier: Option<String>,
+    },
+
     // -------------------------------------------------------------------------
     // Index errors
     // -------------------------------------------------------------------------
@@ -176,6 +190,15 @@ pub enum BluError {
 
 /// Convenient type alias for Results using BluError.
 pub type Result<T> = std::result::Result<T, BluError>;
+
+fn format_archived_detail(storage_class: Option<&str>, access_tier: Option<&str>) -> String {
+    match (storage_class, access_tier) {
+        (Some(sc), Some(tier)) => format!(" (class={sc}, tier={tier})"),
+        (Some(sc), None) => format!(" (class={sc})"),
+        (None, Some(tier)) => format!(" (tier={tier})"),
+        (None, None) => String::new(),
+    }
+}
 
 // Convenience conversions from common error types
 
@@ -285,5 +308,15 @@ mod test {
             hash: "1340abc...".to_string(),
         };
         assert_eq!(err.to_string(), "file hash not found in index: 1340abc...");
+
+        let err = BluError::ObjectArchived {
+            path: PathBuf::from("d/dd4/blob"),
+            storage_class: Some("INTELLIGENT_TIERING".into()),
+            access_tier: Some("DEEP_ARCHIVE_ACCESS".into()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "object archived (restore required): d/dd4/blob (class=INTELLIGENT_TIERING, tier=DEEP_ARCHIVE_ACCESS)"
+        );
     }
 }

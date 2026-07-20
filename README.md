@@ -189,6 +189,31 @@ blu backend mirror --from default --to cold
 blu backend diff --from default --to cold
 ```
 
+### S3 Intelligent-Tiering (cold media vaults)
+
+Blob objects are uploaded as `INTELLIGENT_TIERING` with tag
+`blu-role=blob`. Indexes and keys stay `STANDARD` (`blu-role=catalog`).
+Apply a one-time bucket Intelligent-Tiering rule so blobs enter Deep
+Archive Access after 365 days of no access:
+
+```sh
+blu backend intelligent-tiering print > blu-it-config.json
+aws s3api put-bucket-intelligent-tiering-configuration \
+  --bucket my-bucket \
+  --id blu-blobs-deep-archive \
+  --intelligent-tiering-configuration file://blu-it-config.json
+```
+
+When blobs are in an archive tier, restore is async:
+
+```sh
+blu thaw --path 'photos/**'          # start RestoreObject
+blu thaw --status                    # poll progress
+blu restore --path 'photos/**' --thaw
+```
+
+See `docs/design/S3_COLD_STORAGE_DESIGN.md` for the full model.
+
 ## Security model
 
 | Layer | Mechanism |
@@ -218,14 +243,15 @@ blu backend diff --from default --to cold
 | `backup` | Index paths, encrypt, merge remote indexes, push |
 | `pull` | Merge remote catalog (default); `--force` resets to remote |
 | `status` | Working tree vs catalog vs remote |
-| `doctor` | Vault health diagnostics |
+| `doctor` | Vault health diagnostics (includes cold-storage checks) |
+| `thaw` | Initiate / status S3 archive restores for vault blobs |
+| `restore` | Materialize plaintext (`--thaw` / `--wait` for cold blobs) |
 | `ls` / `list-files` | List catalog entries |
 | `search` | Search filenames and tags |
-| `restore` | Materialize plaintext from catalog + blobs |
 | `rm` | Tombstone + cascade blobs; multi-device safe |
 | `defrag-blobs` | Repack partially-dead blobs; `--upgrade-format` for v2→v3 |
 | `tagger` | Add/remove tags |
-| `backend` | add / list / remove / set-default / rename / mirror / diff |
+| `backend` | add / list / remove / set-default / rename / mirror / diff / intelligent-tiering print |
 | `serve` | Localhost S3-compatible API |
 
 Global options: `--bludir <path>` (like `git -C`), `--no-passphrase`.

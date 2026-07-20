@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use glob::Pattern;
 use indicatif::{ProgressBar, ProgressStyle};
 use multihash::Multihash;
 use sha2::{Digest, Sha512};
@@ -19,8 +18,16 @@ use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, D
 use crate::error::BluError;
 use crate::format::human_bytes;
 use crate::hash::{self, Hash, SHA2_512};
-use crate::storage;
+use crate::storage::{self, RestoreTier};
+use crate::thaw::{
+    self, blocked_restore_error, classify_blobs, default_restore_options, format_cold_summary,
+    initiate_thaw, wait_until_readable, Selection,
+};
 use crate::v3format;
+
+const COLD_CLASSIFY_CONCURRENCY: usize = 16;
+const COLD_THAW_CONCURRENCY: usize = 8;
+const COLD_POLL_SECS: u64 = 30;
 
 /// Progress event sent from prefetch workers to the progress consumer.
 enum PrefetchEvent {
@@ -38,8 +45,12 @@ enum PrefetchEvent {
 pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
     info!("Started restore");
 
-    // Validate arguments
-    if args.file_hashes.is_empty() && args.path.is_none() && !args.all {
+    let selection = Selection {
+        all: args.all,
+        hash_prefixes: args.file_hashes.clone(),
+        path_glob: args.path.clone(),
+    };
+    if selection.is_empty() {
         return Err(BluError::Internal(
             "Must specify --file-hashes, --path, or --all".into(),
         ));
@@ -48,93 +59,96 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
     let (cfg, keys) = load_config_and_keys(&LoadOptions::default())?;
     let plain_index = cfg.load_plain_index(&keys)?;
     let blob_index = cfg.load_blob_index_or_default(&keys);
-    let files_map = plain_index.files_map_ref();
 
     let backend = match &args.backend {
         Some(name) => cfg.init_named_backend(name).await?,
         None => cfg.init_storage_backend().await?,
     };
 
-    // Build path pattern matcher if specified
-    let path_pattern = match args.path.as_ref() {
-        Some(p) => match Pattern::new(p) {
-            Ok(pat) => Some(pat),
-            Err(e) => {
-                warn!("Invalid glob pattern '{}': {}, treating as literal", p, e);
-                Some(Pattern::new(&glob::Pattern::escape(p)).map_err(|e| {
-                    BluError::Internal(format!("failed to escape glob pattern '{}': {}", p, e))
-                })?)
-            }
-        },
-        None => None,
-    };
-
-    // Collect files to restore
-    let mut unique_hashes: HashSet<Hash> = HashSet::new();
-
-    for (hash, fileref) in files_map.iter() {
-        let mut should_restore = false;
-
-        // Check if --all
-        if args.all {
-            should_restore = true;
-        }
-
-        // Check if hash matches any provided hash prefix
-        if !args.file_hashes.is_empty() {
-            let hash_str = hash.to_string();
-            for h in &args.file_hashes {
-                if hash_str.contains(h) {
-                    println!("Got a match on file hash: {}", hash.dbg_short(9));
-                    should_restore = true;
-                    break;
-                }
-            }
-        }
-
-        // Check if any path matches the pattern
-        if let Some(ref pattern) = path_pattern {
-            for path in &fileref.paths {
-                if pattern.matches_path(path) {
-                    println!("Got a match on path: {}", path.display());
-                    should_restore = true;
-                    break;
-                }
-            }
-        }
-
-        if should_restore {
-            unique_hashes.insert(hash.clone());
-        }
-    }
-
-    if unique_hashes.is_empty() {
+    let blob_set = thaw::plan_blob_set(&plain_index, &blob_index, &selection)?;
+    if blob_set.file_hashes.is_empty() {
         println!("No files matched the specified criteria");
         return Ok(());
     }
 
+    let unique_hashes: HashSet<Hash> = blob_set.file_hashes.iter().cloned().collect();
     println!("Found {} file(s) to restore", unique_hashes.len());
 
-    // Collect all unique blob paths needed for the restore
-    let mut needed_blob_paths: HashMap<Hash, PathBuf> = HashMap::new();
-
-    for file_hash in &unique_hashes {
-        let fileref = match plain_index.get_fileref_ref(file_hash) {
-            Some(fileref) => fileref,
-            None => continue,
-        };
-
-        for chunkmeta in &fileref.chunkmetas {
-            if !blob_index.has_chunk(&chunkmeta.hash) {
-                continue;
+    let do_thaw = args.thaw || args.wait;
+    if !blob_set.blob_paths.is_empty() {
+        let mut cold =
+            classify_blobs(&backend, &blob_set.blob_paths, COLD_CLASSIFY_CONCURRENCY).await?;
+        if cold.blocked_count() > 0 || !cold.errors.is_empty() || !cold.missing.is_empty() {
+            println!("Cold status: {}", format_cold_summary(&cold));
+        }
+        if !cold.errors.is_empty() {
+            return Err(BluError::StorageError(format!(
+                "{} blob stat error(s) before restore",
+                cold.errors.len()
+            )));
+        }
+        if !cold.missing.is_empty() {
+            return Err(BluError::StorageError(format!(
+                "{} blob(s) missing from backend",
+                cold.missing.len()
+            )));
+        }
+        if cold.blocked_count() > 0 {
+            if !do_thaw {
+                return Err(blocked_restore_error(&cold));
             }
-            if let Ok(location) = blob_index.get_block_location_ref(&chunkmeta.hash) {
-                let blob_hash = storage::hash_from_path(location.blob_path())?;
-                needed_blob_paths
-                    .entry(blob_hash)
-                    .or_insert_with(|| location.blob_path().clone());
+            let mut opts = default_restore_options();
+            if args.standard {
+                opts.tier = RestoreTier::Standard;
+            }
+            if !cold.archived.is_empty() {
+                println!(
+                    "Initiating thaw for {} archived blob(s)...",
+                    cold.archived.len()
+                );
+                let init = initiate_thaw(&backend, &cold, &opts, COLD_THAW_CONCURRENCY).await?;
+                if !init.failed.is_empty() {
+                    for (path, err) in &init.failed {
+                        eprintln!("  failed {}: {}", path.display(), err);
+                    }
+                    return Err(BluError::StorageError(format!(
+                        "{} blob restore request(s) failed",
+                        init.failed.len()
+                    )));
+                }
+                cold = classify_blobs(&backend, &blob_set.blob_paths, COLD_CLASSIFY_CONCURRENCY)
+                    .await?;
+            }
+            if cold.blocked_count() > 0 {
+                if !args.wait {
+                    return Err(blocked_restore_error(&cold));
+                }
+                println!(
+                    "Waiting for {} blob(s) to become readable...",
+                    cold.blocked_count()
+                );
+                let timeout = args
+                    .timeout_hours
+                    .map(|h| std::time::Duration::from_secs(h * 3600));
+                cold = wait_until_readable(
+                    &backend,
+                    &blob_set.blob_paths,
+                    COLD_CLASSIFY_CONCURRENCY,
+                    std::time::Duration::from_secs(COLD_POLL_SECS),
+                    timeout,
+                )
+                .await?;
+            }
+            if cold.blocked_count() > 0 {
+                return Err(blocked_restore_error(&cold));
             }
         }
+    }
+
+    let mut needed_blob_paths: HashMap<Hash, PathBuf> = HashMap::new();
+    for path in &blob_set.blob_paths {
+        let blob_hash = storage::hash_from_path(path)?;
+        needed_blob_paths.insert(blob_hash, path.clone());
     }
 
     let total_blobs = needed_blob_paths.len();

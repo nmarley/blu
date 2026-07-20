@@ -4,12 +4,17 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::cli::clapargs::{
-    BackendAddArgs, BackendArgs, BackendCommand, BackendDiffArgs, BackendListArgs,
-    BackendMirrorArgs, BackendRemoveArgs, BackendRenameArgs, BackendSetDefaultArgs,
+    BackendAddArgs, BackendArgs, BackendCommand, BackendDiffArgs, BackendItPrintArgs,
+    BackendListArgs, BackendMirrorArgs, BackendRemoveArgs, BackendRenameArgs,
+    BackendSetDefaultArgs, IntelligentTieringCommand,
 };
 use crate::config;
 use crate::config::backend::BackendConfig;
 use crate::error::BluError;
+use crate::storage::{
+    intelligent_tiering_apply_hint, intelligent_tiering_config_json, DEFAULT_DEEP_ARCHIVE_DAYS,
+    DEFAULT_IT_CONFIG_ID,
+};
 
 /// Dispatch backend subcommands.
 pub async fn backend(args: BackendArgs) -> Result<(), BluError> {
@@ -21,7 +26,66 @@ pub async fn backend(args: BackendArgs) -> Result<(), BluError> {
         BackendCommand::SetDefault(a) => set_default(a),
         BackendCommand::Mirror(a) => mirror(a).await,
         BackendCommand::Diff(a) => diff(a).await,
+        BackendCommand::IntelligentTiering(a) => match a.command {
+            IntelligentTieringCommand::Print(p) => intelligent_tiering_print(p),
+        },
     }
+}
+
+/// Print recommended Intelligent-Tiering archive configuration JSON.
+fn intelligent_tiering_print(args: BackendItPrintArgs) -> Result<(), BluError> {
+    let cfg = config::read_config(".")?;
+    let name = args
+        .backend
+        .as_deref()
+        .unwrap_or(cfg.default_backend.as_str());
+    let backend_cfg = cfg
+        .backends
+        .get(name)
+        .ok_or_else(|| BluError::InvalidConfig(format!("backend \"{}\" not found", name)))?;
+
+    let (bucket, prefix, region) = match backend_cfg {
+        BackendConfig::AmazonS3(s3) => (
+            Some(s3.bucket.as_str()),
+            args.prefix
+                .as_deref()
+                .or(s3.prefix.as_deref())
+                .map(|s| s.to_string()),
+            s3.region.clone(),
+        ),
+        BackendConfig::Local(_) => (None, args.prefix.clone(), None),
+    };
+
+    let id = args.id.as_deref().unwrap_or(DEFAULT_IT_CONFIG_ID);
+    let days = args.days.unwrap_or(DEFAULT_DEEP_ARCHIVE_DAYS);
+    let json = intelligent_tiering_config_json(id, prefix.as_deref(), days)?;
+    println!("{}", json);
+
+    eprintln!(
+        "# Filter: tag {}={} only (catalog objects stay STANDARD).",
+        crate::storage::TAG_ROLE_KEY,
+        crate::storage::TAG_ROLE_BLOB
+    );
+    eprintln!(
+        "# Deep Archive Access after {} day(s) of no access. Apply once per bucket;",
+        days
+    );
+    eprintln!("# blu does not apply this automatically.");
+    if let Some(bucket) = bucket {
+        eprintln!(
+            "# Example apply:\n#   {}",
+            intelligent_tiering_apply_hint(bucket, id, region.as_deref())
+        );
+        eprintln!("# (save stdout to blu-it-config.json first, or use process substitution)");
+    } else {
+        eprintln!(
+            "# Backend \"{}\" is local; point --backend at an S3 backend for a \
+             bucket-specific apply hint.",
+            name
+        );
+    }
+
+    Ok(())
 }
 
 /// Add a named storage backend to the config.

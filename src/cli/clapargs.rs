@@ -40,6 +40,8 @@ pub enum Action {
     EncryptFiles(EncryptFilesArgs),
     /// Materialize plaintext from the catalog and encrypted blobs
     Restore(RestoreArgs),
+    /// Initiate or report S3 archive restores for vault blobs
+    Thaw(ThawArgs),
     /// List catalog entries, optionally filtered
     ListFiles(ListFilesArgs),
     /// List catalog entries (alias for list-files)
@@ -194,6 +196,63 @@ pub struct RestoreArgs {
     pub to: Option<String>,
 
     /// Restore from a specific named backend instead of the default
+    #[arg(long)]
+    pub backend: Option<String>,
+
+    /// Initiate archive restore for cold blobs before reading
+    #[arg(long)]
+    pub thaw: bool,
+
+    /// Wait until cold blobs are readable (implies --thaw)
+    #[arg(long)]
+    pub wait: bool,
+
+    /// Use Standard restore tier instead of Bulk (with --thaw/--wait)
+    #[arg(long)]
+    pub standard: bool,
+
+    /// Max hours to wait when --wait is set
+    #[arg(long)]
+    pub timeout_hours: Option<u64>,
+}
+
+/// Initiate or report archive restores for content-addressed blobs.
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct ThawArgs {
+    /// Select files by hash prefix
+    #[arg(long)]
+    pub file_hashes: Vec<String>,
+
+    /// Select files matching path pattern (glob-style)
+    #[arg(long)]
+    pub path: Option<String>,
+
+    /// Select all catalog files
+    #[arg(long)]
+    pub all: bool,
+
+    /// Only report cold status; do not initiate RestoreObject
+    #[arg(long)]
+    pub status: bool,
+
+    /// Wait until selected blobs are readable
+    #[arg(long)]
+    pub wait: bool,
+
+    /// Use Standard restore tier instead of Bulk
+    #[arg(long)]
+    pub standard: bool,
+
+    /// Days for classic Glacier temporary copy (ignored for Intelligent-Tiering)
+    #[arg(long)]
+    pub days: Option<u32>,
+
+    /// Max hours to wait when --wait is set
+    #[arg(long)]
+    pub timeout_hours: Option<u64>,
+
+    /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,
 }
@@ -383,6 +442,43 @@ pub enum BackendCommand {
     Mirror(BackendMirrorArgs),
     /// Compare blob sets between two backends
     Diff(BackendDiffArgs),
+    /// S3 Intelligent-Tiering helpers (print recommended config)
+    #[command(name = "intelligent-tiering")]
+    IntelligentTiering(BackendIntelligentTieringArgs),
+}
+
+/// Intelligent-Tiering subcommands under `blu backend intelligent-tiering`
+#[derive(Debug, clap::Subcommand, Clone)]
+pub enum IntelligentTieringCommand {
+    /// Print recommended archive configuration JSON (operator applies it)
+    Print(BackendItPrintArgs),
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendIntelligentTieringArgs {
+    #[command(subcommand)]
+    pub command: IntelligentTieringCommand,
+}
+
+#[allow(missing_docs)]
+#[derive(Parser, Debug, Clone)]
+pub struct BackendItPrintArgs {
+    /// Named backend to read bucket/prefix/region from (default: vault default)
+    #[arg(long)]
+    pub backend: Option<String>,
+
+    /// Configuration id (default: blu-blobs-deep-archive)
+    #[arg(long)]
+    pub id: Option<String>,
+
+    /// Days of no access before Deep Archive Access (default: 365, min 180)
+    #[arg(long)]
+    pub days: Option<u32>,
+
+    /// Override S3 key prefix in the filter (default: backend prefix if S3)
+    #[arg(long)]
+    pub prefix: Option<String>,
 }
 
 #[allow(missing_docs)]
