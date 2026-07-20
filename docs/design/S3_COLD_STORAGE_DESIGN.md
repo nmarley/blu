@@ -177,6 +177,30 @@ Restored (back in Frequent) -> GET works; no-access clock resets
 Thaw **whole blob objects**. Dedup means one thaw can serve many files.
 v3 segmented range reads only work after the object is available again.
 
+### Restore preflight cost (measured)
+
+Every `restore` (and every `serve` GET) HEAD-probes the selected blobs
+before streaming, so an archived blob fails fast as `ObjectArchived`
+instead of surfacing as a truncated download mid-stream. The preflight
+is always on; the overhead was measured to confirm that is affordable.
+
+Client-side machinery is negligible. Measured 2026-07 on a local
+backend (release build, `classify_blobs` at 16-way concurrency):
+1,000 blobs in 3.5ms, 10,000 blobs in 44ms (~4us per blob).
+
+On S3 the cost is pure `HeadObject` latency. Wall time is
+approximately `ceil(N / 16) * per-HEAD RTT`, so a 10,000-blob probe
+adds roughly 6s at 10ms RTT, 16s at 25ms, or 31s at 50ms. Request
+fees are ~$0.0004 per 1,000 HEADs, about $0.004 per 10,000 probes.
+HEADs do not re-warm tiers or reset archive clocks.
+
+Decision: keep the preflight always on. Worst-case probe time on a
+vault-scale hot restore is tens of seconds, trivial next to the
+multi-GB transfer that follows, and the failure mode it prevents (a
+corrupted-looking partial restore) is far worse. Live-S3 RTT
+confirmation will be recorded alongside the live `RestoreObject`
+verification results.
+
 ### CLI UX
 
 Integrate with existing restore; do not invent a second storage product.
