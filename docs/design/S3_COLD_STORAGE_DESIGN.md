@@ -101,14 +101,15 @@ one-shot helper that prints JSON):
 1. Intelligent-Tiering configuration with filter on the `blobs/`
    prefix (scoped by the vault prefix when set) AND tag `blu-role=blob`
 2. Deep Archive Access after **365** consecutive days of no access
-3. Archive Access tier optional (document; not required for v1 minimum)
+3. Archive Access tier optional via `--archive-days` (not required for
+   the minimum setup)
 4. Do not re-apply this configuration from every `blu backup`
 
 Emit the configuration JSON with:
 
 ```sh
 blu backend intelligent-tiering print
-# optional: --backend NAME --days 365 --id blu-blobs-deep-archive
+# optional: --backend NAME --days 365 --archive-days 180 --id blu-blobs-deep-archive
 ```
 
 Applying it remains operator-owned (console, Terraform, or `aws s3api`).
@@ -199,7 +200,23 @@ vault-scale hot restore is tens of seconds, trivial next to the
 multi-GB transfer that follows, and the failure mode it prevents (a
 corrupted-looking partial restore) is far worse. Live-S3 RTT
 confirmation will be recorded alongside the live `RestoreObject`
-verification results.
+verification results below.
+
+### Live S3 verification
+
+The `RestoreObject` request shapes are covered by ignored live tests
+against a real bucket (`src/storage/s3.rs`):
+
+- `s3_restore_request_shape_it_live`: put an `INTELLIGENT_TIERING`
+  object and confirm the tier-only restore request (no days) maps the
+  already-active response to `Ok` (runs in seconds)
+- `s3_restore_glacier_bulk_live`: real Bulk restore of a
+  `GLACIER`-class object to completion, then GET (multi-hour;
+  `BLU_TEST_RESTORE_TIMEOUT_HOURS` bounds the wait)
+
+Both require `BLU_TEST_S3_BUCKET`, `BLU_TEST_S3_PREFIX`, and
+`AWS_REGION`; see the runbook in the test comments. Operator run
+outcomes are appended here as they land.
 
 ### CLI UX
 
@@ -223,6 +240,10 @@ Semantics:
   again; further access keeps it warm and resets the 365-day clock
 - Status and doctor prefer `HeadObject` so scans do not re-warm or reset
   archive timers
+- `--wait` polling backs off exponentially between classification
+  passes (30s doubling to a 5min cap)
+- Bare `blu thaw --status` refuses to HEAD more than 5,000 indexed
+  blobs; larger indexes need `--all --status` or a narrowed selection
 
 ### Config (optional S3 backend fields)
 
@@ -242,15 +263,22 @@ sensible restore days if required by the API.
 ### `blu serve`
 
 Map archived backend reads to a clear client error. Never block an HTTP
-GET for hours waiting on Deep Archive Access.
+GET for hours waiting on Deep Archive Access. The GET preflight HEADs
+the file's unique blobs with an 8-way concurrency cap and maps the
+first blocked blob to `InvalidObjectState` with a thaw hint.
 
 ### `blu doctor`
 
-Cold-storage checks (when implemented):
+Shipped cold-storage checks:
 
-- Indexes and keys are STANDARD and immediately readable
-- Sample or scan blob archive status without using GET
-- Summarize archived / restoring / hot blob counts where practical
+- `catalog-hot`: indexes and keys are STANDARD and instantly readable
+- `blob-cold-status`: samples up to 64 indexed blobs (deterministic
+  stride across the keyspace, reported as sampled) and summarizes
+  available / archived / restoring counts; `blu thaw --status` runs
+  the full scan on demand
+- `bucket-it-config`: the bucket has an enabled Intelligent-Tiering
+  configuration with Deep Archive Access (warn-only when IAM denies
+  `s3:GetIntelligentTieringConfiguration`)
 
 ## Cost and ops invariants
 
@@ -298,5 +326,5 @@ Order of work (each unit one reviewable commit):
 - Catalog/key put class: `STANDARD`
 - Object tags: `blu-role=blob` | `blu-role=catalog`
 - Deep Archive Access: **365** consecutive days of no access
-- Archive Access tier: optional; document, not required for v1 minimum
+- Archive Access tier: optional via `--archive-days` on the print helper
 - Restore tier default: Bulk (document Standard for faster restores)

@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- S3 Intelligent-Tiering cold storage for vault blobs: blobs upload as
+  `INTELLIGENT_TIERING` tagged `blu-role=blob`; catalog and keys stay
+  `STANDARD` tagged `blu-role=catalog`
+- `blu thaw` initiates and reports archive restores for a catalog
+  selection (`--path`, `--file-hashes`, `--all`); `--wait` polls with
+  exponential backoff (30s doubling to a 5min cap)
+- `blu restore` cold handling: fails fast with a thaw hint on archived
+  blobs; `--thaw` initiates restores; `--wait` blocks until readable
+- `blu doctor` cold checks: `catalog-hot` (indexes/keys instantly
+  readable), `blob-cold-status` (deterministic 64-blob sample),
+  `bucket-it-config` (Deep Archive configuration present on the bucket)
+- `blu backend intelligent-tiering print` emits the operator-applied
+  bucket archive configuration; `--archive-days` adds an optional
+  Archive Access tier before Deep Archive Access
+- `blu serve` maps archived blob reads to S3 `InvalidObjectState` with
+  a thaw hint; the GET preflight probes a file's blobs in parallel
+- Backend `stat_object` / `restore_object` APIs and typed
+  `BluError::ObjectArchived`
+- Design doc `docs/design/S3_COLD_STORAGE_DESIGN.md`
+
+### Changed
+
+- **Breaking:** blobs move under the `blobs/` backend prefix
+  (`blobs/d/dd4/...`); existing vaults must be recreated
+- Bare `blu thaw --status` refuses full-index scans above 5,000 blobs;
+  use `--all --status` or narrow the selection
+
 ## [0.7.6] - 2026-07-11
 
 ### Fixed
