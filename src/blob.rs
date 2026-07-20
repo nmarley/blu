@@ -6,6 +6,9 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
+
 use crate::block::DEFAULT_CHUNK_SIZE;
 use crate::compression::{compress, compress_with_progress, decompress};
 use crate::dek_provider::{
@@ -43,14 +46,51 @@ const DEFAULT_BLOB_CAPACITY_BYTES: usize = DEFAULT_CHUNK_SIZE << 7;
 // backend::AzureBlob
 // backend::GCS
 
+/// Telemetry from [`BlobBuffer`] seal/upload work.
+///
+/// Facts only: no ciphertext or key material. Callers map these into UI
+/// events. Delivery is best-effort via `try_send`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlobBufferEvent {
+    /// A blob was sealed and handed to a background put.
+    Sealed {
+        /// Short content id for display.
+        short_id: String,
+        /// Encrypted blob size in bytes.
+        bytes: u64,
+    },
+    /// A background put completed successfully.
+    Uploaded {
+        /// Short content id for display.
+        short_id: String,
+        /// Encrypted blob size in bytes.
+        bytes: u64,
+    },
+    /// A background put failed.
+    UploadFailed {
+        /// Short content id for display.
+        short_id: String,
+        /// Display error message.
+        error: String,
+    },
+}
+
+/// Outcome of one background blob put (joined from the inflight set).
+struct UploadOutcome {
+    short_id: String,
+    bytes: u64,
+    result: Result<PathBuf, BluError>,
+}
+
 /// BlobBuffer writes blob files, re-indexes and re-orgs in case of many blocks
 /// (or unused blocks), etc.
 ///
 /// Blob uploads are pipelined: when the buffer fills up, the blob is
 /// compressed, encrypted, and handed off to a background upload task.
 /// The buffer resets immediately so the next blob can start filling
-/// while the previous one is still uploading. All in-flight uploads
-/// are awaited in [`BlobBuffer::finalize`].
+/// while the previous one is still uploading. Completions are polled
+/// during [`BlobBuffer::add_chunk`] so backend failures surface early;
+/// the tail is drained in [`BlobBuffer::finalize`].
 // #[derive(Debug)]
 pub struct BlobBuffer {
     storage_backend: BackendKind,
@@ -65,7 +105,10 @@ pub struct BlobBuffer {
     positions: HashMap<Hash, BlobBlockLocation>,
 
     // in-flight upload tasks
-    inflight: Vec<tokio::task::JoinHandle<Result<PathBuf, BluError>>>,
+    inflight: JoinSet<UploadOutcome>,
+
+    // optional telemetry (CLI progress); never carries secrets
+    events: Option<mpsc::Sender<BlobBufferEvent>>,
 }
 
 impl BlobBuffer {
@@ -73,6 +116,7 @@ impl BlobBuffer {
     pub fn new(backend: &BackendKind, keys: DekProvider) -> Self {
         Self::with_capacity(backend, keys, DEFAULT_BLOB_CAPACITY_BYTES)
     }
+
     /// Create a new BlobBuffer with a specified capacity
     pub fn with_capacity(backend: &BackendKind, keys: DekProvider, capacity: usize) -> Self {
         Self {
@@ -82,8 +126,17 @@ impl BlobBuffer {
             blob_capacity: capacity,
             offset: 0,
             positions: HashMap::new(),
-            inflight: Vec::new(),
+            inflight: JoinSet::new(),
+            events: None,
         }
+    }
+
+    /// Attach a telemetry channel for seal/upload events.
+    ///
+    /// Replaces any previously attached sender. Events are delivered with
+    /// `try_send` and may be dropped if the consumer is slow.
+    pub fn set_event_sender(&mut self, tx: mpsc::Sender<BlobBufferEvent>) {
+        self.events = Some(tx);
     }
 
     /// Write a block of data to the blob buffer. If the buffer is full, it will be flushed to disk
@@ -95,6 +148,9 @@ impl BlobBuffer {
         chunk: &mut [u8],
         idx: &mut BlobIndex,
     ) -> Result<(), BluError> {
+        // Surface completed (or failed) puts before doing more work.
+        self.poll_completed()?;
+
         let chunk_hash = Hash::from(hash::multihash(chunk).to_bytes());
         let mut chunk_copy = chunk.to_vec();
         self.data.append(&mut chunk_copy);
@@ -116,6 +172,8 @@ impl BlobBuffer {
         if self.is_full() {
             let path = self.seal_and_upload(idx)?;
             debug!("Sealed blob for upload at {:?}!", path);
+            // A just-spawned put may already be done on a fast local backend.
+            self.poll_completed()?;
             return Ok(());
         }
 
@@ -130,10 +188,8 @@ impl BlobBuffer {
             self.seal_and_upload(idx)?;
         }
 
-        // Await all in-flight uploads
-        let handles = std::mem::take(&mut self.inflight);
-        for handle in handles {
-            handle.await??;
+        while let Some(joined) = self.inflight.join_next().await {
+            self.handle_joined(joined)?;
         }
 
         Ok(())
@@ -164,6 +220,8 @@ impl BlobBuffer {
 
         let blob_hash = Hash::from(hash::multihash(&encrypted).to_bytes());
         let path = storage::path_for(&blob_hash)?;
+        let short_id = blob_hash.dbg_short(7);
+        let encrypted_bytes = encrypted.len() as u64;
 
         // Update the index immediately (path is deterministic). Record
         // each chunk's compressed-end offset so the v3 reader can
@@ -179,13 +237,62 @@ impl BlobBuffer {
         }
         self.reset();
 
+        self.emit(BlobBufferEvent::Sealed {
+            short_id: short_id.clone(),
+            bytes: encrypted_bytes,
+        });
+
         // Spawn the upload in the background. BluError is Send + Sync,
         // so no stringification workaround is needed.
         let backend = self.storage_backend.clone();
-        let handle = tokio::spawn(async move { backend.write_data(&blob_hash, &encrypted).await });
-        self.inflight.push(handle);
+        self.inflight.spawn(async move {
+            let result = backend.write_data(&blob_hash, &encrypted).await;
+            UploadOutcome {
+                short_id,
+                bytes: encrypted_bytes,
+                result,
+            }
+        });
 
         Ok(path)
+    }
+
+    /// Drain any uploads that have already finished without awaiting.
+    fn poll_completed(&mut self) -> Result<(), BluError> {
+        while let Some(joined) = self.inflight.try_join_next() {
+            self.handle_joined(joined)?;
+        }
+        Ok(())
+    }
+
+    fn handle_joined(
+        &mut self,
+        joined: Result<UploadOutcome, tokio::task::JoinError>,
+    ) -> Result<(), BluError> {
+        let outcome = joined
+            .map_err(|e| BluError::Internal(format!("blob upload task failed to join: {}", e)))?;
+        match outcome.result {
+            Ok(_) => {
+                self.emit(BlobBufferEvent::Uploaded {
+                    short_id: outcome.short_id,
+                    bytes: outcome.bytes,
+                });
+                Ok(())
+            }
+            Err(e) => {
+                self.emit(BlobBufferEvent::UploadFailed {
+                    short_id: outcome.short_id,
+                    error: e.to_string(),
+                });
+                Err(e)
+            }
+        }
+    }
+
+    fn emit(&self, event: BlobBufferEvent) {
+        if let Some(tx) = &self.events {
+            let _ = tx.try_send(event);
+        }
     }
 
     fn is_full(&self) -> bool {
@@ -755,6 +862,100 @@ mod test {
         }
         assert_eq!(blob_index.count_blob_files(), 4);
         assert_eq!(blob_index.count_chunks_indexed(), 4);
+    }
+
+    #[tokio::test]
+    async fn emits_seal_and_upload_events() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(datadir.path()));
+        let keys = test_keys();
+        let mut idx = BlobIndex::new();
+        let mut buf = BlobBuffer::with_capacity(&backend, keys, 3);
+        let (tx, mut rx) = mpsc::channel(16);
+        buf.set_event_sender(tx);
+
+        let mut chunks = [
+            vec![0x01, 0x02],
+            vec![0x03, 0x04],
+            vec![0x05, 0x06],
+            vec![0x07, 0x08],
+        ];
+        for chunk in chunks.iter_mut() {
+            buf.add_chunk(chunk, &mut idx).await.unwrap();
+        }
+        buf.finalize(&mut idx).await.unwrap();
+        drop(buf);
+
+        let mut sealed = 0u32;
+        let mut uploaded = 0u32;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                BlobBufferEvent::Sealed { short_id, bytes } => {
+                    assert!(!short_id.is_empty());
+                    assert!(bytes > 0);
+                    sealed += 1;
+                }
+                BlobBufferEvent::Uploaded { short_id, bytes } => {
+                    assert!(!short_id.is_empty());
+                    assert!(bytes > 0);
+                    uploaded += 1;
+                }
+                BlobBufferEvent::UploadFailed { .. } => {
+                    panic!("unexpected upload failure on local backend")
+                }
+            }
+        }
+        // capacity 3 with 2-byte chunks => a seal every chunk after the first fill
+        assert!(sealed >= 1);
+        assert_eq!(sealed, uploaded);
+    }
+
+    #[tokio::test]
+    async fn upload_failure_propagates_and_emits() {
+        // Point the backend at a regular file so create_dir_all under it fails.
+        let tmp = tempdir().unwrap();
+        let bad_root = tmp.path().join("not-a-dir");
+        std::fs::write(&bad_root, b"nope").unwrap();
+        let backend = BackendKind::Local(Local::new(&bad_root));
+        let keys = test_keys();
+        let mut idx = BlobIndex::new();
+        let mut buf = BlobBuffer::with_capacity(&backend, keys, 2);
+        let (tx, mut rx) = mpsc::channel(16);
+        buf.set_event_sender(tx);
+
+        let mut chunk = vec![0xaa, 0xbb, 0xcc];
+        // First add may only seal; failure surfaces on poll/finalize.
+        let first = buf.add_chunk(&mut chunk, &mut idx).await;
+        let second = if first.is_ok() {
+            let mut chunk2 = vec![0xdd, 0xee];
+            buf.add_chunk(&mut chunk2, &mut idx).await
+        } else {
+            first
+        };
+        let result = if second.is_ok() {
+            buf.finalize(&mut idx).await
+        } else {
+            second
+        };
+        assert!(result.is_err(), "expected upload failure, got {:?}", result);
+
+        let mut saw_sealed = false;
+        let mut saw_failed = false;
+        while let Ok(ev) = rx.try_recv() {
+            match ev {
+                BlobBufferEvent::Sealed { .. } => saw_sealed = true,
+                BlobBufferEvent::UploadFailed { short_id, error } => {
+                    assert!(!short_id.is_empty());
+                    assert!(!error.is_empty());
+                    saw_failed = true;
+                }
+                BlobBufferEvent::Uploaded { .. } => {
+                    panic!("upload should not succeed against a file path root")
+                }
+            }
+        }
+        assert!(saw_sealed);
+        assert!(saw_failed);
     }
 
     #[tokio::test]

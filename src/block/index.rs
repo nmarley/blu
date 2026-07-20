@@ -22,6 +22,23 @@ pub const INDEX_FILENAME: &str = "index.dat";
 /// Current plain-index schema version written by blu.
 pub const CURRENT_INDEX_VERSION: &str = "0.2.1";
 
+/// Reporter for plain-index hashing progress.
+///
+/// Domain code calls these hooks while walking and chunking files. Default
+/// methods are no-ops so existing callers can pass [`()`].
+pub trait IndexReporter {
+    /// A file is about to be hashed. `len` is the on-disk size in bytes.
+    fn on_file_start(&mut self, _path: &Path, _len: u64) {}
+
+    /// `n` additional plaintext bytes were read/hashed from the current file.
+    fn on_file_bytes(&mut self, _n: u64) {}
+
+    /// Finished hashing `path` (success path only).
+    fn on_file_end(&mut self, _path: &Path) {}
+}
+
+impl IndexReporter for () {}
+
 /// PlainIndex is the index format used by blu. It contains two maps, one for files and one for
 /// blocks. The files map is keyed by the hash of the file's contents, and the blocks map is keyed
 /// by the hash of the block's contents.
@@ -70,11 +87,24 @@ impl PlainIndex {
         path: P,
         chunk_size: Option<usize>,
     ) -> Result<(), BluError> {
+        self.add_with_reporter(path, chunk_size, &mut ())
+    }
+
+    /// Like [`Self::add`], but reports per-file and per-byte hashing progress.
+    pub fn add_with_reporter<P, R>(
+        &mut self,
+        path: P,
+        chunk_size: Option<usize>,
+        reporter: &mut R,
+    ) -> Result<(), BluError>
+    where
+        P: AsRef<Path>,
+        R: IndexReporter,
+    {
         let chunk_size = match chunk_size {
             Some(cs) => cs,
             None => DEFAULT_CHUNK_SIZE,
         };
-        // info!("In add, path={:?}", path.as_ref());
 
         // filter all '.blu' files + dirs
         if path.as_ref().starts_with(".blu/") || path.as_ref().starts_with("./.blu/") {
@@ -84,11 +114,11 @@ impl PlainIndex {
         match path.as_ref() {
             p if p.is_file() => {
                 // Explicit single-file paths override .bluignore (git-style).
-                self.hash_and_add_file(p, chunk_size)?;
+                self.hash_and_add_file(p, chunk_size, reporter)?;
             }
             p if p.is_dir() => {
                 for entry in walk_files(p) {
-                    self.hash_and_add_file(&entry, chunk_size)?;
+                    self.hash_and_add_file(&entry, chunk_size, reporter)?;
                 }
             }
             p => {
@@ -102,18 +132,29 @@ impl PlainIndex {
 
     /// Lower-level internal method to hash a file and add to the file and
     /// block indexes.
-    fn hash_and_add_file<P: AsRef<Path>>(
+    fn hash_and_add_file<P, R>(
         &mut self,
         path: P,
         chunk_size: usize,
-    ) -> Result<(), BluError> {
+        reporter: &mut R,
+    ) -> Result<(), BluError>
+    where
+        P: AsRef<Path>,
+        R: IndexReporter,
+    {
+        let path_ref = path.as_ref();
+        let file_len = std::fs::metadata(path_ref).map(|m| m.len()).unwrap_or(0);
+        reporter.on_file_start(path_ref, file_len);
+
         // chunking, full file hashing
         let mut chunkmetas: Vec<ChunkMeta> = vec![];
         let mut hasher = StreamingHash::new();
-        let chunker = Chunkerator::new(path.as_ref(), chunk_size)?;
+        let chunker = Chunkerator::new(path_ref, chunk_size)?;
         for chunk in chunker {
+            let n = chunk.len() as u64;
             chunkmetas.push(ChunkMeta::new(&chunk));
             hasher.update(&chunk);
+            reporter.on_file_bytes(n);
         }
         let file_hash = hasher.finalize();
 
@@ -132,9 +173,9 @@ impl PlainIndex {
         }
 
         // normalize paths by removing `./` prefix
-        let mut path = path.as_ref().to_path_buf();
-        if path.starts_with("./") {
-            path = path.strip_prefix("./")?.to_path_buf();
+        let mut stored_path = path_ref.to_path_buf();
+        if stored_path.starts_with("./") {
+            stored_path = stored_path.strip_prefix("./")?.to_path_buf();
         }
 
         // add path to this hash in file index
@@ -142,13 +183,14 @@ impl PlainIndex {
             .entry(file_hash.clone())
             .or_insert_with(|| FileRef::new(chunkmetas))
             .paths
-            .insert(path);
+            .insert(stored_path);
 
         // Re-add clears any tombstone and records the add time for LWW merge.
         self.deleted_files.remove(&file_hash);
         self.file_times.insert(file_hash, unix_now());
         self.updated_at = now();
 
+        reporter.on_file_end(path_ref);
         Ok(())
     }
 
@@ -429,7 +471,7 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod test {
     use std::collections::{HashMap, HashSet};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{BlockRef, ChunkMeta, FileRef, PlainIndex, Position};
     use crate::hash::Hash;
@@ -944,5 +986,45 @@ mod test {
 
         assert_eq!(filerefs, []);
         assert_eq!(blockrefs, []);
+    }
+
+    #[derive(Default)]
+    struct CollectingReporter {
+        starts: Vec<(PathBuf, u64)>,
+        bytes: u64,
+        ends: Vec<PathBuf>,
+    }
+
+    impl super::IndexReporter for CollectingReporter {
+        fn on_file_start(&mut self, path: &Path, len: u64) {
+            self.starts.push((path.to_path_buf(), len));
+        }
+
+        fn on_file_bytes(&mut self, n: u64) {
+            self.bytes += n;
+        }
+
+        fn on_file_end(&mut self, path: &Path) {
+            self.ends.push(path.to_path_buf());
+        }
+    }
+
+    #[test]
+    fn add_with_reporter_observes_files_and_bytes() {
+        let mut index = PlainIndex::new_empty();
+        let mut reporter = CollectingReporter::default();
+        index
+            .add_with_reporter(TEST_BLOCKS_DIR_T6, Some(4096), &mut reporter)
+            .unwrap();
+
+        assert_eq!(reporter.starts.len(), 1);
+        assert_eq!(reporter.ends.len(), 1);
+        assert_eq!(reporter.starts[0].0, reporter.ends[0]);
+        assert!(reporter.starts[0]
+            .0
+            .ends_with(Path::new("test/blocks/t6/hi.txt")));
+        assert_eq!(reporter.starts[0].1, 14);
+        assert_eq!(reporter.bytes, 14);
+        assert_eq!(index.files_map_ref().len(), 1);
     }
 }

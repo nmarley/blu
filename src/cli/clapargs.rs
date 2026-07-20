@@ -149,6 +149,10 @@ pub struct BackupArgs {
     /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,
+
+    /// Suppress progress bars
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
 }
 
 #[allow(missing_docs)]
