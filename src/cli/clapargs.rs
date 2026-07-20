@@ -599,6 +599,10 @@ pub struct IdentityInitArgs {
     /// Overwrite an existing identity
     #[arg(long)]
     pub force: bool,
+
+    /// Skip confirmation prompts; unset passphrases default to none (for scripts)
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[allow(missing_docs)]

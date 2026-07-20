@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::biometric;
 use crate::cli::clapargs::{IdentityArgs, IdentityCommand, IdentityInitArgs, IdentityRecoverArgs};
+use crate::cli::passphrase;
 use crate::error::BluError;
 use crate::keys;
 use crate::keys::mnemonic;
@@ -80,13 +81,24 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), BluError> {
     // Generate mnemonic
     let m = mnemonic::generate_mnemonic()?;
 
-    // Ask for optional mnemonic passphrase ("25th word")
-    let mnemonic_pass = prompt_optional_passphrase(
-        "Enter mnemonic passphrase (optional \"25th word\", press Enter to skip): ",
-    )?;
+    // Ask for optional mnemonic passphrase ("25th word"):
+    // BLU_MNEMONIC_PASSPHRASE first, then the --yes default (none),
+    // then an interactive prompt.
+    let env_mnemonic = passphrase::mnemonic_passphrase_from_env();
+    let prompted;
+    let mnemonic_pass: &str = if let Some(p) = &env_mnemonic {
+        p.as_str()
+    } else if args.yes {
+        ""
+    } else {
+        prompted = prompt_optional_passphrase(
+            "Enter mnemonic passphrase (optional \"25th word\", press Enter to skip): ",
+        )?;
+        prompted.as_str()
+    };
 
     // Derive keys from BIP39 seed
-    let seed = mnemonic::mnemonic_to_seed(&m, &mnemonic_pass);
+    let seed = mnemonic::mnemonic_to_seed(&m, mnemonic_pass);
     let pq_seed = mnemonic::derive_pq_seed(&seed)?;
     let pq_recipient = mnemonic::derive_pq_recipient(&seed)?;
     let pq_public_key = pq_recipient.to_string();
@@ -116,19 +128,21 @@ fn identity_init(args: IdentityInitArgs) -> Result<(), BluError> {
     }
     println!();
 
-    // Confirm user has written them down
-    eprint!("Have you written down your mnemonic? Type 'yes' to continue: ");
-    io::stderr().flush()?;
-    let mut confirm = String::new();
-    io::stdin().lock().read_line(&mut confirm)?;
-    if confirm.trim().to_lowercase() != "yes" {
-        return Err(BluError::Internal(
-            "aborted (mnemonic not confirmed)".into(),
-        ));
+    // Confirm user has written them down (--yes skips this for scripts)
+    if !args.yes {
+        eprint!("Have you written down your mnemonic? Type 'yes' to continue: ");
+        io::stderr().flush()?;
+        let mut confirm = String::new();
+        io::stdin().lock().read_line(&mut confirm)?;
+        if confirm.trim().to_lowercase() != "yes" {
+            return Err(BluError::Internal(
+                "aborted (mnemonic not confirmed)".into(),
+            ));
+        }
     }
 
     // Save PQ seed to identity file
-    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase)?;
+    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase, args.yes)?;
 
     // Set up biometric unlock if available
     let biometric_ok = setup_biometric_if_available(&seed);
@@ -166,18 +180,26 @@ fn identity_recover(args: IdentityRecoverArgs) -> Result<(), BluError> {
 
     let m = mnemonic::parse_mnemonic(words)?;
 
-    // Ask for optional mnemonic passphrase
-    let mnemonic_pass =
-        prompt_optional_passphrase("Enter mnemonic passphrase (press Enter if none): ")?;
+    // Ask for optional mnemonic passphrase: BLU_MNEMONIC_PASSPHRASE
+    // first, then an interactive prompt.
+    let env_mnemonic = passphrase::mnemonic_passphrase_from_env();
+    let prompted;
+    let mnemonic_pass: &str = if let Some(p) = &env_mnemonic {
+        p.as_str()
+    } else {
+        prompted = prompt_optional_passphrase("Enter mnemonic passphrase (press Enter if none): ")?;
+        prompted.as_str()
+    };
 
     // Derive keys from BIP39 seed
-    let seed = mnemonic::mnemonic_to_seed(&m, &mnemonic_pass);
+    let seed = mnemonic::mnemonic_to_seed(&m, mnemonic_pass);
     let pq_seed = mnemonic::derive_pq_seed(&seed)?;
     let pq_recipient = mnemonic::derive_pq_recipient(&seed)?;
     let pq_public_key = pq_recipient.to_string();
 
-    // Save PQ seed to identity file
-    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase)?;
+    // Save PQ seed to identity file (no --yes on recover: prompting
+    // for the encryption passphrase is still the interactive default)
+    save_pq_seed_file(&pq_seed, &age_path, args.no_passphrase, false)?;
 
     // Set up biometric unlock if available
     let biometric_ok = setup_biometric_if_available(&seed);
@@ -227,23 +249,34 @@ fn identity_show() -> Result<(), BluError> {
 }
 
 /// Save the PQ seed to the identity file (optionally passphrase-encrypted).
+///
+/// Encryption passphrase precedence: --no-passphrase (no encryption),
+/// then BLU_PASSPHRASE, then --yes (no encryption), then a confirmed
+/// interactive prompt.
 fn save_pq_seed_file(
     seed: &keys::hybrid_kem::HybridSeed,
     age_path: &PathBuf,
     no_passphrase: bool,
+    yes: bool,
 ) -> Result<(), BluError> {
-    let passphrase = if no_passphrase {
+    let env_pass = passphrase::passphrase_from_env();
+    let prompted;
+    let passphrase: Option<&str> = if no_passphrase {
+        None
+    } else if let Some(p) = &env_pass {
+        Some(p.as_str())
+    } else if yes {
         None
     } else {
-        let p = keys::prompt_passphrase("Enter passphrase to encrypt identity file: ", true)?;
-        if p.is_empty() {
+        prompted = keys::prompt_passphrase("Enter passphrase to encrypt identity file: ", true)?;
+        if prompted.is_empty() {
             None
         } else {
-            Some(p)
+            Some(prompted.as_str())
         }
     };
 
-    keys::save_pq_seed(seed, age_path, passphrase.as_deref())?;
+    keys::save_pq_seed(seed, age_path, passphrase)?;
     Ok(())
 }
 
