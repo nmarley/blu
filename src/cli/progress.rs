@@ -2,11 +2,6 @@
 //!
 //! Domain code emits [`BackupEvent`] values through a [`BackupProgress`] sink.
 //! Only a UI consumer task (or the null sink) should touch `indicatif`.
-//!
-//! Helpers here are `pub(crate)` for the backup orchestrator. Allow dead_code
-//! so the protocol can land ahead of the command wiring without false alarms.
-
-#![allow(dead_code)]
 
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal};
@@ -40,14 +35,6 @@ pub(crate) fn bar_style() -> ProgressStyle {
         .template("{prefix:.bold} {bar:40.cyan/blue} {percent:>3}% [{elapsed_precise}] {msg}")
         .expect("valid progress bar template")
         .progress_chars("=>-")
-}
-
-/// Countable bar style used by restore/mirror-style single bars.
-#[allow(dead_code)] // reserved for shared callers beyond backup
-pub(crate) fn count_bar_style() -> ProgressStyle {
-    ProgressStyle::default_bar()
-        .template("{bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-        .expect("valid progress bar template")
 }
 
 /// Style for the phase line (spinner with message).
@@ -314,7 +301,6 @@ pub(crate) struct ProgressUi {
     overall: ProgressBar,
     phase: ProgressBar,
     active: ActiveSlotPool,
-    enabled: bool,
 }
 
 impl ProgressUi {
@@ -350,13 +336,7 @@ impl ProgressUi {
             overall,
             phase,
             active,
-            enabled,
         }
-    }
-
-    /// Whether this UI will paint to the terminal.
-    pub(crate) fn is_enabled(&self) -> bool {
-        self.enabled
     }
 
     /// Set the overall byte denominator (0 is allowed and shows an unbounded bar).
@@ -372,13 +352,6 @@ impl ProgressUi {
     /// Replace the overall completed-byte counter.
     pub(crate) fn set_position_bytes(&self, pos: u64) {
         self.overall.set_position(pos);
-    }
-
-    /// Advance the overall completed-byte counter.
-    pub(crate) fn inc_bytes(&self, delta: u64) {
-        if delta > 0 {
-            self.overall.inc(delta);
-        }
     }
 
     /// Update the overall trailing message (rates, human totals, etc.).
@@ -742,9 +715,8 @@ mod tests {
     #[test]
     fn progress_ui_hidden_when_quiet() {
         let ui = ProgressUi::new(true);
-        assert!(!ui.is_enabled());
         ui.set_total_bytes(100);
-        ui.inc_bytes(40);
+        ui.set_position_bytes(40);
         ui.set_phase(BackupPhase::Index, "scanning");
         ui.finish();
     }
