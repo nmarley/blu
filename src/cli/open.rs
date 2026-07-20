@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use age::Identity;
 
 use crate::cli::clapargs::OpenArgs;
+use crate::cli::passphrase;
 use crate::cli::{global_identity_age_path, load_global_identity};
 use crate::config::{self, backend::BackendConfig, EncryptionConfig};
 use crate::error::BluError;
@@ -176,9 +177,14 @@ fn load_pq_identity_for_open(no_passphrase: bool) -> Result<crate::keys::pq::PqI
         match keys::load_pq_seed(&age_path, None) {
             Ok(s) => s,
             Err(BluError::PassphraseRequired) => {
-                let pass =
-                    keys::prompt_passphrase("Enter passphrase for global identity: ", false)?;
-                keys::load_pq_seed(&age_path, Some(&pass))?
+                // Environment before prompt; a wrong value fails rather than prompting
+                if let Some(pass) = passphrase::passphrase_from_env() {
+                    keys::load_pq_seed(&age_path, Some(&pass))?
+                } else {
+                    let pass =
+                        keys::prompt_passphrase("Enter passphrase for global identity: ", false)?;
+                    keys::load_pq_seed(&age_path, Some(&pass))?
+                }
             }
             Err(e) => return Err(e),
         }

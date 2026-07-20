@@ -214,6 +214,38 @@ blu restore --path 'photos/**' --thaw
 
 See `docs/design/S3_COLD_STORAGE_DESIGN.md` for the full model.
 
+## Automation (scripts and CI)
+
+Every passphrase entry point can come from the environment, so the whole
+pipeline (identity, init, backup, restore, doctor) runs headless. The
+interactive TTY prompt stays the default; env vars are the documented
+automation path, following restic (`RESTIC_PASSWORD`) and borg
+(`BORG_PASSPHRASE`).
+
+| Variable | Used for |
+|----------|----------|
+| `BLU_PASSPHRASE` | Passphrase for the encrypted global identity file: agent unlock paths, and identity-file encryption at `identity init` / `identity recover` |
+| `BLU_MNEMONIC_PASSPHRASE` | Optional BIP39 "25th word" at `identity init` / `identity recover` |
+| `BLU_NO_BIOMETRIC` | When present (any value), skip Touch ID setup during `identity init` / `identity recover` |
+
+`blu identity init --yes` skips the "type yes" mnemonic confirmation;
+prompts with no env value take their defaults (no 25th word, no
+identity-file encryption).
+
+Precedence on unlock paths: an already-unlocked agent wins, then
+`BLU_PASSPHRASE`, then the TTY prompt. `--no-passphrase` still overrides
+everything with an empty passphrase. A wrong env value fails with the
+underlying error instead of falling through to a prompt, so scripts never
+hang. An explicitly empty env value is a valid empty passphrase.
+
+There is no `--passphrase <value>` argument: command-line arguments leak
+via `ps` and shell history. Env vars are visible to processes running as
+the same user; that tradeoff is documented, not hidden.
+
+`scripts/e2e-passphrase-smoke.sh` exercises the whole flow headless
+(sandboxed XDG dirs, content diff) and is a useful reference for wiring
+your own automation.
+
 ## Security model
 
 | Layer | Mechanism |
