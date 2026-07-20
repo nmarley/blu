@@ -4,6 +4,8 @@ pub mod clapargs;
 pub mod helpers;
 /// unified CLI output structs for all CLI modules
 pub mod output;
+/// env-var passphrase resolution for headless automation
+pub mod passphrase;
 
 mod agent_cmd;
 mod backend_cmd;
