@@ -305,9 +305,9 @@ mod test {
         );
 
         let err = BluError::FileHashNotFound {
-            hash: "1340abc...".to_string(),
+            hash: "1e20abc...".to_string(),
         };
-        assert_eq!(err.to_string(), "file hash not found in index: 1340abc...");
+        assert_eq!(err.to_string(), "file hash not found in index: 1e20abc...");
 
         let err = BluError::ObjectArchived {
             path: PathBuf::from("d/dd4/blob"),

@@ -5,8 +5,6 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use indicatif::{ProgressBar, ProgressStyle};
-use multihash::Multihash;
-use sha2::{Digest, Sha512};
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::blob::BlobBlockLocation;
@@ -17,7 +15,7 @@ use crate::compression::decompress;
 use crate::dek_provider::{decrypt_envelope, decrypt_envelope_segmented_prefix, DekProvider};
 use crate::error::BluError;
 use crate::format::human_bytes;
-use crate::hash::{self, Hash, SHA2_512};
+use crate::hash::{self, Hash, StreamingHash};
 use crate::storage::{self, RestoreTier};
 use crate::thaw::{
     self, blocked_restore_error, classify_blobs, default_poll_backoff, default_restore_options,
@@ -286,7 +284,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
         let started = Instant::now();
         let mut offset = 0u64;
         let total_chunks = fileref.chunkmetas.len();
-        let mut file_hasher = Sha512::new();
+        let mut file_hasher = StreamingHash::new();
 
         let write_result: Result<(), BluError> = (|| {
             for (i, chunkmeta) in fileref.chunkmetas.iter().enumerate() {
@@ -322,9 +320,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
                 )));
             }
 
-            let file_mh: Multihash<64> = Multihash::wrap(SHA2_512, &file_hasher.finalize())
-                .map_err(|e| BluError::Internal(format!("file multihash wrap: {}", e)))?;
-            let actual = Hash::from(file_mh.to_bytes());
+            let actual = file_hasher.finalize();
             if actual != file_hash {
                 return Err(BluError::Internal(format!(
                     "file hash mismatch: expected {}, got {}",
@@ -681,8 +677,8 @@ mod test {
 
     #[test]
     fn get_cached_bytes_rejects_out_of_bounds_slice() {
-        let hash_hex = "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6";
-        let blob_path = PathBuf::from(format!("d/dd4/dd4ce/{hash_hex}"));
+        let hash_hex = "1e2063d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011";
+        let blob_path = PathBuf::from(format!("6/63d/63d7f/{hash_hex}"));
         let blob_hash = storage::hash_from_path(&blob_path).unwrap();
         let mut cache = HashMap::new();
         cache.insert(blob_hash, vec![0u8; 8]);

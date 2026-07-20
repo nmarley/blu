@@ -1,18 +1,18 @@
 use multihash::Multihash;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha512};
 
 // See:
 // https://github.com/multiformats/multicodec/blob/master/table.csv
-pub(crate) const SHA2_512: u64 = 0x13;
+pub(crate) const BLAKE3_256: u64 = 0x1e;
 
-/// Returns a multihash of the given data. Currently uses the sha-512 hash.
+/// Returns a Blake3-256 multihash of the given data.
 ///
-/// This is a bad design and should be more flexible in the hash to be used.
+/// Content addressing uses Blake3-256 by design; the algorithm is fixed
+/// and not configurable.
 pub fn multihash(data: &[u8]) -> Multihash<64> {
-    let digest_bytes = sha512(data);
+    let digest = blake3::hash(data);
 
-    Multihash::wrap(SHA2_512, &digest_bytes).unwrap()
+    Multihash::wrap(BLAKE3_256, digest.as_bytes()).unwrap()
 }
 
 /// Hash is a Vec<u8> type alias with syntactic sugar to allow easier debugging
@@ -81,14 +81,8 @@ impl Hash {
     }
 }
 
-pub(crate) fn sha512(data: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha512::new();
-    hasher.update(data);
-    hasher.finalize().to_vec()
-}
-
-/// Incremental SHA-512 multihash for streaming data that does not fit
-/// comfortably in memory.
+/// Incremental Blake3-256 multihash for streaming data that does not
+/// fit comfortably in memory.
 ///
 /// Feed data via [`StreamingHash::update`] as it arrives (over HTTP,
 /// from a temp file, etc.), then call [`StreamingHash::finalize`] to
@@ -96,14 +90,14 @@ pub(crate) fn sha512(data: &[u8]) -> Vec<u8> {
 /// concatenated bytes. Used by the `blu serve` streaming PUT path so
 /// the whole-file hash is computed without buffering the entire body.
 pub struct StreamingHash {
-    hasher: Sha512,
+    hasher: blake3::Hasher,
 }
 
 impl StreamingHash {
     /// Create a new empty incremental hasher.
     pub fn new() -> Self {
         Self {
-            hasher: Sha512::new(),
+            hasher: blake3::Hasher::new(),
         }
     }
 
@@ -117,15 +111,15 @@ impl StreamingHash {
     /// concatenated input.
     pub fn finalize(self) -> Hash {
         let digest = self.hasher.finalize();
-        let mh: Multihash<64> = Multihash::wrap(SHA2_512, &digest).unwrap();
+        let mh: Multihash<64> = Multihash::wrap(BLAKE3_256, digest.as_bytes()).unwrap();
         Hash::from(mh.to_bytes())
     }
 
-    /// Finalize the hash and return the raw SHA-512 digest without
-    /// the multihash envelope. Used where the caller needs the raw
-    /// digest (e.g., part ETags in multipart upload).
+    /// Finalize the hash and return the raw 32-byte Blake3-256 digest
+    /// without the multihash envelope. Used where the caller needs the
+    /// raw digest (e.g., part ETags in multipart upload).
     pub fn finalize_raw(self) -> Vec<u8> {
-        self.hasher.finalize().to_vec()
+        self.hasher.finalize().as_bytes().to_vec()
     }
 }
 

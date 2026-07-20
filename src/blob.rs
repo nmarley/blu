@@ -769,25 +769,31 @@ mod test {
 
         // Verify each chunk has the correct position in the blob
         let loc1 = idx
-            .get_block_location_ref(&Hash::from("1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76"))
+            .get_block_location_ref(&Hash::from(
+                "1e20f318b25054669ac121aa0f51da7fae3415bc46ec1f80b6ccf7c60d1aaa62ea02",
+            ))
             .unwrap();
         assert_eq!(loc1.position, Position { offset: 0, size: 3 });
 
         let loc2 = idx
-            .get_block_location_ref(&Hash::from("13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f"))
+            .get_block_location_ref(&Hash::from(
+                "1e2053147f3ce49ed4f60dfa5b9654c36ba6103c11f5737df3dabd4cbd296c4161bd",
+            ))
             .unwrap();
         assert_eq!(loc2.position, Position { offset: 3, size: 4 });
 
         let loc3 = idx
-            .get_block_location_ref(&Hash::from("13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c"))
+            .get_block_location_ref(&Hash::from(
+                "1e20093a9fd3db12e9d43834ee8a9d553ca06994b9bfabc9d2ec98a89b74de8101c1",
+            ))
             .unwrap();
         assert_eq!(loc3.position, Position { offset: 7, size: 8 });
     }
 
     // Chunk hashes for the three test chunks (used in delete tests)
-    const CHUNK1: &str = "1340e94518b58bcd5e29a8f6251fbc457c580691c8f9d3e3a17dc404d2e5dc86fa98ac857b8ba9366d6023da1196f89729e760e13fee78c10993c181ecee4211be76";
-    const CHUNK2: &str = "13401284b2d521535196f22175d5f558104220a6ad7680e78b49fa6f20e57ea7b185d71ec1edb137e70eba528dedb141f5d2f8bb53149d262932b27cf41fed96aa7f";
-    const CHUNK3: &str = "13401332e5814224318ddcb3db935b3a7af1f97073b50033be1bc729302028e906f4cb12a652eefe76d7d4f2e8d6bf1671b331f76dc93546e9faa395892fe28d241c";
+    const CHUNK1: &str = "1e20f318b25054669ac121aa0f51da7fae3415bc46ec1f80b6ccf7c60d1aaa62ea02";
+    const CHUNK2: &str = "1e2053147f3ce49ed4f60dfa5b9654c36ba6103c11f5737df3dabd4cbd296c4161bd";
+    const CHUNK3: &str = "1e20093a9fd3db12e9d43834ee8a9d553ca06994b9bfabc9d2ec98a89b74de8101c1";
 
     #[tokio::test]
     async fn delete_partial_keeps_blob_alive() {
@@ -888,7 +894,7 @@ mod test {
     #[tokio::test]
     async fn delete_nonexistent_chunk_errors() {
         let idx = BlobIndex::new();
-        let fake = Hash::from("1340deadbeef");
+        let fake = Hash::from("1e20deadbeef");
         let result = idx.clone().delete_chunk(&fake);
         assert!(result.is_err());
     }

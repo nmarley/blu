@@ -350,8 +350,8 @@ mod test {
     #[test]
     fn group_no_delimiter_all_contents() {
         let entries = vec![
-            ("a/b.txt".to_string(), Hash::from("1340aaaa")),
-            ("c.txt".to_string(), Hash::from("1340bbbb")),
+            ("a/b.txt".to_string(), Hash::from("1e20aaaa")),
+            ("c.txt".to_string(), Hash::from("1e20bbbb")),
         ];
         let (contents, prefixes, cursor) = group_by_delimiter(&entries, "", None);
         assert_eq!(contents.len(), 2);
@@ -362,10 +362,10 @@ mod test {
     #[test]
     fn group_with_delimiter() {
         let entries = vec![
-            ("docs/a.txt".to_string(), Hash::from("1340aaaa")),
-            ("docs/b.txt".to_string(), Hash::from("1340bbbb")),
-            ("photos/c.jpg".to_string(), Hash::from("1340cccc")),
-            ("readme.md".to_string(), Hash::from("1340dddd")),
+            ("docs/a.txt".to_string(), Hash::from("1e20aaaa")),
+            ("docs/b.txt".to_string(), Hash::from("1e20bbbb")),
+            ("photos/c.jpg".to_string(), Hash::from("1e20cccc")),
+            ("readme.md".to_string(), Hash::from("1e20dddd")),
         ];
         let (contents, prefixes, cursor) = group_by_delimiter(&entries, "", Some("/"));
 
@@ -385,9 +385,9 @@ mod test {
     #[test]
     fn group_with_delimiter_and_prefix() {
         let entries = vec![
-            ("docs/api/intro.md".to_string(), Hash::from("1340aaaa")),
-            ("docs/api/v2.md".to_string(), Hash::from("1340bbbb")),
-            ("docs/changelog.txt".to_string(), Hash::from("1340cccc")),
+            ("docs/api/intro.md".to_string(), Hash::from("1e20aaaa")),
+            ("docs/api/v2.md".to_string(), Hash::from("1e20bbbb")),
+            ("docs/changelog.txt".to_string(), Hash::from("1e20cccc")),
         ];
         let (contents, prefixes, _cursor) = group_by_delimiter(&entries, "docs/", Some("/"));
 
@@ -404,8 +404,8 @@ mod test {
     #[test]
     fn group_cursor_skips_common_prefix() {
         let entries = vec![
-            ("docs/api/a.md".to_string(), Hash::from("1340aaaa")),
-            ("docs/api/b.md".to_string(), Hash::from("1340bbbb")),
+            ("docs/api/a.md".to_string(), Hash::from("1e20aaaa")),
+            ("docs/api/b.md".to_string(), Hash::from("1e20bbbb")),
         ];
         let (_contents, _prefixes, cursor) = group_by_delimiter(&entries, "docs/", Some("/"));
 
@@ -478,14 +478,14 @@ mod test {
 
         let mut plain = PlainIndex::new_empty();
         let chunk = ChunkMeta {
-            hash: Hash::from("1340aaaa"),
+            hash: Hash::from("1e20aaaa"),
             size: 4096,
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk],
             paths: HashSet::from([PathBuf::from("docs/readme.txt")]),
         };
-        let file_hash = Hash::from("1340bbbb");
+        let file_hash = Hash::from("1e20bbbb");
         plain.files.insert(file_hash.clone(), fileref);
         store
             .populate_from_indexes(&plain, &BlobIndex::default(), &TagIndex::new())

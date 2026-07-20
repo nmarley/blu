@@ -48,33 +48,46 @@ mod test {
     fn read_blocks() {
         let file1_path = Path::new(TEST_BLOCKS_DIR_T1).join("file1.txt");
         let chunk_metas1 = read_from_disk(file1_path, 4096).unwrap();
-        assert_eq!(chunk_metas1, vec![
-            ChunkMeta {
-                hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
-                size: 4096,
-            },
-            ChunkMeta {
-                hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
-                size: 4096,
-            },
-            ChunkMeta {
-                hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
-                size: 4096,
-            },
-            ChunkMeta {
-                hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
-                size: 4096,
-            },
-        ]);
+        assert_eq!(
+            chunk_metas1,
+            vec![
+                ChunkMeta {
+                    hash: Hash::from(
+                        "1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"
+                    ),
+                    size: 4096,
+                },
+                ChunkMeta {
+                    hash: Hash::from(
+                        "1e206106a79494135bbf061a6e13606ae548d8d4bf62b315e115ddb3f3fac5f97f88"
+                    ),
+                    size: 4096,
+                },
+                ChunkMeta {
+                    hash: Hash::from(
+                        "1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"
+                    ),
+                    size: 4096,
+                },
+                ChunkMeta {
+                    hash: Hash::from(
+                        "1e208bf6ac4335cff17909161e20b6762031de37802d8e0e6f380b87e2b001ad9f7d"
+                    ),
+                    size: 4096,
+                },
+            ]
+        );
 
         let file2_path = Path::new(TEST_BLOCKS_DIR_T1).join("file2.txt");
         let chunk_metas2 = read_from_disk(file2_path, 4096).unwrap();
-        assert_eq!(chunk_metas2, vec![
-                ChunkMeta {
-                    hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
-                    size: 4096,
-                },
-            ],
+        assert_eq!(
+            chunk_metas2,
+            vec![ChunkMeta {
+                hash: Hash::from(
+                    "1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"
+                ),
+                size: 4096,
+            },],
         );
 
         let file3_path = Path::new(TEST_BLOCKS_DIR_T1).join("file3.txt");
@@ -86,11 +99,11 @@ mod test {
     fn helper_files_map() -> HashMap<Hash, FileRef> {
         HashMap::from([
             (
-                Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                Hash::from("1e206e65b63b80ff0206f36149096359cb3fb337bc215de82710c5c117f43afcfa39"),
                 FileRef {
                     chunkmetas: vec![
                         ChunkMeta {
-                            hash: Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                            hash: Hash::from("1e206e65b63b80ff0206f36149096359cb3fb337bc215de82710c5c117f43afcfa39"),
                             size: 1024,
                         },
                     ],
@@ -98,23 +111,23 @@ mod test {
                 },
             ),
             (
-                Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                Hash::from("1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887"),
                 FileRef {
                     chunkmetas: vec![
                         ChunkMeta {
-                            hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                            hash: Hash::from("1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"),
                             size: 4096,
                         },
                         ChunkMeta {
-                            hash: Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                            hash: Hash::from("1e206106a79494135bbf061a6e13606ae548d8d4bf62b315e115ddb3f3fac5f97f88"),
                             size: 4096,
                         },
                         ChunkMeta {
-                            hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                            hash: Hash::from("1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"),
                             size: 4096,
                         },
                         ChunkMeta {
-                            hash: Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                            hash: Hash::from("1e208bf6ac4335cff17909161e20b6762031de37802d8e0e6f380b87e2b001ad9f7d"),
                             size: 4096,
                         },
                     ],
@@ -122,11 +135,11 @@ mod test {
                 },
             ),
             (
-                Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                Hash::from("1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"),
                 FileRef {
                         chunkmetas: vec![
                             ChunkMeta {
-                               hash: Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                               hash: Hash::from("1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"),
                                size: 4096,
                             },
                         ],
@@ -134,11 +147,11 @@ mod test {
                 },
             ),
             (
-                Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                Hash::from("1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"),
                 FileRef {
                         chunkmetas: vec![
                             ChunkMeta {
-                               hash: Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                               hash: Hash::from("1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"),
                                size: 4096,
                             },
                         ],
@@ -154,11 +167,11 @@ mod test {
     fn helper_blocks_map() -> HashMap<Hash, BlockRef> {
         HashMap::from([
             (
-                Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                Hash::from("1e206e65b63b80ff0206f36149096359cb3fb337bc215de82710c5c117f43afcfa39"),
                 BlockRef {
                     references: HashMap::from([
                         (
-                            Hash::from("1340e41807487745dceea0d9f154d8470519ba3ea9e94b1524afd3e4ace63e66ad803d1504b6f2cccc33fb3fe7d981b0eaef30a7010f2a2a1df12c40e9f1cc67e9dd"),
+                            Hash::from("1e206e65b63b80ff0206f36149096359cb3fb337bc215de82710c5c117f43afcfa39"),
                             Position {
                                 offset: 0,
                                 size: 1024,
@@ -168,11 +181,11 @@ mod test {
                 }
             ),
             (
-                Hash::from("134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5"),
+                Hash::from("1e206106a79494135bbf061a6e13606ae548d8d4bf62b315e115ddb3f3fac5f97f88"),
                 BlockRef {
                     references: HashMap::from([
                         (
-                            Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            Hash::from("1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887"),
                             Position {
                                 offset: 4096,
                                 size: 4096,
@@ -182,18 +195,18 @@ mod test {
                 },
             ),
             (
-                Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                Hash::from("1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"),
                 BlockRef {
                     references: HashMap::from([
                         (
-                            Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            Hash::from("1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887"),
                             Position {
                                 offset: 0,
                                 size: 4096,
                             },
                         ),
                         (
-                            Hash::from("1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726"),
+                            Hash::from("1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354"),
                             Position {
                                 offset: 0,
                                 size: 4096,
@@ -203,11 +216,11 @@ mod test {
                 },
             ),
             (
-                Hash::from("1340854c0357e05ac2c579e0fac9e2f1be10e6f2e8e678bb0005592a60251d885ceda96764e3b75af33e53e204dc868a036c63354a6a402699e9b613a31a9c5b5549"),
+                Hash::from("1e208bf6ac4335cff17909161e20b6762031de37802d8e0e6f380b87e2b001ad9f7d"),
                 BlockRef {
                     references: HashMap::from([
                         (
-                            Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            Hash::from("1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887"),
                             Position {
                                 offset: 12288,
                                 size: 4096,
@@ -217,18 +230,18 @@ mod test {
                 },
             ),
             (
-                Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                Hash::from("1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"),
                 BlockRef {
                     references: HashMap::from([
                         (
-                            Hash::from("13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0"),
+                            Hash::from("1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887"),
                             Position {
                                 offset: 8192,
                                 size: 4096,
                             },
                         ),
                         (
-                            Hash::from("13406145743977536da9120fa85aa5e7a3af3463ed47711450684c32da5992a7ae9de9744b5baf0115b359b8d035f10005402f3bf809d10c6aedbdc2942e0ff6c829"),
+                            Hash::from("1e20749ec9c777ebae8b48e8ee2ecc795d0804cecbbcf97ecd8197841946e7a55eba"),
                             Position {
                                 offset: 0,
                                 size: 4096,
