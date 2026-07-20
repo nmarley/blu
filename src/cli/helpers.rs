@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::agent::AgentClient;
+use crate::cli::passphrase;
 use crate::config::{self, Config};
 use crate::dek_provider::DekProvider;
 use crate::error::{BluError, Result};
@@ -68,7 +69,8 @@ pub fn load_config_and_keys(opts: &LoadOptions<'_>) -> Result<(Config, DekProvid
 /// 2. If --no-passphrase is set, try unlocking with an empty
 ///    passphrase only and never prompt.
 /// 3. Otherwise, connect to the agent (auto-starting if needed),
-///    check if already unlocked, prompt and unlock if locked.
+///    check if already unlocked, try BLU_PASSPHRASE, and prompt
+///    interactively only as a last resort.
 pub fn load_keys_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result<DekProvider> {
     if !cfg.has_encryption() {
         return Err(BluError::NoKeyConfigured);
@@ -90,7 +92,8 @@ pub fn load_keys_from_config(cfg: &Config, opts: &LoadOptions<'_>) -> Result<Dek
 /// Try to get a DekProvider through the agent daemon.
 ///
 /// Connects to the agent (auto-starting if needed), checks status,
-/// prompts for passphrase if locked, and returns an agent-backed DekProvider.
+/// tries BLU_PASSPHRASE before prompting if locked, and returns an
+/// agent-backed DekProvider.
 fn try_agent_keys(cfg: &Config) -> Result<DekProvider> {
     let client = AgentClient::new()?;
     client.ensure_running()?;
@@ -110,6 +113,12 @@ fn try_agent_keys(cfg: &Config) -> Result<DekProvider> {
             // Key is passphrase-protected, need to prompt
         }
         Err(e) => return Err(e),
+    }
+
+    // Then the environment; a wrong value here fails rather than prompting
+    if let Some(pass) = passphrase::passphrase_from_env() {
+        client.unlock(&pass)?;
+        return Ok(DekProvider::Agent { client, kek_dir });
     }
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;

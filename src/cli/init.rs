@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::agent::AgentClient;
 use crate::block::PlainIndex;
 use crate::cli::clapargs::InitArgs;
+use crate::cli::passphrase;
 use crate::cli::{
     check_outfile_writable, global_identity_age_path, load_global_identity, write_index_file,
 };
@@ -183,7 +184,7 @@ fn try_agent_public_key() -> Option<String> {
 }
 
 /// Load the global PQ identity file, trying without passphrase
-/// first, then prompting if needed.
+/// first, then BLU_PASSPHRASE, then prompting if needed.
 fn load_global_identity_pq_seed(
     path: &std::path::Path,
     args: &InitArgs,
@@ -197,6 +198,11 @@ fn load_global_identity_pq_seed(
         Ok(id) => return Ok(id),
         Err(BluError::PassphraseRequired) => {}
         Err(e) => return Err(e),
+    }
+
+    // Then the environment; a wrong value here fails rather than prompting
+    if let Some(pass) = passphrase::passphrase_from_env() {
+        return keys::load_pq_seed(path, Some(&pass));
     }
 
     // Prompt for passphrase to decrypt global identity

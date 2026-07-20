@@ -3,6 +3,7 @@
 use crate::agent::biometric;
 use crate::agent::AgentClient;
 use crate::cli::clapargs::{AgentArgs, AgentCommand};
+use crate::cli::passphrase;
 use crate::error::BluError;
 use crate::keys;
 use crate::keys::mnemonic;
@@ -76,6 +77,13 @@ fn unlock_with_passphrase(client: &AgentClient) -> Result<(), BluError> {
             // Key is passphrase-protected
         }
         Err(e) => return Err(e),
+    }
+
+    // Then the environment; a wrong value here fails rather than prompting
+    if let Some(pass) = passphrase::passphrase_from_env() {
+        let pubkey = client.unlock(&pass)?;
+        println!("unlocked ({})", pubkey);
+        return Ok(());
     }
 
     let pass = keys::prompt_passphrase("Enter passphrase: ", false)?;
