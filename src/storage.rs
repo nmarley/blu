@@ -335,11 +335,11 @@ mod test {
         };
     }
 
-    // DATADIR / blobs / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+    // DATADIR / blobs / 6 / 63d / 63d7f / 63d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011
     test_path_for!(
-        path_for_sha2_512,
-        "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6",
-        "blobs/d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+        path_for_blake3_256,
+        "1e2063d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011",
+        "blobs/6/63d/63d7f/63d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011"
     );
     test_path_for!(
         path_for_sha2_256,

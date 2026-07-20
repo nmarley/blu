@@ -948,12 +948,9 @@ mod test {
     use crate::io::Position;
 
     // Reuse the well-known test hashes from block/index tests.
-    const HASH_A: &str =
-        "1340518b2b49cb74c652eabb2269d823032c46d9ad431b7996ee842b4e295e8da50c1500070b86919140e5eedf317abe8d5bfb11a8362bcd0c864cb975d1cee1c726";
-    const HASH_B: &str =
-        "134089e75f89ca624a073a1b3648303a4abd77fd49325110aa08d683ea0a03de6f949650bbf74f33597f5dcc54c57aaeb47cd143452a320f06c69829c54dc7d9dbb5";
-    const HASH_FILE1: &str =
-        "13407055ad6a09e40a17ede4d01b91d3fdb9b598f6a0c6543f5089cae5165ed8a2be38a8cbeb583e0982871431163317073742842518a987c0b35a7c9b3dfe44b9d0";
+    const HASH_A: &str = "1e2096327aafb1bea0248a1c5f68b02750f868fcf92e3b2255931f3de99703188354";
+    const HASH_B: &str = "1e206106a79494135bbf061a6e13606ae548d8d4bf62b315e115ddb3f3fac5f97f88";
+    const HASH_FILE1: &str = "1e20ba3a13d579f962c37f18a8f51080b0e768cb6459934e0f3f279e9f18ab86a887";
 
     fn test_plain_index() -> PlainIndex {
         let chunk_a = ChunkMeta {
@@ -1065,7 +1062,7 @@ mod test {
         assert_eq!(fileref2.paths.len(), 2);
 
         assert!(store
-            .get_fileref(&Hash::from("1340deadbeef"))
+            .get_fileref(&Hash::from("1e20deadbeef"))
             .unwrap()
             .is_none());
 
@@ -1090,7 +1087,7 @@ mod test {
         assert_eq!(loc2.compressed_end, Some(8000));
 
         assert!(store
-            .get_blob_location(&Hash::from("1340deadbeef"))
+            .get_blob_location(&Hash::from("1e20deadbeef"))
             .unwrap()
             .is_none());
 
@@ -1177,7 +1174,7 @@ mod test {
         ];
 
         let dummy_chunk = ChunkMeta {
-            hash: Hash::from("1340aaaa"),
+            hash: Hash::from("1e20aaaa"),
             size: 100,
         };
 
@@ -1186,7 +1183,7 @@ mod test {
                 chunkmetas: vec![dummy_chunk.clone()],
                 paths: HashSet::from([PathBuf::from(path)]),
             };
-            let file_hash = Hash::from(format!("1340{:030x}", i).as_str());
+            let file_hash = Hash::from(format!("1e20{:030x}", i).as_str());
             plain.files.insert(file_hash, fileref);
         }
 
@@ -1510,10 +1507,10 @@ mod test {
         let store = RedbStore::open(&tmp.path().join("unlink.redb")).unwrap();
 
         // Distinct hashes for the scenario.
-        let chunk_x = Hash::from("13401111"); // old-only chunk
-        let chunk_z = Hash::from("13402222"); // new chunk
-        let old_file = Hash::from("13403333");
-        let new_file = Hash::from("13404444");
+        let chunk_x = Hash::from("1e201111"); // old-only chunk
+        let chunk_z = Hash::from("1e202222"); // new chunk
+        let old_file = Hash::from("1e203333");
+        let new_file = Hash::from("1e204444");
 
         let blob_x = PathBuf::from("x/xx/xxxx");
         let blob_z = PathBuf::from("z/zz/zzzz");
@@ -1619,10 +1616,10 @@ mod test {
         let tmp = tempfile::tempdir().unwrap();
         let store = RedbStore::open(&tmp.path().join("unlink_keep.redb")).unwrap();
 
-        let chunk_x = Hash::from("13401111");
-        let chunk_z = Hash::from("13402222");
-        let old_file = Hash::from("13403333");
-        let new_file = Hash::from("13404444");
+        let chunk_x = Hash::from("1e201111");
+        let chunk_z = Hash::from("1e202222");
+        let old_file = Hash::from("1e203333");
+        let new_file = Hash::from("1e204444");
 
         let blob_x = PathBuf::from("x/xx/xxxx");
         let blob_z = PathBuf::from("z/zz/zzzz");

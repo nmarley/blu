@@ -1709,7 +1709,7 @@ mod test {
 
         let mut plain = PlainIndex::new_empty();
         let dummy_chunk = ChunkMeta {
-            hash: Hash::from("1340aaaa"),
+            hash: Hash::from("1e20aaaa"),
             size: 4096,
         };
 
@@ -1718,7 +1718,7 @@ mod test {
                 chunkmetas: vec![dummy_chunk.clone()],
                 paths: HashSet::from([PathBuf::from(path)]),
             };
-            let file_hash = Hash::from(format!("1340{:028x}", i).as_str());
+            let file_hash = Hash::from(format!("1e20{:028x}", i).as_str());
             plain.files.insert(file_hash.clone(), fileref);
         }
 

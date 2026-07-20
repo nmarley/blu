@@ -87,12 +87,30 @@ mod test {
     #[test]
     fn test_search() {
         let pairs = vec![
-            ("test/blocks/t4/article1_lu.txt", Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b")),
-            ("test/blocks/t4/doc-COPY.pdf", Hash::from("1340a682f8186d97501ae75d9e5349afc7ec1a47c9f1065ef438b9c27c754f179dd3bdb284b57136b8adbf4590c262c852996a2c68c024630e0318b9eb608c80c30c")),
-            ("test/blocks/t4/doc.pdf", Hash::from("1340a682f8186d97501ae75d9e5349afc7ec1a47c9f1065ef438b9c27c754f179dd3bdb284b57136b8adbf4590c262c852996a2c68c024630e0318b9eb608c80c30c")),
-            ("test/blocks/t4/article1_en.txt", Hash::from("1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6")),
-            ("test/blocks/t4/article1_de.txt", Hash::from("134036b571f30cddf16459ae40eee97f8c26c5dba21aa1664671eef904f1f02c62c6822ed71878f582e620dc00bc55112ace133a90d51b458209cc7ae61fc279eb69")),
-            ("test/blocks/t4/article1_fr.txt", Hash::from("1340ff5c624b6ee1d0ac5f62cd4b810e27520b5ed81df05a62990df8d19d4d7fe341a3d27d51b9fdc571fb02aaffc08f7ee9c9016e8f3e1807a8e12923a8cff87853")),
+            (
+                "test/blocks/t4/article1_lu.txt",
+                Hash::from("1e200c9b0a15a9e13f5de7d62f0c338aaf2bc22235fd32bf1ba8be2db026ccc46b24"),
+            ),
+            (
+                "test/blocks/t4/doc-COPY.pdf",
+                Hash::from("1e203cdcf9931fc90beb9fc2136f054179cc2346fcc2d6e67ea405027670c00618f7"),
+            ),
+            (
+                "test/blocks/t4/doc.pdf",
+                Hash::from("1e203cdcf9931fc90beb9fc2136f054179cc2346fcc2d6e67ea405027670c00618f7"),
+            ),
+            (
+                "test/blocks/t4/article1_en.txt",
+                Hash::from("1e2063d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011"),
+            ),
+            (
+                "test/blocks/t4/article1_de.txt",
+                Hash::from("1e203e815acb974cf227739ab663fe335950cf82c13bf7315e97cc4b5d54e00ff17b"),
+            ),
+            (
+                "test/blocks/t4/article1_fr.txt",
+                Hash::from("1e208f446be756e70410240a0c8fd38cc6e826f281668e38376924ed387cadaee5ae"),
+            ),
         ];
 
         let mut idx = FilenameSearchIndex::new();
@@ -101,9 +119,9 @@ mod test {
         }
 
         let res = idx.search("test/blocks/t4/article1_lu.txt");
-        let expected = HashSet::from([
-            Hash::from("13406fa591deec7fda88c97db59ee1bdbebe7d3057bb86b607b4971399a8938127ca3a39ceae6fed7b85d6a1e121ae65745a363da622e4b64ea66ff2acf250af6e6b"),
-        ]);
+        let expected = HashSet::from([Hash::from(
+            "1e200c9b0a15a9e13f5de7d62f0c338aaf2bc22235fd32bf1ba8be2db026ccc46b24",
+        )]);
         assert_eq!(res, expected);
 
         let res = idx.search("test/blocks/t4/doc-COPY2.pdf");
@@ -111,9 +129,9 @@ mod test {
         assert_eq!(res, expected);
 
         let res = idx.search("test/blocks/t4/article1_fr.txt");
-        let expected = HashSet::from([
-            Hash::from("1340ff5c624b6ee1d0ac5f62cd4b810e27520b5ed81df05a62990df8d19d4d7fe341a3d27d51b9fdc571fb02aaffc08f7ee9c9016e8f3e1807a8e12923a8cff87853"),
-        ]);
+        let expected = HashSet::from([Hash::from(
+            "1e208f446be756e70410240a0c8fd38cc6e826f281668e38376924ed387cadaee5ae",
+        )]);
         assert_eq!(res, expected);
     }
 }

@@ -1620,7 +1620,7 @@ pub(crate) mod test {
 
         let mut tags = TagIndex::new();
         let file_hash = crate::hash::Hash::from(
-            "1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "1e20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         );
         tags.add_tag(&file_hash, "local-only");
         cfg.write_tag_index(&tags, &keys).unwrap();

@@ -677,8 +677,8 @@ mod test {
 
     #[test]
     fn get_cached_bytes_rejects_out_of_bounds_slice() {
-        let hash_hex = "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6";
-        let blob_path = PathBuf::from(format!("d/dd4/dd4ce/{hash_hex}"));
+        let hash_hex = "1e2063d7f0a0f38a10f4b85c36bac72e2880b6a1c2511330cd67bd3e29005553e011";
+        let blob_path = PathBuf::from(format!("6/63d/63d7f/{hash_hex}"));
         let blob_hash = storage::hash_from_path(&blob_path).unwrap();
         let mut cache = HashMap::new();
         cache.insert(blob_hash, vec![0u8; 8]);

@@ -127,7 +127,7 @@ mod test {
     fn tag_index() {
         let mut tag_index = TagIndex::new();
 
-        let my_hash = Hash::from("1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let my_hash = Hash::from("1e20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         tag_index.add_tag(&my_hash, "test");
         tag_index.add_tag(&my_hash, "passport");
         tag_index.add_tag(&my_hash, "brazil");
@@ -141,7 +141,7 @@ mod test {
         assert_eq!(expected, tag_index.list_all_tags());
         tag_index.remove_tag(&my_hash, "test");
 
-        let my_hash_b = Hash::from("1340bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let my_hash_b = Hash::from("1e20bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
         tag_index.add_tag(&my_hash_b, "Peanut Butter ");
 
         let expected: HashSet<String> = HashSet::from(["passport".into(), "brazil".into()]);
@@ -174,9 +174,9 @@ mod test {
         let mut tag_index = TagIndex::new();
 
         // passports
-        let ca_passport = Hash::from("1340aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        let nz_passport = Hash::from("1340bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
-        let us_passport = Hash::from("1340cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
+        let ca_passport = Hash::from("1e20aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let nz_passport = Hash::from("1e20bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        let us_passport = Hash::from("1e20cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
 
         tag_index.add_tag(&ca_passport, "passport");
         tag_index.add_tag(&ca_passport, "canada");
@@ -190,7 +190,7 @@ mod test {
         tag_index.add_tag(&us_passport, "united-states");
         tag_index.add_tag(&us_passport, "leon");
 
-        let us_birth_cert = Hash::from("1340dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
+        let us_birth_cert = Hash::from("1e20dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
         tag_index.add_tag(&us_birth_cert, "birth-cert");
         tag_index.add_tag(&us_birth_cert, "united-states");
         tag_index.add_tag(&us_birth_cert, "arizona");
