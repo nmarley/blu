@@ -75,7 +75,7 @@ macOS). Defaults: `~/.config/blu`, `~/.local/share/blu`,
 
 ### Storage backends (`src/storage/`)
 
-`BackendKind` enum (concrete dispatch, not a trait, because native async fn in traits is not object-safe) with `Local` and `AmazonS3` variants. Blobs are content-addressed by multihash, stored in a sharded directory tree (e.g., `d/dd4/dd4ce/dd4ce38e...`).
+`BackendKind` enum (concrete dispatch, not a trait, because native async fn in traits is not object-safe) with `Local` and `AmazonS3` variants. Blobs are content-addressed by multihash, stored in a sharded directory tree under `blobs/` (e.g., `blobs/d/dd4/dd4ce38e...`); catalog material stays in sibling `indexes/` and `keys/` dirs.
 
 ## Code layout
 

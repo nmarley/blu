@@ -5,12 +5,15 @@ use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
 use aws_sdk_s3::operation::restore_object::RestoreObjectError;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::types::{GlacierJobParameters, RestoreRequest, StorageClass, Tier};
+use aws_sdk_s3::types::{
+    GlacierJobParameters, IntelligentTieringAccessTier, IntelligentTieringStatus, RestoreRequest,
+    StorageClass, Tier,
+};
 use std::path::{Path, PathBuf};
 
 use super::{
-    ObjectAvailability, ObjectStat, RestoreOptions, RestoreTier, TAG_ROLE_BLOB, TAG_ROLE_CATALOG,
-    TAG_ROLE_KEY,
+    ItConfigSummary, ObjectAvailability, ObjectStat, RestoreOptions, RestoreTier, TAG_ROLE_BLOB,
+    TAG_ROLE_CATALOG, TAG_ROLE_KEY,
 };
 use crate::error::BluError;
 use crate::hash::Hash;
@@ -246,12 +249,13 @@ impl AmazonS3 {
     /// List relative paths of content-addressed blob objects under the
     /// backend prefix.
     ///
-    /// Uses paginated `ListObjectsV2`. Skips `indexes/` and `keys/`
-    /// relative to the backend prefix. Keys are returned without the
-    /// configured prefix, matching local relative paths.
+    /// Uses paginated `ListObjectsV2` scoped to the `blobs/` prefix, so
+    /// catalog material (`indexes/`, `keys/`) is never listed. Keys are
+    /// returned without the configured prefix, matching local relative
+    /// paths.
     pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
         let mut out = Vec::new();
-        let list_prefix = {
+        let vault_prefix = {
             let p = self.prefix.to_string_lossy();
             if p.is_empty() {
                 String::new()
@@ -261,6 +265,7 @@ impl AmazonS3 {
                 format!("{}/", p)
             }
         };
+        let list_prefix = format!("{}{}/", vault_prefix, super::BLOB_PREFIX);
 
         let mut continuation: Option<String> = None;
         loop {
@@ -268,10 +273,8 @@ impl AmazonS3 {
                 .client
                 .list_objects_v2()
                 .bucket(&self.bucket)
+                .prefix(&list_prefix)
                 .max_keys(1000);
-            if !list_prefix.is_empty() {
-                req = req.prefix(&list_prefix);
-            }
             if let Some(token) = continuation.take() {
                 req = req.continuation_token(token);
             }
@@ -285,9 +288,11 @@ impl AmazonS3 {
                 let Some(key) = obj.key() else {
                     continue;
                 };
-                let rel = if list_prefix.is_empty() {
+                // Strip the vault prefix (not the blobs/ component) so
+                // relative paths match `path_for` output.
+                let rel = if vault_prefix.is_empty() {
                     key.to_string()
-                } else if let Some(stripped) = key.strip_prefix(&list_prefix) {
+                } else if let Some(stripped) = key.strip_prefix(&vault_prefix) {
                     stripped.to_string()
                 } else {
                     continue;
@@ -295,11 +300,7 @@ impl AmazonS3 {
                 if rel.is_empty() || rel.ends_with('/') {
                     continue;
                 }
-                let path = PathBuf::from(&rel);
-                if super::is_non_blob_prefix(&path) {
-                    continue;
-                }
-                out.push(path);
+                out.push(PathBuf::from(&rel));
             }
 
             if resp.is_truncated().unwrap_or(false) {
@@ -361,13 +362,29 @@ impl AmazonS3 {
 
     /// Initiate RestoreObject for an archived object.
     ///
+    /// `prior` is an optional earlier HeadObject probe (e.g. from a
+    /// thaw classification); when provided it is trusted and no new
+    /// HEAD is issued. Pass `None` to re-probe current state first.
+    ///
     /// Intelligent-Tiering archive tiers use `Tier` only (no `Days`).
     /// Classic Glacier / Deep Archive storage classes use `Days` plus
     /// `GlacierJobParameters`. Already-in-progress and already-hot
     /// errors are treated as success (idempotent).
-    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+    pub async fn restore_object(
+        &self,
+        path: &Path,
+        prior: Option<&ObjectStat>,
+        opts: &RestoreOptions,
+    ) -> Result<(), BluError> {
         let key = self.path_to_key(path);
-        let stat = self.stat_object(path).await?;
+        let owned;
+        let stat = match prior {
+            Some(s) => s,
+            None => {
+                owned = self.stat_object(path).await?;
+                &owned
+            }
+        };
 
         match stat.availability {
             ObjectAvailability::Available | ObjectAvailability::Restored { .. } => {
@@ -397,6 +414,59 @@ impl AmazonS3 {
             Ok(_) => Ok(()),
             Err(err) => map_restore_error(err),
         }
+    }
+
+    /// List the bucket's Intelligent-Tiering configurations and
+    /// summarize whether any enabled config archives to Deep Archive.
+    ///
+    /// Heuristic: filter contents are not matched against blu paths,
+    /// only the presence of an enabled Deep Archive Access tiering is
+    /// checked. Requires `s3:GetIntelligentTieringConfiguration`; an
+    /// IAM denial surfaces as [`BluError::S3Error`] for the caller to
+    /// downgrade.
+    pub async fn intelligent_tiering_summary(&self) -> Result<Option<ItConfigSummary>, BluError> {
+        let mut ids = Vec::new();
+        let mut deep_archive_enabled = false;
+        let mut continuation: Option<String> = None;
+        loop {
+            let mut req = self
+                .client
+                .list_bucket_intelligent_tiering_configurations()
+                .bucket(&self.bucket);
+            if let Some(token) = continuation.take() {
+                req = req.continuation_token(token);
+            }
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| BluError::S3Error(e.to_string()))?;
+
+            for cfg in resp.intelligent_tiering_configuration_list() {
+                ids.push(cfg.id().to_string());
+                let enabled = matches!(cfg.status(), IntelligentTieringStatus::Enabled);
+                let has_deep_archive = cfg
+                    .tierings()
+                    .iter()
+                    .any(|t| t.access_tier() == &IntelligentTieringAccessTier::DeepArchiveAccess);
+                if enabled && has_deep_archive {
+                    deep_archive_enabled = true;
+                }
+            }
+
+            if resp.is_truncated().unwrap_or(false) {
+                continuation = resp.next_continuation_token().map(|s| s.to_string());
+                if continuation.is_none() {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        ids.sort();
+        Ok(Some(ItConfigSummary {
+            ids,
+            deep_archive_enabled,
+        }))
     }
 }
 
@@ -437,7 +507,9 @@ fn build_restore_request(storage_class: Option<&str>, days: u32, tier: Tier) -> 
     let days_i32 = i32::try_from(days).unwrap_or(i32::MAX);
     match storage_class {
         Some("INTELLIGENT_TIERING") => RestoreRequest::builder().tier(tier).build(),
-        Some("GLACIER") | Some("DEEP_ARCHIVE") | Some("GLACIER_IR") => {
+        // GLACIER_IR is instant retrieval: it classifies as Available
+        // and never reaches restore request building.
+        Some("GLACIER") | Some("DEEP_ARCHIVE") => {
             let glacier = GlacierJobParameters::builder()
                 .tier(tier)
                 .build()
@@ -601,6 +673,28 @@ mod test {
         );
     }
 
+    /// Build a backend for live S3 tests from environment variables.
+    ///
+    /// `BLU_TEST_S3_BUCKET` is required; `BLU_TEST_S3_PREFIX` and
+    /// `AWS_REGION` are optional. Uses the ambient AWS credential
+    /// chain (profile, env, or instance role).
+    async fn live_backend() -> AmazonS3 {
+        let bucket =
+            std::env::var("BLU_TEST_S3_BUCKET").expect("set BLU_TEST_S3_BUCKET to run this test");
+        let prefix = std::env::var("BLU_TEST_S3_PREFIX").ok();
+        let region = std::env::var("AWS_REGION").ok();
+        AmazonS3::new(&bucket, prefix.as_deref(), region.as_deref()).await
+    }
+
+    /// Fresh key under `blobs/live-test/` so re-runs never collide.
+    fn live_test_path(label: &str) -> PathBuf {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        PathBuf::from(format!("blobs/live-test/{label}-{ts}"))
+    }
+
     /// Live S3 range-read test. Ignored by default because it needs a
     /// real bucket and credentials. Run with:
     ///
@@ -608,18 +702,10 @@ mod test {
     /// BLU_TEST_S3_BUCKET=my-bucket cargo test --  \
     ///     --ignored s3_read_range_live
     /// ```
-    ///
-    /// Optional: `BLU_TEST_S3_PREFIX`, `AWS_REGION`. Uses the ambient
-    /// AWS credential chain (profile, env, or instance role).
     #[tokio::test]
     #[ignore = "requires live S3 bucket and credentials"]
     async fn s3_read_range_live() {
-        let bucket =
-            std::env::var("BLU_TEST_S3_BUCKET").expect("set BLU_TEST_S3_BUCKET to run this test");
-        let prefix = std::env::var("BLU_TEST_S3_PREFIX").ok();
-        let region = std::env::var("AWS_REGION").ok();
-
-        let backend = AmazonS3::new(&bucket, prefix.as_deref(), region.as_deref()).await;
+        let backend = live_backend().await;
 
         let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
         let hash = Hash::from(multihash(&data).to_bytes());
@@ -636,6 +722,182 @@ mod test {
         // Empty window issues no request and returns empty.
         let empty = backend.read_range(&path, 10, 10).await.unwrap();
         assert!(empty.is_empty());
+
+        backend.delete(&path).await.unwrap();
+    }
+
+    /// Live verification of the Intelligent-Tiering restore path.
+    ///
+    /// Confirms the put policy landed (IT storage class, `blu-role=blob`
+    /// tag, hot availability) and that the IT restore request shape
+    /// (Tier only, no Days) is accepted by S3: a hot IT object cannot
+    /// be restored, so S3 must reject with exactly
+    /// `ObjectAlreadyInActiveTierError`, which proves the request
+    /// serialized and was understood. Finishes in seconds.
+    ///
+    /// Runbook:
+    ///
+    /// ```sh
+    /// BLU_TEST_S3_BUCKET=my-bucket cargo test -- \
+    ///     --ignored s3_restore_request_shape_it_live --nocapture
+    /// ```
+    ///
+    /// Creates and deletes one small blob object. Record results in
+    /// `docs/design/S3_COLD_STORAGE_DESIGN.md`.
+    #[tokio::test]
+    #[ignore = "requires live S3 bucket and credentials"]
+    async fn s3_restore_request_shape_it_live() {
+        let backend = live_backend().await;
+
+        // write_data puts INTELLIGENT_TIERING + blu-role=blob.
+        let data = b"blu live IT restore-shape probe";
+        let hash = Hash::from(multihash(data).to_bytes());
+        let path = backend.write_data(&hash, data).await.unwrap();
+
+        // Confirm the put policy landed: IT class, hot, blob tag.
+        let stat = backend.stat_object(&path).await.unwrap();
+        assert_eq!(stat.storage_class.as_deref(), Some("INTELLIGENT_TIERING"));
+        assert_eq!(stat.availability, ObjectAvailability::Available);
+
+        let key = backend.path_to_key(&path);
+        let tags = backend
+            .client
+            .get_object_tagging()
+            .bucket(&backend.bucket)
+            .key(&key)
+            .send()
+            .await
+            .unwrap();
+        assert!(tags
+            .tag_set()
+            .iter()
+            .any(|t| t.key() == TAG_ROLE_KEY && t.value() == TAG_ROLE_BLOB));
+
+        // Raw RestoreObject with the IT shape (Tier only, no Days).
+        // A hot IT object cannot be restored; S3 must reject with
+        // ObjectAlreadyInActiveTierError, proving the request
+        // serialized correctly and was understood.
+        let req = build_restore_request(Some("INTELLIGENT_TIERING"), 14, Tier::Bulk);
+        let err = backend
+            .client
+            .restore_object()
+            .bucket(&backend.bucket)
+            .key(&key)
+            .restore_request(req)
+            .send()
+            .await
+            .expect_err("hot IT object must reject restore");
+        match err.as_service_error() {
+            Some(RestoreObjectError::ObjectAlreadyInActiveTierError(_)) => {}
+            other => panic!("expected ObjectAlreadyInActiveTierError, got {other:?}"),
+        }
+
+        // The public API short-circuits hot objects without sending a
+        // restore, both with a fresh HEAD and with a prior stat.
+        backend
+            .restore_object(&path, None, &RestoreOptions::default())
+            .await
+            .unwrap();
+        backend
+            .restore_object(&path, Some(&stat), &RestoreOptions::default())
+            .await
+            .unwrap();
+
+        backend.delete(&path).await.unwrap();
+    }
+
+    /// Live verification of a real Bulk restore from the GLACIER
+    /// storage class, from initiation through a successful GET.
+    ///
+    /// This is a multi-hour test: Bulk retrieval from S3 Glacier
+    /// Flexible Retrieval typically completes in 5-12 hours. Run it,
+    /// walk away, check back.
+    ///
+    /// Runbook:
+    ///
+    /// ```sh
+    /// BLU_TEST_S3_BUCKET=my-bucket cargo test -- \
+    ///     --ignored s3_restore_glacier_bulk_live --nocapture
+    /// ```
+    ///
+    /// Optional: `BLU_TEST_RESTORE_TIMEOUT_HOURS` (default 26).
+    /// Creates one small GLACIER object per run and deletes it
+    /// afterwards (early-deletion fee on a few KB is a fraction of a
+    /// cent). Record the observed duration and any error shapes in
+    /// `docs/design/S3_COLD_STORAGE_DESIGN.md`.
+    #[tokio::test]
+    #[ignore = "requires live S3 bucket, credentials, and multi-hour wait"]
+    async fn s3_restore_glacier_bulk_live() {
+        let backend = live_backend().await;
+        let path = live_test_path("glacier-bulk-restore");
+        let key = backend.path_to_key(&path);
+
+        let data = b"blu live glacier bulk restore probe".to_vec();
+        backend
+            .client
+            .put_object()
+            .bucket(&backend.bucket)
+            .key(&key)
+            .body(ByteStream::from(data.clone()))
+            .storage_class(StorageClass::Glacier)
+            .send()
+            .await
+            .unwrap();
+
+        // A fresh GLACIER object is archived and not GET-able.
+        let stat = backend.stat_object(&path).await.unwrap();
+        assert_eq!(stat.availability, ObjectAvailability::Archived);
+
+        // Initiate a Bulk restore; the temporary copy lives for 1 day.
+        let opts = RestoreOptions {
+            days: 1,
+            tier: RestoreTier::Bulk,
+        };
+        backend
+            .restore_object(&path, Some(&stat), &opts)
+            .await
+            .unwrap();
+
+        // The restore is now in flight, and re-firing is a no-op.
+        let stat = backend.stat_object(&path).await.unwrap();
+        assert_eq!(stat.availability, ObjectAvailability::Restoring);
+        backend
+            .restore_object(&path, Some(&stat), &opts)
+            .await
+            .unwrap();
+
+        // Poll until the temporary copy exists (multi-hour for Bulk).
+        let timeout_hours: u64 = std::env::var("BLU_TEST_RESTORE_TIMEOUT_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(26);
+        let started = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(timeout_hours * 3600);
+        let final_stat = loop {
+            let stat = backend.stat_object(&path).await.unwrap();
+            match stat.availability {
+                ObjectAvailability::Restored { .. } | ObjectAvailability::Available => break stat,
+                ObjectAvailability::Restoring => {
+                    assert!(
+                        started.elapsed() < timeout,
+                        "restore did not complete within {}h",
+                        timeout_hours
+                    );
+                    eprintln!("still restoring (elapsed {:?})", started.elapsed());
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                }
+                ObjectAvailability::Archived => panic!("restore was never initiated"),
+            }
+        };
+        eprintln!(
+            "restore completed in {:?}; x-amz-restore: {:?}",
+            started.elapsed(),
+            final_stat.restore_header
+        );
+
+        // GET works against the temporary copy and returns the bytes.
+        let got = backend.read_data(&path).await.unwrap();
+        assert_eq!(got, data);
 
         backend.delete(&path).await.unwrap();
     }

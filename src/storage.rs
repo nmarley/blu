@@ -11,8 +11,14 @@ use crate::hash::Hash;
 pub use intelligent_tiering::{
     apply_command_hint as intelligent_tiering_apply_hint,
     config_json as intelligent_tiering_config_json, DEFAULT_DEEP_ARCHIVE_DAYS,
-    DEFAULT_IT_CONFIG_ID, MAX_ARCHIVE_DAYS, MIN_DEEP_ARCHIVE_DAYS,
+    DEFAULT_IT_CONFIG_ID, MAX_ARCHIVE_DAYS, MIN_ARCHIVE_DAYS, MIN_DEEP_ARCHIVE_DAYS,
 };
+
+/// Top-level backend directory holding all content-addressed blobs.
+///
+/// Catalog material lives in sibling directories (`indexes/`, `keys/`),
+/// so bucket filters and listing can scope to this prefix alone.
+pub const BLOB_PREFIX: &str = "blobs";
 
 /// Object tag key for blu role classification on S3 puts.
 pub const TAG_ROLE_KEY: &str = "blu-role";
@@ -85,6 +91,20 @@ pub struct ObjectStat {
     pub restore_header: Option<String>,
     /// Object size in bytes when known.
     pub content_length: Option<u64>,
+}
+
+/// Summary of a bucket's Intelligent-Tiering configurations.
+///
+/// Used by doctor to verify the bucket actually archives blobs;
+/// blobs upload as `INTELLIGENT_TIERING` but never reach Deep Archive
+/// Access without an operator-applied bucket configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItConfigSummary {
+    /// Ids of all Intelligent-Tiering configurations on the bucket.
+    pub ids: Vec<String>,
+    /// True when at least one enabled configuration includes a Deep
+    /// Archive Access tiering.
+    pub deep_archive_enabled: bool,
 }
 
 /// Concrete enum dispatch over supported storage backends.
@@ -179,10 +199,11 @@ impl BackendKind {
 
     /// List relative paths of content-addressed blob objects.
     ///
-    /// Skips catalog and key material (`indexes/`, `keys/`). Returned
-    /// paths match the shape of `BlobIndex::path_index` keys and
-    /// [`path_for`] output. Collects the full set into memory; large
-    /// backends may be slow.
+    /// Lists only objects under [`BLOB_PREFIX`]; catalog and key
+    /// material (`indexes/`, `keys/`) is never walked. Returned paths
+    /// match the shape of `BlobIndex::path_index` keys and [`path_for`]
+    /// output. Collects the full set into memory; large backends may
+    /// be slow.
     pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
         match self {
             Self::Local(b) => b.list_blob_paths().await,
@@ -203,33 +224,61 @@ impl BackendKind {
 
     /// Initiate an archive restore for the object at `path`.
     ///
+    /// `prior` is an optional earlier probe (e.g. from a thaw
+    /// classification); when provided it is trusted and no new HEAD
+    /// is issued. Pass `None` to re-probe current state first.
+    ///
     /// Idempotent when a restore is already in progress or the object
     /// is already in an active tier. Local backend is a no-op.
-    pub async fn restore_object(&self, path: &Path, opts: &RestoreOptions) -> Result<(), BluError> {
+    pub async fn restore_object(
+        &self,
+        path: &Path,
+        prior: Option<&ObjectStat>,
+        opts: &RestoreOptions,
+    ) -> Result<(), BluError> {
         match self {
-            Self::Local(b) => b.restore_object(path, opts).await,
-            Self::AmazonS3(b) => b.restore_object(path, opts).await,
+            Self::Local(b) => b.restore_object(path, prior, opts).await,
+            Self::AmazonS3(b) => b.restore_object(path, prior, opts).await,
+        }
+    }
+
+    /// Summarize the bucket's Intelligent-Tiering configurations.
+    ///
+    /// Returns `Ok(None)` for backends without bucket configuration
+    /// (local). Errors when IAM denies reading bucket configuration;
+    /// callers should treat that as warn-only.
+    pub async fn intelligent_tiering_summary(&self) -> Result<Option<ItConfigSummary>, BluError> {
+        match self {
+            Self::Local(b) => b.intelligent_tiering_summary().await,
+            Self::AmazonS3(b) => b.intelligent_tiering_summary().await,
         }
     }
 }
 
-/// True when a relative backend path is catalog or key material, not a blob.
-pub fn is_non_blob_prefix(path: &Path) -> bool {
+/// True when a relative backend path lives under [`BLOB_PREFIX`].
+pub fn is_blob_path(path: &Path) -> bool {
     path.components()
         .next()
-        .is_some_and(|c| matches!(c.as_os_str().to_str(), Some("indexes") | Some("keys")))
+        .is_some_and(|c| c.as_os_str().to_str() == Some(BLOB_PREFIX))
+}
+
+/// True when a relative backend path is not a content-addressed blob:
+/// catalog material (`indexes/`, `keys/`) or anything outside
+/// [`BLOB_PREFIX`].
+pub fn is_non_blob_prefix(path: &Path) -> bool {
+    !is_blob_path(path)
 }
 
 /// Get a path for the encrypted data.
 ///
 /// This is generally the hash of the data, but broken into a dir structure also with the
-/// multihash prefix(es) removed from the front...
+/// multihash prefix(es) removed from the front, under the top-level `blobs/` directory...
 ///
 /// example, this hash ... :
 /// 1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
 /// ... would be stored in:
-/// DATADIR / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+/// DATADIR / blobs / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
 ///
 pub fn path_for(hash: &Hash) -> Result<PathBuf, BluError> {
     // use multihash lib to properly separate multihash header code and size
@@ -244,6 +293,7 @@ pub fn path_for(hash: &Hash) -> Result<PathBuf, BluError> {
     // dbg!(&hash_str);
 
     let rel_path = PathBuf::new()
+        .join(BLOB_PREFIX)
         .join(&hash_str[0..1])
         .join(&hash_str[0..3])
         .join(&hash_str[0..5])
@@ -285,26 +335,26 @@ mod test {
         };
     }
 
-    // DATADIR / d / dd4 / dd4ce38e / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
+    // DATADIR / blobs / d / dd4 / dd4ce / dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6
     test_path_for!(
         path_for_sha2_512,
         "1340dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6",
-        "d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+        "blobs/d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
     );
     test_path_for!(
         path_for_sha2_256,
         "12209b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d",
-        "9/9b2/9b2f4/9b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d"
+        "blobs/9/9b2/9b2f4/9b2f4374822ae5b8a14e89f69bdcc1b570948e201f318c763ee1c31d2fb02f3d"
     );
     test_path_for!(
         path_for_sha3_256,
         "16202a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e",
-        "2/2a6/2a62d/2a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e"
+        "blobs/2/2a6/2a62d/2a62db58c655ef1484f5c5d8bbd8eb9b75261a149db76b9e0177831325f5030e"
     );
     test_path_for!(
         path_for_blake2b_256,
         "a0e4022064982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36",
-        "6/649/64982/64982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36"
+        "blobs/6/649/64982/64982f9ad98dc4845638d6ed1abc2ef2f76d90eecc9091e4802e73734b96ec36"
     );
 
     use std::path::Path;
@@ -400,14 +450,15 @@ mod test {
     }
 
     #[tokio::test]
-    async fn local_list_blob_paths_skips_indexes_and_keys() {
+    async fn local_list_blob_paths_scoped_to_blob_prefix() {
         use super::is_non_blob_prefix;
         use std::fs;
 
         assert!(is_non_blob_prefix(Path::new("indexes/index.dat")));
         assert!(is_non_blob_prefix(Path::new("keys/kek.toml")));
+        assert!(is_non_blob_prefix(Path::new("d/dd4/legacy-shard")));
         assert!(!is_non_blob_prefix(Path::new(
-            "d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
+            "blobs/d/dd4/dd4ce/dd4ce38ee6f793c6b294ec89093c37643e51d1f14afe31066313462f1940054cdc498e9e5cbbce02b836f6b80e9995ffa82af9a8a38845abb41ffb5d233187a6"
         )));
 
         let datadir = tempdir().unwrap();
@@ -433,14 +484,16 @@ mod test {
             .write_to_path(Path::new("keys/kek.toml"), b"kek-meta")
             .await
             .unwrap();
-        // Empty shard dirs alone should not produce entries (files only).
+        // Stray top-level dirs and empty shard dirs under blobs/ are
+        // not files, so neither produces entries.
         fs::create_dir_all(datadir.path().join("z/zzz/zzzzz")).unwrap();
+        fs::create_dir_all(datadir.path().join("blobs/z/zzz/zzzzz")).unwrap();
 
         let listed = storage.list_blob_paths().await.unwrap();
         assert_eq!(listed.len(), 2, "listed={listed:?}");
         assert!(listed.contains(&path_a));
         assert!(listed.contains(&path_b));
-        assert!(!listed.iter().any(|p| is_non_blob_prefix(p)));
+        assert!(listed.iter().all(|p| !is_non_blob_prefix(p)));
     }
 
     #[tokio::test]
@@ -469,7 +522,7 @@ mod test {
         assert!(stat.storage_class.is_none());
 
         storage
-            .restore_object(&path, &RestoreOptions::default())
+            .restore_object(&path, None, &RestoreOptions::default())
             .await
             .unwrap();
     }

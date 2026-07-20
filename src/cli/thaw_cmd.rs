@@ -7,13 +7,18 @@ use crate::cli::helpers::{load_config_and_keys, LoadOptions};
 use crate::error::BluError;
 use crate::storage::RestoreTier;
 use crate::thaw::{
-    self, all_indexed_blob_paths, classify_blobs, default_restore_options, format_cold_summary,
-    initiate_thaw, plan_blob_set, wait_until_readable, Selection,
+    self, all_indexed_blob_paths, classify_blobs, default_poll_backoff, default_restore_options,
+    format_cold_summary, initiate_thaw, plan_blob_set, wait_until_readable, Selection,
+    WAIT_POLL_INITIAL_SECS, WAIT_POLL_MAX_SECS,
 };
 
 const CLASSIFY_CONCURRENCY: usize = 16;
 const THAW_CONCURRENCY: usize = 8;
-const DEFAULT_POLL_SECS: u64 = 30;
+
+/// Max indexed blobs a bare `blu thaw --status` will HEAD without an
+/// explicit selection. Larger indexes need `--all --status` (explicit
+/// opt-in to the full scan) or a narrowed `--path` / `--file-hashes`.
+const FULL_STATUS_SCAN_LIMIT: usize = 5_000;
 
 /// Initiate or report archive restores for blobs needed by a catalog selection.
 pub async fn thaw(args: ThawArgs) -> Result<(), BluError> {
@@ -42,7 +47,16 @@ pub async fn thaw(args: ThawArgs) -> Result<(), BluError> {
                     .into(),
             ));
         }
-        all_indexed_blob_paths(&blob_index)
+        let all = all_indexed_blob_paths(&blob_index);
+        if all.len() > FULL_STATUS_SCAN_LIMIT {
+            return Err(BluError::Internal(format!(
+                "{} indexed blobs; a bare --status scan issues that many HEAD \
+                 requests. Narrow with --path or --file-hashes, or re-run with \
+                 `--all --status` to confirm a full scan.",
+                all.len()
+            )));
+        }
+        all
     } else {
         let set = plan_blob_set(&plain_index, &blob_index, &selection)?;
         if set.file_hashes.is_empty() {
@@ -116,16 +130,17 @@ pub async fn thaw(args: ThawArgs) -> Result<(), BluError> {
             return finalize_status(&plan);
         }
         println!(
-            "Waiting for {} blob(s) to become readable (poll every {}s)...",
+            "Waiting for {} blob(s) to become readable (poll {}s, backing off to {}s)...",
             plan.blocked_count(),
-            DEFAULT_POLL_SECS,
+            WAIT_POLL_INITIAL_SECS,
+            WAIT_POLL_MAX_SECS,
         );
         let timeout = args.timeout_hours.map(|h| Duration::from_secs(h * 3600));
         plan = wait_until_readable(
             &backend,
             &blob_paths,
             CLASSIFY_CONCURRENCY,
-            Duration::from_secs(DEFAULT_POLL_SECS),
+            default_poll_backoff(),
             timeout,
         )
         .await?;

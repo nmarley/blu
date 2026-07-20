@@ -13,7 +13,7 @@ use crate::error::BluError;
 use crate::keys::kek::KekStore;
 use crate::storage::{BackendKind, ObjectAvailability};
 use crate::tag::TAG_INDEX_FILENAME;
-use crate::thaw::{all_indexed_blob_paths, classify_blobs, format_cold_summary};
+use crate::thaw::{all_indexed_blob_paths, classify_blobs, format_cold_summary, sample_evenly};
 
 /// Outcome of a single doctor check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +197,7 @@ pub async fn diagnose(cfg: &Config, keys: &DekProvider) -> Result<DoctorReport, 
     }
 
     check_catalog_hot(cfg, &mut report).await;
+    check_bucket_it_config(cfg, &mut report).await;
     check_catalog_remote(cfg, keys, &mut report).await;
 
     Ok(report)
@@ -556,6 +557,14 @@ async fn check_blob_orphans(cfg: &Config, blob: &BlobIndex, report: &mut DoctorR
 /// Max concurrent HeadObject probes for cold-storage doctor checks.
 const COLD_STAT_CONCURRENCY: usize = 16;
 
+/// Cap on blob HEAD probes for `blob-cold-status`.
+///
+/// Doctor runs routinely, so it samples instead of scanning the whole
+/// index: 64 probes is effectively free, while an unbounded scan gets
+/// slow and spendy on massive media vaults. Full classification is
+/// still available via `blu thaw --status`.
+const COLD_SAMPLE_CAP: usize = 64;
+
 /// Ensure catalog objects (indexes + keys) are immediately readable.
 ///
 /// Uses HeadObject-style [`BackendKind::stat_object`] so probes do not
@@ -679,7 +688,9 @@ async fn check_catalog_hot(cfg: &Config, report: &mut DoctorReport) {
 ///
 /// Informational for cold media vaults: archived blobs are expected after
 /// long idle periods. Fail only on stat errors (missing covered by
-/// blob-presence). Prefer HeadObject via classify (no GET).
+/// blob-presence). Prefer HeadObject via classify (no GET). Samples up
+/// to [`COLD_SAMPLE_CAP`] blobs so routine runs stay cheap on massive
+/// vaults; `blu thaw --status` does the full scan on demand.
 async fn check_blob_cold_status(cfg: &Config, blob: &BlobIndex, report: &mut DoctorReport) {
     if blob.path_index.is_empty() {
         report.pass("blob-cold-status", "no indexed blobs");
@@ -705,7 +716,15 @@ async fn check_blob_cold_status(cfg: &Config, blob: &BlobIndex, report: &mut Doc
         return;
     }
 
-    let paths = all_indexed_blob_paths(blob);
+    let all_paths = all_indexed_blob_paths(blob);
+    let total = all_paths.len();
+    let paths = sample_evenly(&all_paths, COLD_SAMPLE_CAP);
+    let sampled_note = if paths.len() < total {
+        format!("sampled {} of ", paths.len())
+    } else {
+        String::new()
+    };
+
     let plan = match classify_blobs(&backend, &paths, COLD_STAT_CONCURRENCY).await {
         Ok(p) => p,
         Err(e) => {
@@ -730,8 +749,9 @@ async fn check_blob_cold_status(cfg: &Config, blob: &BlobIndex, report: &mut Doc
     }
 
     let detail = format!(
-        "{} indexed blob(s): {}",
-        paths.len(),
+        "{}{} indexed blob(s): {}",
+        sampled_note,
+        total,
         format_cold_summary(&plan)
     );
 
@@ -743,6 +763,80 @@ async fn check_blob_cold_status(cfg: &Config, blob: &BlobIndex, report: &mut Doc
     } else {
         report.pass("blob-cold-status", detail);
     }
+}
+
+/// Verify the S3 bucket actually archives blobs.
+///
+/// Blobs upload as `INTELLIGENT_TIERING`, but without an
+/// operator-applied bucket Intelligent-Tiering configuration they only
+/// reach the automatic (instant) tiers and never Deep Archive Access.
+/// Warn-only: IAM may deny `s3:GetIntelligentTieringConfiguration`.
+async fn check_bucket_it_config(cfg: &Config, report: &mut DoctorReport) {
+    let backend = match cfg.init_storage_backend().await {
+        Ok(b) => b,
+        Err(e) => {
+            report.warn("bucket-it-config", format!("backend init failed: {}", e));
+            return;
+        }
+    };
+
+    if matches!(backend, BackendKind::Local(_)) {
+        report.pass(
+            "bucket-it-config",
+            "local backend (no bucket configuration)",
+        );
+        return;
+    }
+
+    let summary = match backend.intelligent_tiering_summary().await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            report.pass("bucket-it-config", "backend has no bucket configuration");
+            return;
+        }
+        Err(e) => {
+            report.warn(
+                "bucket-it-config",
+                format!(
+                    "unable to read bucket Intelligent-Tiering configuration \
+                     (needs s3:GetIntelligentTieringConfiguration): {}",
+                    e
+                ),
+            );
+            return;
+        }
+    };
+
+    if summary.ids.is_empty() {
+        report.warn(
+            "bucket-it-config",
+            "no Intelligent-Tiering configuration on bucket; blobs upload as \
+             INTELLIGENT_TIERING but never reach Deep Archive Access. Print one \
+             with `blu backend intelligent-tiering print` and apply it via aws s3api."
+                .to_string(),
+        );
+        return;
+    }
+
+    if !summary.deep_archive_enabled {
+        report.warn(
+            "bucket-it-config",
+            format!(
+                "Intelligent-Tiering config(s) {} present, but none enable Deep \
+                 Archive Access; blobs will not deep-archive after 365 days",
+                summary.ids.join(", ")
+            ),
+        );
+        return;
+    }
+
+    report.pass(
+        "bucket-it-config",
+        format!(
+            "Deep Archive Access enabled (config id(s): {})",
+            summary.ids.join(", ")
+        ),
+    );
 }
 
 /// Remote catalog object paths that must stay hot (indexes + KEK material).
@@ -852,6 +946,10 @@ mod tests {
             .checks
             .iter()
             .any(|c| c.name == "blob-cold-status" && c.status == CheckStatus::Pass));
+        assert!(report
+            .checks
+            .iter()
+            .any(|c| c.name == "bucket-it-config" && c.status == CheckStatus::Pass));
     }
 
     #[tokio::test]

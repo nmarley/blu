@@ -49,8 +49,8 @@ impl Local {
     /// Read the data blob at the given relative path from local disk.
     ///
     /// The path should be a relative content-addressed path (e.g.,
-    /// `d/dd4/dd4ce/dd4ce38e...`). The backend prepends `self.datadir`
-    /// to resolve the full filesystem path.
+    /// `blobs/d/dd4/dd4ce/dd4ce38e...`). The backend prepends
+    /// `self.datadir` to resolve the full filesystem path.
     pub async fn read_data(&self, path: &Path) -> Result<Vec<u8>, BluError> {
         let full_path = self.datadir.join(path);
         let data = tokio::fs::read(&full_path).await?;
@@ -82,7 +82,8 @@ impl Local {
     /// Write data to a content-addressed path derived from the hash.
     ///
     /// Returns the relative content-addressed path (e.g.,
-    /// `d/dd4/dd4ce/dd4ce38e...`), consistent with `AmazonS3::write_data`.
+    /// `blobs/d/dd4/dd4ce/dd4ce38e...`), consistent with
+    /// `AmazonS3::write_data`.
     pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
         let hash_path = super::path_for(hash)?;
         let full_path = self.datadir.join(&hash_path);
@@ -133,8 +134,9 @@ impl Local {
 
     /// List relative paths of content-addressed blob files under datadir.
     ///
-    /// Skips `indexes/` and `keys/`. Empty or missing datadir yields an
-    /// empty list (not an error).
+    /// Walks only the `blobs/` subtree, so catalog material (`indexes/`,
+    /// `keys/`) is never listed. Missing datadir or `blobs/` dir yields
+    /// an empty list (not an error).
     pub async fn list_blob_paths(&self) -> Result<Vec<PathBuf>, BluError> {
         let datadir = self.datadir.clone();
         tokio::task::spawn_blocking(move || list_blob_paths_sync(&datadir))
@@ -168,19 +170,28 @@ impl Local {
     pub async fn restore_object(
         &self,
         _path: &Path,
+        _prior: Option<&super::ObjectStat>,
         _opts: &super::RestoreOptions,
     ) -> Result<(), BluError> {
         Ok(())
     }
+
+    /// No bucket configuration exists for local backends.
+    pub async fn intelligent_tiering_summary(
+        &self,
+    ) -> Result<Option<super::ItConfigSummary>, BluError> {
+        Ok(None)
+    }
 }
 
 fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {
-    if !datadir.exists() {
+    let blob_root = datadir.join(super::BLOB_PREFIX);
+    if !blob_root.exists() {
         return Ok(Vec::new());
     }
 
     let mut out = Vec::new();
-    let mut stack = vec![datadir.to_path_buf()];
+    let mut stack = vec![blob_root];
     while let Some(dir) = stack.pop() {
         let entries = std::fs::read_dir(&dir)
             .map_err(|e| BluError::Internal(format!("read_dir {}: {}", dir.display(), e)))?;
@@ -199,6 +210,8 @@ fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {
             if !file_type.is_file() {
                 continue;
             }
+            // Strip datadir (not blob_root) so relative paths keep the
+            // blobs/ component and match `path_for` output.
             let rel = path.strip_prefix(datadir).map_err(|e| {
                 BluError::Internal(format!(
                     "strip_prefix {} from {}: {}",
@@ -207,9 +220,6 @@ fn list_blob_paths_sync(datadir: &Path) -> Result<Vec<PathBuf>, BluError> {
                     e
                 ))
             })?;
-            if super::is_non_blob_prefix(rel) {
-                continue;
-            }
             out.push(rel.to_path_buf());
         }
     }

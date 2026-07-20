@@ -39,7 +39,7 @@ use crate::serve::index_sync;
 use crate::serve::redb_store::RedbStore;
 use crate::serve::s3xml;
 use crate::storage::BackendKind;
-use crate::thaw::availability_blocks_get;
+use crate::thaw::{self, ColdPlan};
 
 /// Default listen address for the serve daemon. Localhost only; the
 /// agent daemon is the trust boundary, not the HTTP server.
@@ -935,25 +935,47 @@ fn unique_blob_paths_for_file(
     Ok(paths)
 }
 
-/// HeadObject-probe every blob needed for `fileref` and error if any
-/// are archived or restoring (do not GET; does not re-warm IT tiers).
+/// Concurrency cap for GET preflight blob probes.
+const PREFLIGHT_CONCURRENCY: usize = 8;
+
+/// Probe every blob needed for `fileref` (bounded-concurrency HEADs)
+/// and error if any are archived or restoring (do not GET; does not
+/// re-warm IT tiers).
 async fn ensure_file_blobs_readable(
     redb: &RedbStore,
     backend: &BackendKind,
     fileref: &FileRef,
 ) -> Result<(), BluError> {
     let paths = unique_blob_paths_for_file(redb, fileref)?;
-    for path in paths {
-        let stat = backend.stat_object(&path).await?;
-        if availability_blocks_get(&stat.availability) {
-            return Err(BluError::ObjectArchived {
-                path,
-                storage_class: stat.storage_class,
-                access_tier: stat.archive_status,
-            });
-        }
+    let plan = thaw::classify_blobs(backend, &paths, PREFLIGHT_CONCURRENCY).await?;
+    if let Some(e) = preflight_error(&plan) {
+        return Err(e);
     }
     Ok(())
+}
+
+/// Map a preflight classification to the error a GET would hit.
+///
+/// Backend and inventory problems beat cold-state: `blu thaw` cannot
+/// fix a stat failure or a missing blob. Returns `None` when every
+/// blob is readable.
+fn preflight_error(plan: &ColdPlan) -> Option<BluError> {
+    if let Some((path, msg)) = plan.errors.first() {
+        return Some(BluError::StorageError(format!(
+            "stat {} failed: {msg}",
+            path.display()
+        )));
+    }
+    if let Some(path) = plan.missing.first() {
+        return Some(BluError::StorageFileNotFound { path: path.clone() });
+    }
+    plan.needs_thaw()
+        .next()
+        .map(|cold| BluError::ObjectArchived {
+            path: cold.path.clone(),
+            storage_class: cold.stat.storage_class.clone(),
+            access_tier: cold.stat.archive_status.clone(),
+        })
 }
 
 /// `PUT /{bucket}/{*key}` -- PutObject (or UploadPart when the query
@@ -1833,6 +1855,88 @@ mod test {
         ensure_file_blobs_readable(&state.redb, &state.backend, &fileref)
             .await
             .unwrap();
+    }
+
+    fn cold_blob(path: &str, availability: crate::storage::ObjectAvailability) -> thaw::ColdBlob {
+        thaw::ColdBlob {
+            path: PathBuf::from(path),
+            stat: crate::storage::ObjectStat {
+                path: PathBuf::from(path),
+                storage_class: Some("INTELLIGENT_TIERING".into()),
+                archive_status: Some("DEEP_ARCHIVE_ACCESS".into()),
+                availability,
+                restore_header: None,
+                content_length: None,
+            },
+        }
+    }
+
+    #[test]
+    fn preflight_error_none_when_all_readable() {
+        let plan = ColdPlan {
+            available: vec![PathBuf::from("blobs/a")],
+            ..ColdPlan::default()
+        };
+        assert!(preflight_error(&plan).is_none());
+    }
+
+    #[test]
+    fn preflight_error_maps_first_blocked_blob() {
+        let plan = ColdPlan {
+            archived: vec![cold_blob(
+                "blobs/b",
+                crate::storage::ObjectAvailability::Archived,
+            )],
+            restoring: vec![cold_blob(
+                "blobs/c",
+                crate::storage::ObjectAvailability::Restoring,
+            )],
+            ..ColdPlan::default()
+        };
+        match preflight_error(&plan) {
+            Some(BluError::ObjectArchived {
+                path,
+                storage_class,
+                access_tier,
+            }) => {
+                assert_eq!(path, PathBuf::from("blobs/b"));
+                assert_eq!(storage_class.as_deref(), Some("INTELLIGENT_TIERING"));
+                assert_eq!(access_tier.as_deref(), Some("DEEP_ARCHIVE_ACCESS"));
+            }
+            other => panic!("expected ObjectArchived, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preflight_error_prioritizes_errors_over_cold_state() {
+        let plan = ColdPlan {
+            archived: vec![cold_blob(
+                "blobs/a",
+                crate::storage::ObjectAvailability::Archived,
+            )],
+            missing: vec![PathBuf::from("blobs/gone")],
+            errors: vec![(PathBuf::from("blobs/z"), "access denied".into())],
+            ..ColdPlan::default()
+        };
+        match preflight_error(&plan) {
+            Some(BluError::StorageError(msg)) => assert!(msg.contains("access denied"), "{msg}"),
+            other => panic!("expected StorageError, got {other:?}"),
+        }
+
+        let plan = ColdPlan {
+            archived: vec![cold_blob(
+                "blobs/a",
+                crate::storage::ObjectAvailability::Archived,
+            )],
+            missing: vec![PathBuf::from("blobs/gone")],
+            ..ColdPlan::default()
+        };
+        match preflight_error(&plan) {
+            Some(BluError::StorageFileNotFound { path }) => {
+                assert_eq!(path, PathBuf::from("blobs/gone"));
+            }
+            other => panic!("expected StorageFileNotFound, got {other:?}"),
+        }
     }
 
     /// Build a `ServeState` with real blob data. Writes `file_data`

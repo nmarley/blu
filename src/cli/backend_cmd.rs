@@ -58,14 +58,20 @@ fn intelligent_tiering_print(args: BackendItPrintArgs) -> Result<(), BluError> {
 
     let id = args.id.as_deref().unwrap_or(DEFAULT_IT_CONFIG_ID);
     let days = args.days.unwrap_or(DEFAULT_DEEP_ARCHIVE_DAYS);
-    let json = intelligent_tiering_config_json(id, prefix.as_deref(), days)?;
+    let json = intelligent_tiering_config_json(id, prefix.as_deref(), days, args.archive_days)?;
     println!("{}", json);
 
     eprintln!(
-        "# Filter: tag {}={} only (catalog objects stay STANDARD).",
+        "# Filter: prefix blobs/ AND tag {}={} (catalog objects stay STANDARD).",
         crate::storage::TAG_ROLE_KEY,
         crate::storage::TAG_ROLE_BLOB
     );
+    if let Some(archive_days) = args.archive_days {
+        eprintln!(
+            "# Archive Access after {} day(s) of no access, then",
+            archive_days
+        );
+    }
     eprintln!(
         "# Deep Archive Access after {} day(s) of no access. Apply once per bucket;",
         days

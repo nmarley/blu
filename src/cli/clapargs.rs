@@ -476,6 +476,11 @@ pub struct BackendItPrintArgs {
     #[arg(long)]
     pub days: Option<u32>,
 
+    /// Also add an Archive Access tier after N days of no access
+    /// (90..=730, must be less than --days)
+    #[arg(long)]
+    pub archive_days: Option<u32>,
+
     /// Override S3 key prefix in the filter (default: backend prefix if S3)
     #[arg(long)]
     pub prefix: Option<String>,
