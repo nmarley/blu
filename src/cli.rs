@@ -6,6 +6,8 @@ pub mod helpers;
 pub mod output;
 /// env-var passphrase resolution for headless automation
 pub mod passphrase;
+/// shared progress UI primitives and backup event protocol
+pub(crate) mod progress;
 
 mod agent_cmd;
 mod backend_cmd;
