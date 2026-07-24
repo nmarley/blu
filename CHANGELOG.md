@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-24
+
+### Added
+
+- Default TTY progress UI on `blu backup`: overall byte bar, phase line
+  (index, encrypt+upload, finalize, push indexes), and capped active
+  rows for the file being hashed and in-flight blob puts
+- `blu backup --quiet` / `-q` suppresses progress bars for scripts and
+  non-interactive runs
+- Backup progress event protocol so indexing, sealing, and uploads
+  report telemetry without coupling domain code to the TUI
+- `IndexReporter` on plain-index add for per-file and per-byte hashing
+  progress
+- Blob buffer seal/upload events with in-flight put tracking; background
+  put failures surface before finalize instead of only at the end
+
 ## [0.8.0] - 2026-07-20
 
 ### Added
