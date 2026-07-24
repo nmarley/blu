@@ -45,7 +45,7 @@ multipart, no custom retry policy beyond what the SDK already does).
 ## Stages
 
 Stage 1: Cap concurrent blob uploads in `BlobBuffer`
-  1a: Add `DEFAULT_MAX_INFLIGHT_UPLOADS` (default 4) and `max_inflight` on
+  1a: Add `DEFAULT_MAX_INFLIGHT_UPLOADS` (default 8) and `max_inflight` on
       `BlobBuffer`; expose via `with_max_inflight` if useful for tests
   1b: Before spawning a put, await completions until
       `inflight.len() < max_inflight` (backpressure the seal path)
@@ -72,7 +72,7 @@ Stage 3: Richer S3 error strings
 Stage 4: Verify
   4a: `cargo test` (and clippy/fmt as usual)
   4b: Re-run the live media backup; confirm phase line stays near the
-      cap (e.g. `N in flight` with N <= 4), `uploaded` advances, and a
+      cap (e.g. `N in flight` with N <= 8), `uploaded` advances, and a
       forced failure (if any) shows connector detail past "dispatch
       failure"
 
@@ -87,8 +87,8 @@ Stage 4: Verify
 
 ## Notes
 
-- Default of 4 concurrent ~64 MiB puts caps upload memory around a few
-  hundred MiB instead of tens of GiB. Tune later if needed.
+- Default of 8 concurrent ~64 MiB puts caps upload memory around ~512 MiB
+  instead of tens of GiB. Raise toward 16 if the pipe stays underfed.
 - `poll_completed` / fail-fast on first put error stays as-is.
 - Do not commit the `hist` capture; it may contain AWS debug metadata.
   Prefer deleting or gitignoring it after diagnosis.

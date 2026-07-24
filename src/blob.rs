@@ -30,6 +30,14 @@ pub const BLOB_INDEX_FILENAME: &str = "blob_index.dat";
 /// bump.
 pub const DEFAULT_SEGMENT_SIZE: usize = 524_288;
 
+/// Default cap on concurrent background blob puts.
+///
+/// Encrypt can seal ~64 MiB blobs faster than the network can upload
+/// them. Without a cap, `JoinSet` grows without bound, holding many
+/// full ciphertexts in memory and starving concurrent S3 connections
+/// (live failure mode: hundreds in flight, then `dispatch failure`).
+pub const DEFAULT_MAX_INFLIGHT_UPLOADS: usize = 8;
+
 /// Number of leading bytes to fetch when probing a blob's format
 /// version and (for v3) parsing its header before a prefix range read.
 /// A v3 header is `20 + wrapped_dek_len` bytes; the wrapped DEK is an
@@ -88,9 +96,10 @@ struct UploadOutcome {
 /// Blob uploads are pipelined: when the buffer fills up, the blob is
 /// compressed, encrypted, and handed off to a background upload task.
 /// The buffer resets immediately so the next blob can start filling
-/// while the previous one is still uploading. Completions are polled
-/// during [`BlobBuffer::add_chunk`] so backend failures surface early;
-/// the tail is drained in [`BlobBuffer::finalize`].
+/// while earlier ones are still uploading, up to
+/// [`DEFAULT_MAX_INFLIGHT_UPLOADS`] concurrent puts. Completions are
+/// polled during [`BlobBuffer::add_chunk`] so backend failures surface
+/// early; the tail is drained in [`BlobBuffer::finalize`].
 // #[derive(Debug)]
 pub struct BlobBuffer {
     storage_backend: BackendKind,
@@ -106,6 +115,8 @@ pub struct BlobBuffer {
 
     // in-flight upload tasks
     inflight: JoinSet<UploadOutcome>,
+    /// Max concurrent background puts (at least 1).
+    max_inflight: usize,
 
     // optional telemetry (CLI progress); never carries secrets
     events: Option<mpsc::Sender<BlobBufferEvent>>,
@@ -127,8 +138,15 @@ impl BlobBuffer {
             offset: 0,
             positions: HashMap::new(),
             inflight: JoinSet::new(),
+            max_inflight: DEFAULT_MAX_INFLIGHT_UPLOADS,
             events: None,
         }
+    }
+
+    /// Cap concurrent background blob puts (minimum 1).
+    pub fn with_max_inflight(mut self, max: usize) -> Self {
+        self.max_inflight = max.max(1);
+        self
     }
 
     /// Attach a telemetry channel for seal/upload events.
@@ -170,7 +188,7 @@ impl BlobBuffer {
         self.offset += size;
 
         if self.is_full() {
-            let path = self.seal_and_upload(idx)?;
+            let path = self.seal_and_upload(idx).await?;
             debug!("Sealed blob for upload at {:?}!", path);
             // A just-spawned put may already be done on a fast local backend.
             self.poll_completed()?;
@@ -185,7 +203,7 @@ impl BlobBuffer {
     /// waiting for all in-flight uploads to complete.
     pub async fn finalize(&mut self, idx: &mut BlobIndex) -> Result<(), BluError> {
         if !self.is_empty() {
-            self.seal_and_upload(idx)?;
+            self.seal_and_upload(idx).await?;
         }
 
         while let Some(joined) = self.inflight.join_next().await {
@@ -200,8 +218,9 @@ impl BlobBuffer {
     ///
     /// Returns the content-addressed path (known before the upload
     /// completes because it is derived from the hash of the encrypted
-    /// blob data).
-    fn seal_and_upload(&mut self, idx: &mut BlobIndex) -> Result<PathBuf, BluError> {
+    /// blob data). Awaits in-flight puts when at the concurrency cap
+    /// so ciphertext and connections cannot pile up without bound.
+    async fn seal_and_upload(&mut self, idx: &mut BlobIndex) -> Result<PathBuf, BluError> {
         // Order chunks by their decompressed offset so the compressed
         // regions line up with insertion order. region_endpoints are
         // cumulative decompressed offsets (each chunk's offset + size).
@@ -242,6 +261,9 @@ impl BlobBuffer {
             bytes: encrypted_bytes,
         });
 
+        // Backpressure: do not spawn past the concurrency cap.
+        self.wait_for_upload_slot().await?;
+
         // Spawn the upload in the background. BluError is Send + Sync,
         // so no stringification workaround is needed.
         let backend = self.storage_backend.clone();
@@ -257,12 +279,31 @@ impl BlobBuffer {
         Ok(path)
     }
 
+    /// Await completed puts until there is room under `max_inflight`.
+    async fn wait_for_upload_slot(&mut self) -> Result<(), BluError> {
+        while self.inflight.len() >= self.max_inflight {
+            let joined = self
+                .inflight
+                .join_next()
+                .await
+                .expect("inflight non-empty when at capacity");
+            self.handle_joined(joined)?;
+        }
+        Ok(())
+    }
+
     /// Drain any uploads that have already finished without awaiting.
     fn poll_completed(&mut self) -> Result<(), BluError> {
         while let Some(joined) = self.inflight.try_join_next() {
             self.handle_joined(joined)?;
         }
         Ok(())
+    }
+
+    /// Number of background puts still running (test / diagnostics).
+    #[cfg(test)]
+    fn inflight_len(&self) -> usize {
+        self.inflight.len()
     }
 
     fn handle_joined(
@@ -862,6 +903,31 @@ mod test {
         }
         assert_eq!(blob_index.count_blob_files(), 4);
         assert_eq!(blob_index.count_chunks_indexed(), 4);
+    }
+
+    #[tokio::test]
+    async fn inflight_uploads_respect_max_cap() {
+        let datadir = tempdir().unwrap();
+        let backend = BackendKind::Local(Local::new(datadir.path()));
+        let keys = test_keys();
+        let mut idx = BlobIndex::new();
+        // Seal every 2-byte chunk; cap concurrent puts at 1.
+        let mut buf = BlobBuffer::with_capacity(&backend, keys, 2).with_max_inflight(1);
+        let max = 1;
+
+        for i in 0u8..12 {
+            let mut chunk = vec![i, i.wrapping_add(1)];
+            buf.add_chunk(&mut chunk, &mut idx).await.unwrap();
+            assert!(
+                buf.inflight_len() <= max,
+                "inflight {} exceeded max {}",
+                buf.inflight_len(),
+                max
+            );
+        }
+        buf.finalize(&mut idx).await.unwrap();
+        assert_eq!(buf.inflight_len(), 0);
+        assert!(idx.count_blob_files() >= 6);
     }
 
     #[tokio::test]
