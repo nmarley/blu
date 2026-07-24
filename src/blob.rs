@@ -268,7 +268,7 @@ impl BlobBuffer {
         // so no stringification workaround is needed.
         let backend = self.storage_backend.clone();
         self.inflight.spawn(async move {
-            let result = backend.write_data(&blob_hash, &encrypted).await;
+            let result = backend.write_data(&blob_hash, encrypted).await;
             UploadOutcome {
                 short_id,
                 bytes: encrypted_bytes,
@@ -1504,7 +1504,7 @@ mod test {
         assert_eq!(v3format::peek_version(&encrypted), Some(2));
 
         let blob_hash = Hash::from(hash::multihash(&encrypted).to_bytes());
-        backend.write_data(&blob_hash, &encrypted).await.unwrap();
+        backend.write_data(&blob_hash, encrypted).await.unwrap();
         let path = storage::path_for(&blob_hash).unwrap();
 
         let location = BlobBlockLocation::new(
@@ -1589,7 +1589,7 @@ mod test {
         assert_eq!(v3format::peek_version(&encrypted), Some(2));
 
         let blob_hash = Hash::from(hash::multihash(&encrypted).to_bytes());
-        backend.write_data(&blob_hash, &encrypted).await.unwrap();
+        backend.write_data(&blob_hash, encrypted).await.unwrap();
         let v2_path = storage::path_for(&blob_hash).unwrap();
 
         let chunk_hash = Hash::from(hash::multihash(&payload).to_bytes());

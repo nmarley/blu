@@ -139,13 +139,15 @@ impl AmazonS3 {
     ///
     /// Puts as `INTELLIGENT_TIERING` with `blu-role=blob` so bucket
     /// Intelligent-Tiering archive configs can filter blob objects.
-    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
+    /// Takes ownership of `data` and moves it into the put body (no
+    /// extra full-buffer copy).
+    pub async fn write_data(&self, hash: &Hash, data: Vec<u8>) -> Result<PathBuf, BluError> {
         let path = super::path_for(hash)?;
         let key = self.path_to_key(&path);
 
         info!("S3 write: key={}", key);
 
-        let body = ByteStream::from(data.to_vec());
+        let body = ByteStream::from(data);
         self.client
             .put_object()
             .bucket(&self.bucket)
@@ -709,7 +711,7 @@ mod test {
 
         let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
         let hash = Hash::from(multihash(&data).to_bytes());
-        let path = backend.write_data(&hash, &data).await.unwrap();
+        let path = backend.write_data(&hash, data.clone()).await.unwrap();
 
         // Interior window returns exactly the requested bytes.
         let window = backend.read_range(&path, 1000, 2000).await.unwrap();
@@ -750,8 +752,8 @@ mod test {
         let backend = live_backend().await;
 
         // write_data puts INTELLIGENT_TIERING + blu-role=blob.
-        let data = b"blu live IT restore-shape probe";
-        let hash = Hash::from(multihash(data).to_bytes());
+        let data = b"blu live IT restore-shape probe".to_vec();
+        let hash = Hash::from(multihash(&data).to_bytes());
         let path = backend.write_data(&hash, data).await.unwrap();
 
         // Confirm the put policy landed: IT class, hot, blob tag.

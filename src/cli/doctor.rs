@@ -984,8 +984,8 @@ mod tests {
         let (_tmp, cfg, keys) = setup_vault();
 
         let backend = cfg.init_storage_backend().await.unwrap();
-        let data = b"orphan-blob-bytes";
-        let hash = Hash::from(crate::hash::multihash(data).to_bytes());
+        let data = b"orphan-blob-bytes".to_vec();
+        let hash = Hash::from(crate::hash::multihash(&data).to_bytes());
         let orphan_path = backend.write_data(&hash, data).await.unwrap();
 
         // Empty blob index: the written object is unreferenced.
