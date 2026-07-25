@@ -62,7 +62,7 @@ pub fn merge_plain_index(
                         hash.dbg_short(12)
                     )));
                 }
-                local_fr.paths.extend(remote_fr.paths.iter().cloned());
+                local_fr.merge_paths_from(remote_fr);
             }
             None => {
                 files.insert(hash.clone(), remote_fr.clone());
@@ -162,7 +162,7 @@ pub fn merge_blob_index(local: &BlobIndex, remote: &BlobIndex) -> BlobIndex {
 fn detect_path_conflicts(index: &PlainIndex) -> Vec<PathConflict> {
     let mut path_to_hashes: HashMap<PathBuf, HashSet<Hash>> = HashMap::new();
     for (file_hash, fileref) in index.files_map_ref() {
-        for path in &fileref.paths {
+        for path in fileref.paths.keys() {
             path_to_hashes
                 .entry(path.clone())
                 .or_default()
@@ -204,13 +204,13 @@ mod test {
     fn file_ref(chunk_label: &str, paths: &[&str]) -> (Hash, FileRef) {
         let chunk_hash = h(chunk_label);
         let file_hash = h(&format!("file:{chunk_label}"));
-        let mut fr = FileRef::new(vec![ChunkMeta {
-            hash: chunk_hash.clone(),
-            size: 16,
-        }]);
-        for p in paths {
-            fr.paths.insert(PathBuf::from(p));
-        }
+        let fr = FileRef::with_paths(
+            vec![ChunkMeta {
+                hash: chunk_hash.clone(),
+                size: 16,
+            }],
+            paths.iter().map(|p| PathBuf::from(*p)),
+        );
         (file_hash, fr)
     }
 
@@ -291,7 +291,10 @@ mod test {
         let (hash, fr_local) = file_ref("same", &["path/a.txt"]);
         let chunk_hash = fr_local.chunkmetas[0].hash.clone();
         let mut fr_remote = FileRef::new(fr_local.chunkmetas.clone());
-        fr_remote.paths.insert(PathBuf::from("path/b.txt"));
+        fr_remote.insert_path(
+            PathBuf::from("path/b.txt"),
+            crate::block::PathStat::default(),
+        );
 
         let mut local = PlainIndex::new_empty();
         local.files.insert(hash.clone(), fr_local);
@@ -305,8 +308,8 @@ mod test {
         assert_eq!(merged.index.files_map_ref().len(), 1);
         let paths = &merged.index.files_map_ref()[&hash].paths;
         assert_eq!(paths.len(), 2);
-        assert!(paths.contains(Path::new("path/a.txt")));
-        assert!(paths.contains(Path::new("path/b.txt")));
+        assert!(paths.contains_key(Path::new("path/a.txt")));
+        assert!(paths.contains_key(Path::new("path/b.txt")));
         assert!(merged.conflicts.is_empty());
     }
 
@@ -374,7 +377,7 @@ mod test {
             hash: chunk.clone(),
             size: 16,
         }]);
-        fr_a.paths.insert(PathBuf::from("a.txt"));
+        fr_a.insert_path(PathBuf::from("a.txt"), crate::block::PathStat::default());
         local.files.insert(file_a.clone(), fr_a);
         local.blocks.insert(chunk.clone(), block_ref(&file_a));
 
@@ -383,7 +386,7 @@ mod test {
             hash: chunk.clone(),
             size: 16,
         }]);
-        fr_b.paths.insert(PathBuf::from("b.txt"));
+        fr_b.insert_path(PathBuf::from("b.txt"), crate::block::PathStat::default());
         remote.files.insert(file_b.clone(), fr_b);
         remote.blocks.insert(chunk.clone(), block_ref(&file_b));
 
@@ -469,7 +472,7 @@ mod test {
         index
             .files_map_ref()
             .values()
-            .flat_map(|fr| fr.paths.iter())
+            .flat_map(|fr| fr.paths.keys())
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .collect()
     }

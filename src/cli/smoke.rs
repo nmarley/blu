@@ -251,7 +251,7 @@ fn list_paths(plain: &PlainIndex) -> HashSet<PathBuf> {
     plain
         .files_map_ref()
         .values()
-        .flat_map(|fr| fr.paths.iter().cloned())
+        .flat_map(|fr| fr.paths.keys().cloned())
         .collect()
 }
 
@@ -302,7 +302,7 @@ async fn vault_pipeline_happy_path() {
     let backend = cfg.init_storage_backend().await.unwrap();
     for (file_hash, fileref) in plain.files_map_ref() {
         let restored = restore_file_bytes(&plain, &blob, &keys, &backend, file_hash).await;
-        let src_path = fileref.paths.iter().next().unwrap();
+        let src_path = fileref.paths.keys().next().unwrap();
         let original = fs::read(src_path).unwrap();
         assert_eq!(restored, original, "restore mismatch for {:?}", src_path);
     }

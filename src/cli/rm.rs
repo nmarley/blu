@@ -42,7 +42,7 @@ pub async fn rm(args: RmArgs) -> Result<(), BluError> {
             total_bytes += size;
             total_chunks += file_ref.chunkmetas.len();
 
-            let mut paths: Vec<_> = file_ref.paths.iter().collect();
+            let mut paths: Vec<_> = file_ref.paths.keys().collect();
             paths.sort_unstable();
 
             println!(
@@ -225,7 +225,7 @@ fn collect_matching_hashes(
         let filter_lower = filter.to_lowercase();
         if file_ref
             .paths
-            .iter()
+            .keys()
             .any(|p| p.to_string_lossy().to_lowercase().contains(&filter_lower))
         {
             matched.insert(file_hash.clone());

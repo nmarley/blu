@@ -473,7 +473,6 @@ mod test {
         use crate::blob::BlobIndex;
         use crate::block::{ChunkMeta, FileRef, PlainIndex};
         use crate::tag::TagIndex;
-        use std::collections::HashSet;
         use std::path::PathBuf;
 
         let mut plain = PlainIndex::new_empty();
@@ -483,7 +482,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk],
-            paths: HashSet::from([PathBuf::from("docs/readme.txt")]),
+            paths: crate::block::path_stats_from([PathBuf::from("docs/readme.txt")]),
         };
         let file_hash = Hash::from("1e20bbbb");
         plain.files.insert(file_hash.clone(), fileref);

@@ -1175,7 +1175,10 @@ async fn put_object_inner_from_file(
 
     let file_hash = hasher.finalize();
     let mut fileref = FileRef::new(chunkmetas.clone());
-    fileref.paths.insert(std::path::PathBuf::from(key));
+    fileref.insert_path(
+        std::path::PathBuf::from(key),
+        crate::block::PathStat::default(),
+    );
 
     for (chunk_hash, location) in &req_blob_index.map {
         new_blob_locations.push((chunk_hash.clone(), location.clone()));
@@ -1716,7 +1719,7 @@ mod test {
         for (i, path) in paths.iter().enumerate() {
             let fileref = FileRef {
                 chunkmetas: vec![dummy_chunk.clone()],
-                paths: HashSet::from([PathBuf::from(path)]),
+                paths: crate::block::path_stats_from([PathBuf::from(path)]),
             };
             let file_hash = Hash::from(format!("1e20{:028x}", i).as_str());
             plain.files.insert(file_hash.clone(), fileref);
@@ -1976,7 +1979,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk_meta],
-            paths: HashSet::from([PathBuf::from(path)]),
+            paths: crate::block::path_stats_from([PathBuf::from(path)]),
         };
         let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
         let mut plain = PlainIndex::new_empty();
@@ -2557,7 +2560,7 @@ mod test {
 
         let fileref = FileRef {
             chunkmetas,
-            paths: HashSet::from([PathBuf::from("video.bin")]),
+            paths: crate::block::path_stats_from([PathBuf::from("video.bin")]),
         };
         let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
         let mut plain = PlainIndex::new_empty();
@@ -2826,7 +2829,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk_meta],
-            paths: HashSet::from([PathBuf::from(path)]),
+            paths: crate::block::path_stats_from([PathBuf::from(path)]),
         };
         let file_hash = Hash::from(hash::multihash(b"file_hash_placeholder").to_bytes());
 
@@ -2919,11 +2922,11 @@ mod test {
         };
         let fileref_1 = FileRef {
             chunkmetas: vec![chunk_meta.clone()],
-            paths: HashSet::from([PathBuf::from(path1)]),
+            paths: crate::block::path_stats_from([PathBuf::from(path1)]),
         };
         let fileref_2 = FileRef {
             chunkmetas: vec![chunk_meta],
-            paths: HashSet::from([PathBuf::from(path2)]),
+            paths: crate::block::path_stats_from([PathBuf::from(path2)]),
         };
 
         let mut blockref = BlockRef::new();
@@ -3495,7 +3498,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk_meta],
-            paths: HashSet::from([PathBuf::from("flush.bin")]),
+            paths: crate::block::path_stats_from([PathBuf::from("flush.bin")]),
         };
         let file_hash = Hash::from(hash::multihash(b"flush_file_hash").to_bytes());
         let mut plain = PlainIndex::new_empty();

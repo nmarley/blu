@@ -125,7 +125,7 @@ impl RedbStore {
                 let value = serialize_cbor(fileref)?;
                 file_table.insert(key.as_slice(), value.as_slice())?;
 
-                for path in &fileref.paths {
+                for path in fileref.paths.keys() {
                     let path_str = path.to_string_lossy();
                     path_table.insert(path_str.as_ref(), key.as_slice())?;
                 }
@@ -302,7 +302,7 @@ impl RedbStore {
             let key = file_hash.to_bytes();
             let value = serialize_cbor(fileref)?;
             file_table.insert(key.as_slice(), value.as_slice())?;
-            for path in &fileref.paths {
+            for path in fileref.paths.keys() {
                 let path_str = path.to_string_lossy();
                 path_table.insert(path_str.as_ref(), key.as_slice())?;
             }
@@ -398,7 +398,7 @@ impl RedbStore {
             // correctly track when the last path is removed.
             let file_value = if let Some(existing_guard) = file_table.get(file_key.as_slice())? {
                 let mut existing: FileRef = deserialize_cbor(existing_guard.value())?;
-                existing.paths.extend(fileref.paths.iter().cloned());
+                existing.merge_paths_from(&fileref);
                 serialize_cbor(&existing)?
             } else {
                 serialize_cbor(fileref)?
@@ -545,7 +545,7 @@ impl RedbStore {
                     if remove_path_index {
                         path_table.remove(path)?;
                     }
-                    fileref.paths.retain(|p| p.to_string_lossy() != path);
+                    fileref.paths.retain(|p, _| p.to_string_lossy() != path);
 
                     if !fileref.paths.is_empty() {
                         // The FileRef still has other paths: write it
@@ -940,7 +940,6 @@ impl RedbStore {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashSet;
     use std::path::PathBuf;
 
     use super::*;
@@ -964,11 +963,11 @@ mod test {
 
         let file1_ref = FileRef {
             chunkmetas: vec![chunk_a.clone(), chunk_b.clone()],
-            paths: HashSet::from(["docs/readme.txt".into()]),
+            paths: crate::block::path_stats_from(["docs/readme.txt"]),
         };
         let file2_ref = FileRef {
             chunkmetas: vec![chunk_a],
-            paths: HashSet::from(["photos/img.jpg".into(), "photos/copy.jpg".into()]),
+            paths: crate::block::path_stats_from(["photos/img.jpg", "photos/copy.jpg"]),
         };
 
         let mut plain = PlainIndex::new_empty();
@@ -1053,7 +1052,7 @@ mod test {
         assert_eq!(fileref.chunkmetas[0].size, 4096);
         assert_eq!(fileref.chunkmetas[1].hash, Hash::from(HASH_B));
         assert_eq!(fileref.chunkmetas[1].size, 4096);
-        assert!(fileref.paths.contains(&PathBuf::from("docs/readme.txt")));
+        assert!(fileref.contains_path(&PathBuf::from("docs/readme.txt")));
         assert_eq!(fileref.total_size(), 8192);
 
         let fileref2 = store.get_fileref(&Hash::from(HASH_A)).unwrap().unwrap();
@@ -1181,7 +1180,7 @@ mod test {
         for (i, path) in paths.iter().enumerate() {
             let fileref = FileRef {
                 chunkmetas: vec![dummy_chunk.clone()],
-                paths: HashSet::from([PathBuf::from(path)]),
+                paths: crate::block::path_stats_from([PathBuf::from(path)]),
             };
             let file_hash = Hash::from(format!("1e20{:030x}", i).as_str());
             plain.files.insert(file_hash, fileref);
@@ -1359,7 +1358,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk_a],
-            paths: HashSet::from([
+            paths: crate::block::path_stats_from([
                 PathBuf::from("photos/original.jpg"),
                 PathBuf::from("photos/copy.jpg"),
             ]),
@@ -1409,7 +1408,7 @@ mod test {
         // The FileRef must still exist with one path.
         let surviving = store.get_fileref(&file_hash).unwrap().unwrap();
         assert_eq!(surviving.paths.len(), 1);
-        assert!(surviving.paths.contains(&PathBuf::from("photos/copy.jpg")));
+        assert!(surviving.contains_path(&PathBuf::from("photos/copy.jpg")));
 
         // The blob location must still exist.
         assert!(store
@@ -1434,7 +1433,7 @@ mod test {
         };
         let fileref = FileRef {
             chunkmetas: vec![chunk_a],
-            paths: HashSet::from([PathBuf::from("docs/readme.txt")]),
+            paths: crate::block::path_stats_from([PathBuf::from("docs/readme.txt")]),
         };
         let file_hash = Hash::from(HASH_FILE1);
 
@@ -1525,7 +1524,7 @@ mod test {
                 hash: chunk_x.clone(),
                 size: 4096,
             }],
-            paths: HashSet::from([PathBuf::from("key")]),
+            paths: crate::block::path_stats_from([PathBuf::from("key")]),
         };
         let mut blockref_x = BlockRef::new();
         blockref_x.references.insert(old_file.clone(), pos.clone());
@@ -1559,7 +1558,7 @@ mod test {
                 hash: chunk_z.clone(),
                 size: 4096,
             }],
-            paths: HashSet::from([PathBuf::from("key")]),
+            paths: crate::block::path_stats_from([PathBuf::from("key")]),
         };
         store
             .put_object(
@@ -1598,7 +1597,7 @@ mod test {
         // The old FileRef is gone; the new one survives with "key".
         assert!(store.get_fileref(&old_file).unwrap().is_none());
         let surviving_new = store.get_fileref(&new_file).unwrap().unwrap();
-        assert!(surviving_new.paths.contains(&PathBuf::from("key")));
+        assert!(surviving_new.contains_path(&PathBuf::from("key")));
 
         // The old-only chunk X is dropped; chunk Z survives.
         assert!(store.get_blockref(&chunk_x).unwrap().is_none());
@@ -1635,7 +1634,7 @@ mod test {
                 hash: chunk_x.clone(),
                 size: 4096,
             }],
-            paths: HashSet::from([PathBuf::from("key"), PathBuf::from("backup")]),
+            paths: crate::block::path_stats_from([PathBuf::from("key"), PathBuf::from("backup")]),
         };
         let mut blockref_x = BlockRef::new();
         blockref_x.references.insert(old_file.clone(), pos.clone());
@@ -1657,7 +1656,7 @@ mod test {
                 hash: chunk_z.clone(),
                 size: 4096,
             }],
-            paths: HashSet::from([PathBuf::from("key")]),
+            paths: crate::block::path_stats_from([PathBuf::from("key")]),
         };
         store
             .put_object(
@@ -1690,7 +1689,7 @@ mod test {
         // The old FileRef survives with only "backup".
         let surviving_old = store.get_fileref(&old_file).unwrap().unwrap();
         assert_eq!(surviving_old.paths.len(), 1);
-        assert!(surviving_old.paths.contains(&PathBuf::from("backup")));
+        assert!(surviving_old.contains_path(&PathBuf::from("backup")));
 
         // chunk X is still referenced by the old FileRef via "backup",
         // so its blockref and blob location survive.
@@ -1763,7 +1762,7 @@ mod test {
                 hash: Hash::from(HASH_A),
                 size: 4096,
             }],
-            paths: HashSet::from([PathBuf::from("new/path.txt")]),
+            paths: crate::block::path_stats_from([PathBuf::from("new/path.txt")]),
         };
         let result = store.put_object(
             &Hash::from(HASH_FILE1),

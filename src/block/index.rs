@@ -20,7 +20,7 @@ use super::FileRef;
 /// the default on-disk filename for the plain index
 pub const INDEX_FILENAME: &str = "index.dat";
 /// Current plain-index schema version written by blu.
-pub const CURRENT_INDEX_VERSION: &str = "0.2.1";
+pub const CURRENT_INDEX_VERSION: &str = "0.3.0";
 
 /// Reporter for plain-index hashing progress.
 ///
@@ -44,7 +44,7 @@ impl IndexReporter for () {}
 /// by the hash of the block's contents.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Eq)]
 pub struct PlainIndex {
-    // file hash -> FileRef { file: File, paths: HashSet }
+    // file hash -> FileRef { chunkmetas, paths: PathBuf -> PathStat }
     pub(crate) files: HashMap<Hash, FileRef>,
     // plain block hash -> BlockRef
     pub(crate) blocks: HashMap<Hash, BlockRef>,
@@ -143,7 +143,14 @@ impl PlainIndex {
         R: IndexReporter,
     {
         let path_ref = path.as_ref();
-        let file_len = std::fs::metadata(path_ref).map(|m| m.len()).unwrap_or(0);
+        let meta = std::fs::metadata(path_ref)?;
+        let file_len = meta.len();
+        let mtime_secs = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
         reporter.on_file_start(path_ref, file_len);
 
         // chunking, full file hashing
@@ -178,12 +185,11 @@ impl PlainIndex {
             stored_path = stored_path.strip_prefix("./")?.to_path_buf();
         }
 
-        // add path to this hash in file index
+        // add path to this hash in file index with PathStat for later skip
         self.files
             .entry(file_hash.clone())
             .or_insert_with(|| FileRef::new(chunkmetas))
-            .paths
-            .insert(stored_path);
+            .insert_path(stored_path, super::PathStat::new(mtime_secs, file_len));
 
         // Re-add clears any tombstone and records the add time for LWW merge.
         self.deleted_files.remove(&file_hash);
@@ -358,7 +364,7 @@ impl PlainIndex {
         let new_index = Self::new_custom_chunk_size(base_dir, chunk_size)?;
 
         let mut to_delete: HashSet<Hash> = HashSet::new();
-        let mut new_paths: HashMap<Hash, HashSet<PathBuf>> = HashMap::new();
+        let mut new_paths: HashMap<Hash, HashMap<PathBuf, super::PathStat>> = HashMap::new();
         let mut is_updated = false;
 
         // for each fileref in OLD ...
@@ -447,7 +453,7 @@ impl PlainIndex {
         let mut map: HashMap<PathBuf, Hash> = HashMap::new();
 
         for (file_hash, fileref) in &self.files {
-            for path in &fileref.paths {
+            for path in fileref.paths.keys() {
                 map.insert(path.clone(), file_hash.clone());
             }
         }
@@ -528,7 +534,7 @@ mod test {
                         hash: Hash::from(HASH_F_4095_NEWLINE),
                         size: 4096,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file_f.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file_f.txt"]),
                 },
             ),
             (
@@ -540,7 +546,7 @@ mod test {
                         hash: Hash::from(HASH_A_1023_NEWLINE),
                         size: 1024,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file5.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file5.txt"]),
                 },
             ),
             (
@@ -565,7 +571,7 @@ mod test {
                             size: 4096,
                         },
                     ],
-                    paths: HashSet::from(["test/blocks/t5/file1.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file1.txt"]),
                 },
             ),
             (
@@ -575,7 +581,7 @@ mod test {
                         hash: Hash::from(HASH_C_4095_NEWLINE),
                         size: 4096,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file4.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file4.txt"]),
                 },
             ),
             (
@@ -585,9 +591,9 @@ mod test {
                         hash: Hash::from(HASH_A_4095_NEWLINE),
                         size: 4096,
                     }],
-                    paths: HashSet::from([
-                        "test/blocks/t5/file2.txt".into(),
-                        "test/blocks/t5/file3.txt".into(),
+                    paths: crate::block::path_stats_from([
+                        "test/blocks/t5/file2.txt",
+                        "test/blocks/t5/file3.txt",
                     ]),
                 },
             ),
@@ -695,7 +701,7 @@ mod test {
             ),
         ]);
 
-        assert_eq!(index.files, before_filerefs);
+        crate::block::fileref::assert_files_match_ignoring_pathstat(&index.files, &before_filerefs);
         assert_eq!(index.blocks, before_blockrefs);
 
         // rename file5.txt to file6.txt
@@ -724,7 +730,7 @@ mod test {
                         hash: Hash::from(HASH_A_1023_NEWLINE),
                         size: 1024,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file6.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file6.txt"]),
                 },
             ),
             (
@@ -748,7 +754,7 @@ mod test {
                             size: 4096,
                         },
                     ],
-                    paths: HashSet::from(["test/blocks/t5/file1.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file1.txt"]),
                 },
             ),
             (
@@ -758,7 +764,7 @@ mod test {
                         hash: Hash::from(HASH_A_4095_NEWLINE),
                         size: 4096,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file2.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file2.txt"]),
                 },
             ),
             (
@@ -769,7 +775,7 @@ mod test {
                         hash: Hash::from(HASH_E_4095_NEWLINE),
                         size: 4096,
                     }],
-                    paths: HashSet::from(["test/blocks/t5/file3.txt".into()]),
+                    paths: crate::block::path_stats_from(["test/blocks/t5/file3.txt"]),
                 },
             ),
         ]);
@@ -878,7 +884,7 @@ mod test {
         // restore of the files above ^, otherwise broken tests will mess up the
         // test data.  Not a huge deal since it's in git, but easier this way.
 
-        assert_eq!(index.files, after_filerefs);
+        crate::block::fileref::assert_files_match_ignoring_pathstat(&index.files, &after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
 
         let mut deleted_filerefs = Vec::from([
@@ -887,14 +893,14 @@ mod test {
                     hash: Hash::from(HASH_C_4095_NEWLINE),
                     size: 4096,
                 }],
-                paths: HashSet::from(["test/blocks/t5/file4.txt".into()]),
+                paths: crate::block::path_stats_from(["test/blocks/t5/file4.txt"]),
             },
             FileRef {
                 chunkmetas: vec![ChunkMeta {
                     hash: Hash::from(HASH_F_4095_NEWLINE),
                     size: 4096,
                 }],
-                paths: HashSet::from(["test/blocks/t5/file_f.txt".into()]),
+                paths: crate::block::path_stats_from(["test/blocks/t5/file_f.txt"]),
             },
         ]);
         let deleted_blockrefs: Vec<BlockRef> = Vec::from([BlockRef {
@@ -911,7 +917,13 @@ mod test {
         filerefs.sort_unstable();
         deleted_filerefs.sort_unstable();
 
-        assert_eq!(deleted_filerefs, filerefs);
+        assert_eq!(deleted_filerefs.len(), filerefs.len());
+        for (got, exp) in deleted_filerefs.iter().zip(filerefs.iter()) {
+            assert_eq!(got.chunkmetas, exp.chunkmetas);
+            let gp: HashSet<_> = got.paths.keys().collect();
+            let ep: HashSet<_> = exp.paths.keys().collect();
+            assert_eq!(gp, ep);
+        }
         assert_eq!(deleted_blockrefs, blockrefs);
     }
 
@@ -930,7 +942,7 @@ mod test {
                     hash: Hash::from(HASH_HELLO),
                     size: 14,
                 }],
-                paths: HashSet::from(["test/blocks/t6/hi.txt".into()]),
+                paths: crate::block::path_stats_from(["test/blocks/t6/hi.txt"]),
             },
         )]);
         let before_blockrefs = HashMap::from([(
@@ -953,7 +965,7 @@ mod test {
                     hash: Hash::from(HASH_HELLO),
                     size: 14,
                 }],
-                paths: HashSet::from(["test/blocks/t6/hello.txt".into()]),
+                paths: crate::block::path_stats_from(["test/blocks/t6/hello.txt"]),
             },
         )]);
         let after_blockrefs = HashMap::from([(
@@ -969,7 +981,7 @@ mod test {
             },
         )]);
 
-        assert_eq!(index.files, before_filerefs);
+        crate::block::fileref::assert_files_match_ignoring_pathstat(&index.files, &before_filerefs);
         assert_eq!(index.blocks, before_blockrefs);
 
         let old_filename = Path::new(TEST_BLOCKS_DIR_T6).join("hi.txt");
@@ -981,7 +993,7 @@ mod test {
         // move it back
         std::fs::rename(&new_filename, &old_filename).unwrap();
 
-        assert_eq!(index.files, after_filerefs);
+        crate::block::fileref::assert_files_match_ignoring_pathstat(&index.files, &after_filerefs);
         assert_eq!(index.blocks, after_blockrefs);
 
         assert_eq!(filerefs, []);

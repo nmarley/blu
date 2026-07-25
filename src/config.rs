@@ -1754,7 +1754,7 @@ pub(crate) mod test {
         let names: std::collections::HashSet<_> = final_a
             .files_map_ref()
             .values()
-            .flat_map(|fr| fr.paths.iter())
+            .flat_map(|fr| fr.paths.keys())
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .collect();
         assert!(names.contains("a.txt"), "{names:?}");

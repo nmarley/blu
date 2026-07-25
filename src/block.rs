@@ -1,14 +1,17 @@
 mod blockref;
 mod chunkerator;
 mod chunkmeta;
-mod fileref;
+pub(crate) mod fileref;
 mod index;
 
 pub(crate) use blockref::BlockRef;
 pub use chunkerator::chunk_bytes;
 pub use chunkerator::Chunkerator;
 pub use chunkmeta::ChunkMeta;
+
+pub use fileref::path_stats_from;
 pub use fileref::FileRef;
+pub use fileref::PathStat;
 pub use index::IndexReporter;
 pub use index::PlainIndex;
 pub use index::CURRENT_INDEX_VERSION;
@@ -22,7 +25,7 @@ pub const DEFAULT_CHUNK_SIZE: usize = BLOCK_SIZE << 7;
 
 #[cfg(test)]
 mod test {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::path::Path;
 
     use super::blockref::BlockRef;
@@ -108,7 +111,7 @@ mod test {
                             size: 1024,
                         },
                     ],
-                    paths: HashSet::from(["test/blocks/t1/file5.txt".into()])
+                    paths: crate::block::path_stats_from(["test/blocks/t1/file5.txt"])
                 },
             ),
             (
@@ -132,7 +135,7 @@ mod test {
                             size: 4096,
                         },
                     ],
-                    paths: HashSet::from(["test/blocks/t1/file1.txt".into()])
+                    paths: crate::block::path_stats_from(["test/blocks/t1/file1.txt"])
                 },
             ),
             (
@@ -144,7 +147,7 @@ mod test {
                                size: 4096,
                             },
                         ],
-                    paths: HashSet::from(["test/blocks/t1/file4.txt".into()])
+                    paths: crate::block::path_stats_from(["test/blocks/t1/file4.txt"])
                 },
             ),
             (
@@ -156,9 +159,9 @@ mod test {
                                size: 4096,
                             },
                         ],
-                    paths: HashSet::from([
-                        "test/blocks/t1/file2.txt".into(),
-                        "test/blocks/t1/file3.txt".into(),
+                    paths: crate::block::path_stats_from([
+                        "test/blocks/t1/file2.txt",
+                        "test/blocks/t1/file3.txt",
                     ])
                 },
             ),
@@ -258,7 +261,7 @@ mod test {
     fn indexes() {
         let index = PlainIndex::new_custom_chunk_size(TEST_BLOCKS_DIR_T1, 4096).unwrap();
 
-        assert_eq!(index.files, helper_files_map());
+        super::fileref::assert_files_match_ignoring_pathstat(&index.files, &helper_files_map());
         assert_eq!(index.blocks, helper_blocks_map());
     }
 }

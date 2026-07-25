@@ -42,7 +42,7 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), BluError> {
             }
 
             // TODO: path index?
-            if file_ref.paths.iter().any(|p| {
+            if file_ref.paths.keys().any(|p| {
                 p.to_string_lossy()
                     .to_lowercase()
                     .contains(&filter.to_lowercase())
@@ -94,7 +94,7 @@ pub fn list_files(args: ListFilesArgs) -> Result<(), BluError> {
         // Here we will display paths in lexicographical order.
         // TODO: probably also need to add this to the API (deterministic
         // sorted paths)
-        let mut paths: Vec<&PathBuf> = file_ref.paths.iter().collect();
+        let mut paths: Vec<&PathBuf> = file_ref.paths.keys().collect();
         paths.sort_unstable();
 
         let mut tags = tag_index.get_tags(file_hash);

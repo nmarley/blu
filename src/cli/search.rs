@@ -17,7 +17,7 @@ pub fn search(args: SearchArgs) -> Result<(), BluError> {
     let mut filename_search_index = FilenameSearchIndex::new();
     let files_map = index.files_map_ref();
     for (file_hash, file_ref) in files_map {
-        for path in file_ref.paths.iter() {
+        for path in file_ref.paths.keys() {
             let path_str = path.to_string_lossy();
             filename_search_index.add_filename(&path_str, file_hash);
         }
@@ -44,7 +44,7 @@ pub fn search(args: SearchArgs) -> Result<(), BluError> {
         let display = FileDisplay {
             hash: file_hash.clone(),
             size: file_ref.total_size(),
-            paths: Vec::from_iter(file_ref.paths.iter().cloned()),
+            paths: Vec::from_iter(file_ref.paths.keys().cloned()),
         };
         println!("{}", display);
     }

@@ -243,14 +243,14 @@ fn checkout_summary(index: &PlainIndex) -> CheckoutSummary {
     for (hash, fileref) in index.files_map_ref() {
         let size = fileref.total_size();
         // A file is present if any of its recorded paths exists on disk.
-        let any_present = fileref.paths.iter().any(|p| p.exists());
+        let any_present = fileref.paths.keys().any(|p| p.exists());
         if any_present {
             summary.present += 1;
             continue;
         }
         summary.missing_bytes += size;
         // Prefer the first path for display.
-        if let Some(path) = fileref.paths.iter().next() {
+        if let Some(path) = fileref.paths.keys().next() {
             summary.missing.push(MissingCheckout {
                 hash: hash.clone(),
                 size,
@@ -304,7 +304,7 @@ fn collect_shallow_unpublished(
                         hash: val.clone(),
                         size_in_index,
                         size_in_filesystem: *s,
-                        paths: fileref.paths.iter().cloned().collect(),
+                        paths: fileref.paths.keys().cloned().collect(),
                     });
                 }
             }
@@ -322,12 +322,14 @@ fn collect_deep_unpublished(
     for (file_hash, fileref) in &curr_fs_index.files {
         match index.files.get(file_hash) {
             Some(val) => {
-                if val.paths != fileref.paths {
+                let index_paths: HashSet<_> = val.paths.keys().cloned().collect();
+                let fs_paths: HashSet<_> = fileref.paths.keys().cloned().collect();
+                if index_paths != fs_paths {
                     path_updates.insert(FileUpdatedPaths {
                         hash: file_hash.clone(),
                         size: fileref.total_size(),
-                        paths_in_index: val.paths.iter().cloned().collect(),
-                        paths_in_filesystem: fileref.paths.iter().cloned().collect(),
+                        paths_in_index: index_paths.into_iter().collect(),
+                        paths_in_filesystem: fs_paths.into_iter().collect(),
                     });
                 }
             }
@@ -335,7 +337,7 @@ fn collect_deep_unpublished(
                 unpublished.push(FileDisplay {
                     hash: file_hash.clone(),
                     size: fileref.total_size(),
-                    paths: fileref.paths.iter().cloned().collect(),
+                    paths: fileref.paths.keys().cloned().collect(),
                 });
             }
         }
@@ -344,12 +346,14 @@ fn collect_deep_unpublished(
     // Paths recorded in the catalog that differ on disk (rename detection).
     for (file_hash, fileref) in &index.files {
         if let Some(val) = curr_fs_index.files.get(file_hash) {
-            if val.paths != fileref.paths {
+            let index_paths: HashSet<_> = fileref.paths.keys().cloned().collect();
+            let fs_paths: HashSet<_> = val.paths.keys().cloned().collect();
+            if index_paths != fs_paths {
                 path_updates.insert(FileUpdatedPaths {
                     hash: file_hash.clone(),
                     size: fileref.total_size(),
-                    paths_in_index: fileref.paths.iter().cloned().collect(),
-                    paths_in_filesystem: val.paths.iter().cloned().collect(),
+                    paths_in_index: index_paths.into_iter().collect(),
+                    paths_in_filesystem: fs_paths.into_iter().collect(),
                 });
             }
         }

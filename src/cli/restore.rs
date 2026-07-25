@@ -188,7 +188,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
         // In both modes, the first path gets the data and the rest
         // are hard-linked to it (deduplication).
         let (restore_path, other_paths): (PathBuf, Vec<PathBuf>) = {
-            let mut path_iter = fileref.paths.iter();
+            let mut path_iter = fileref.paths.keys();
             let first_orig = match path_iter.next() {
                 Some(p) => p,
                 None => {
@@ -215,7 +215,7 @@ pub async fn restore(args: RestoreArgs) -> Result<(), BluError> {
         };
 
         // Print all original paths
-        for path in fileref.paths.iter() {
+        for path in fileref.paths.keys() {
             println!("  {}", path.display());
         }
 

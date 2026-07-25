@@ -125,7 +125,7 @@ pub fn match_files(plain: &PlainIndex, selection: &Selection) -> Result<Vec<Hash
 
         if !selected {
             if let Some(ref pattern) = path_pattern {
-                selected = fileref.paths.iter().any(|path| pattern.matches_path(path));
+                selected = fileref.paths.keys().any(|path| pattern.matches_path(path));
             }
         }
 
@@ -532,7 +532,7 @@ mod test {
                 size: 4,
             }]);
             for p in *paths {
-                fileref.paths.insert(PathBuf::from(p));
+                fileref.insert_path(PathBuf::from(p), crate::block::PathStat::default());
             }
             plain.files.insert(file_hash, fileref);
         }

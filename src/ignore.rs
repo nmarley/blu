@@ -162,7 +162,7 @@ mod tests {
         let paths: std::collections::HashSet<_> = index
             .files
             .values()
-            .flat_map(|fr| fr.paths.iter().cloned())
+            .flat_map(|fr| fr.paths.keys().cloned())
             .map(|p| p.strip_prefix(root).map(|s| s.to_path_buf()).unwrap_or(p))
             .collect();
 
@@ -186,7 +186,7 @@ mod tests {
         let paths: std::collections::HashSet<_> = index
             .files
             .values()
-            .flat_map(|fr| fr.paths.iter().cloned())
+            .flat_map(|fr| fr.paths.keys().cloned())
             .collect();
 
         assert_eq!(paths.len(), 1);

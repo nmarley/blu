@@ -73,7 +73,7 @@ fn count_missing_checkout(index: &PlainIndex) -> (usize, u64) {
     let mut missing = 0usize;
     let mut missing_bytes = 0u64;
     for fileref in index.files_map_ref().values() {
-        let any_present = fileref.paths.iter().any(|p| p.exists());
+        let any_present = fileref.paths.keys().any(|p| p.exists());
         if !any_present {
             missing += 1;
             missing_bytes += fileref.total_size();
