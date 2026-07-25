@@ -35,6 +35,11 @@ pub trait IndexReporter {
 
     /// Finished hashing `path` (success path only).
     fn on_file_end(&mut self, _path: &Path) {}
+
+    /// `path` was left unchanged: local PathStat matched, content not re-read.
+    ///
+    /// `len` is the on-disk size. Default no-op.
+    fn on_file_skipped(&mut self, _path: &Path, _len: u64) {}
 }
 
 impl IndexReporter for () {}
@@ -82,20 +87,26 @@ impl PlainIndex {
     }
 
     /// Add entries to the PlainIndex given a file/dir path and chunk size.
+    ///
+    /// Unchanged paths (matching stored mtime+size) are skipped.
     pub fn add<P: AsRef<Path>>(
         &mut self,
         path: P,
         chunk_size: Option<usize>,
     ) -> Result<(), BluError> {
-        self.add_with_reporter(path, chunk_size, &mut ())
+        self.add_with_reporter(path, chunk_size, &mut (), false)
     }
 
     /// Like [`Self::add`], but reports per-file and per-byte hashing progress.
+    ///
+    /// When `force_rehash` is false, paths whose stored mtime+size still match
+    /// the filesystem are skipped (no content read).
     pub fn add_with_reporter<P, R>(
         &mut self,
         path: P,
         chunk_size: Option<usize>,
         reporter: &mut R,
+        force_rehash: bool,
     ) -> Result<(), BluError>
     where
         P: AsRef<Path>,
@@ -111,14 +122,24 @@ impl PlainIndex {
             return Err(BluError::Internal("cannot add .blu files or dirs".into()));
         }
 
+        // Maintain a reverse path map across this walk so skip and unlink
+        // stay O(1) per file instead of rebuilding after every path.
+        let mut path_index = self.build_path_index();
+
         match path.as_ref() {
             p if p.is_file() => {
                 // Explicit single-file paths override .bluignore (git-style).
-                self.hash_and_add_file(p, chunk_size, reporter)?;
+                self.hash_and_add_file(p, chunk_size, reporter, force_rehash, &mut path_index)?;
             }
             p if p.is_dir() => {
                 for entry in walk_files(p) {
-                    self.hash_and_add_file(&entry, chunk_size, reporter)?;
+                    self.hash_and_add_file(
+                        &entry,
+                        chunk_size,
+                        reporter,
+                        force_rehash,
+                        &mut path_index,
+                    )?;
                 }
             }
             p => {
@@ -131,12 +152,14 @@ impl PlainIndex {
     }
 
     /// Lower-level internal method to hash a file and add to the file and
-    /// block indexes.
+    /// block indexes (or skip when PathStat still matches).
     fn hash_and_add_file<P, R>(
         &mut self,
         path: P,
         chunk_size: usize,
         reporter: &mut R,
+        force_rehash: bool,
+        path_index: &mut HashMap<PathBuf, Hash>,
     ) -> Result<(), BluError>
     where
         P: AsRef<Path>,
@@ -151,6 +174,29 @@ impl PlainIndex {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+
+        // normalize paths by removing `./` prefix
+        let mut stored_path = path_ref.to_path_buf();
+        if stored_path.starts_with("./") {
+            stored_path = stored_path.strip_prefix("./")?.to_path_buf();
+        }
+
+        if !force_rehash {
+            if let Some(existing_hash) = path_index.get(&stored_path) {
+                if let Some(fr) = self.files.get(existing_hash) {
+                    if let Some(stat) = fr.paths.get(&stored_path) {
+                        if stat.mtime_secs == mtime_secs
+                            && stat.size == file_len
+                            && fr.total_size() == file_len
+                        {
+                            reporter.on_file_skipped(path_ref, file_len);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
         reporter.on_file_start(path_ref, file_len);
 
         // chunking, full file hashing
@@ -179,15 +225,9 @@ impl PlainIndex {
             offset += cm_ref.size;
         }
 
-        // normalize paths by removing `./` prefix
-        let mut stored_path = path_ref.to_path_buf();
-        if stored_path.starts_with("./") {
-            stored_path = stored_path.strip_prefix("./")?.to_path_buf();
-        }
-
         // If this path was already cataloged under a different content
         // hash, detach it so the catalog keeps one live hash per path.
-        if let Some(old_hash) = self.build_path_index().get(&stored_path).cloned() {
+        if let Some(old_hash) = path_index.get(&stored_path).cloned() {
             if old_hash != file_hash {
                 self.unlink_path(&old_hash, &stored_path);
             }
@@ -197,7 +237,11 @@ impl PlainIndex {
         self.files
             .entry(file_hash.clone())
             .or_insert_with(|| FileRef::new(chunkmetas))
-            .insert_path(stored_path, super::PathStat::new(mtime_secs, file_len));
+            .insert_path(
+                stored_path.clone(),
+                super::PathStat::new(mtime_secs, file_len),
+            );
+        path_index.insert(stored_path, file_hash.clone());
 
         // Re-add clears any tombstone and records the add time for LWW merge.
         self.deleted_files.remove(&file_hash);
@@ -1032,6 +1076,7 @@ mod test {
         starts: Vec<(PathBuf, u64)>,
         bytes: u64,
         ends: Vec<PathBuf>,
+        skipped: Vec<(PathBuf, u64)>,
     }
 
     impl super::IndexReporter for CollectingReporter {
@@ -1046,6 +1091,10 @@ mod test {
         fn on_file_end(&mut self, path: &Path) {
             self.ends.push(path.to_path_buf());
         }
+
+        fn on_file_skipped(&mut self, path: &Path, len: u64) {
+            self.skipped.push((path.to_path_buf(), len));
+        }
     }
 
     #[test]
@@ -1053,7 +1102,7 @@ mod test {
         let mut index = PlainIndex::new_empty();
         let mut reporter = CollectingReporter::default();
         index
-            .add_with_reporter(TEST_BLOCKS_DIR_T6, Some(4096), &mut reporter)
+            .add_with_reporter(TEST_BLOCKS_DIR_T6, Some(4096), &mut reporter, false)
             .unwrap();
 
         assert_eq!(reporter.starts.len(), 1);
@@ -1107,7 +1156,8 @@ mod test {
         let shared_hash = index.build_path_index()[&a].clone();
         assert_eq!(index.build_path_index()[&b], shared_hash);
 
-        std::fs::write(&a, b"only-a-changed").unwrap();
+        // Different size so PathStat cannot false-skip within one mtime second.
+        std::fs::write(&a, b"only-a-changed-and-longer").unwrap();
         index.add(&a, Some(4096)).unwrap();
 
         let path_index = index.build_path_index();
@@ -1118,5 +1168,77 @@ mod test {
         let old_fr = index.files_map_ref().get(&shared_hash).unwrap();
         assert!(old_fr.contains_path(&b));
         assert!(!old_fr.contains_path(&a));
+    }
+
+    #[test]
+    fn unchanged_path_skips_content_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stable.txt");
+        std::fs::write(&path, b"do-not-reread-me").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        let mut reporter = CollectingReporter::default();
+        index
+            .add_with_reporter(&path, Some(4096), &mut reporter, false)
+            .unwrap();
+        assert_eq!(reporter.starts.len(), 1);
+        assert_eq!(reporter.bytes, 16);
+        assert!(reporter.skipped.is_empty());
+
+        let mut reporter2 = CollectingReporter::default();
+        index
+            .add_with_reporter(&path, Some(4096), &mut reporter2, false)
+            .unwrap();
+        assert!(
+            reporter2.starts.is_empty(),
+            "second add must not start a hash"
+        );
+        assert_eq!(reporter2.bytes, 0);
+        assert_eq!(reporter2.skipped.len(), 1);
+        assert_eq!(reporter2.skipped[0].1, 16);
+        assert_eq!(index.files_map_ref().len(), 1);
+    }
+
+    #[test]
+    fn size_change_forces_rehash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grow-me.txt");
+        std::fs::write(&path, b"short").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        index.add(&path, Some(4096)).unwrap();
+
+        std::fs::write(&path, b"much-longer-content").unwrap();
+        let mut reporter = CollectingReporter::default();
+        index
+            .add_with_reporter(&path, Some(4096), &mut reporter, false)
+            .unwrap();
+        assert_eq!(reporter.starts.len(), 1, "size change must rehash");
+        assert!(reporter.skipped.is_empty());
+        assert_eq!(index.files_map_ref().len(), 1);
+    }
+
+    #[test]
+    fn force_rehash_reads_even_when_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("force-me.txt");
+        std::fs::write(&path, b"stable-bytes").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        index.add(&path, Some(4096)).unwrap();
+
+        let mut skipped = CollectingReporter::default();
+        index
+            .add_with_reporter(&path, Some(4096), &mut skipped, false)
+            .unwrap();
+        assert_eq!(skipped.skipped.len(), 1);
+
+        let mut forced = CollectingReporter::default();
+        index
+            .add_with_reporter(&path, Some(4096), &mut forced, true)
+            .unwrap();
+        assert_eq!(forced.starts.len(), 1);
+        assert!(forced.skipped.is_empty());
+        assert!(forced.bytes > 0);
     }
 }

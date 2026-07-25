@@ -81,7 +81,7 @@ async fn run_backup(args: BackupArgs, progress: Arc<dyn BackupProgress>) -> Resu
     for p in &paths_to_add {
         info!("Adding {:?}", p);
         let before_count = plain_index.files_map_ref().len();
-        plain_index.add_with_reporter(p.clone(), None, &mut reporter)?;
+        plain_index.add_with_reporter(p.clone(), None, &mut reporter, false)?;
         let after_count = plain_index.files_map_ref().len();
         files_added += after_count.saturating_sub(before_count);
     }
