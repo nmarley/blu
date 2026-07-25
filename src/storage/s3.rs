@@ -99,7 +99,7 @@ impl AmazonS3 {
             .body
             .collect()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
         Ok(body.into_bytes().to_vec())
     }
 
@@ -131,7 +131,7 @@ impl AmazonS3 {
             .body
             .collect()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
         Ok(body.into_bytes().to_vec())
     }
 
@@ -139,13 +139,15 @@ impl AmazonS3 {
     ///
     /// Puts as `INTELLIGENT_TIERING` with `blu-role=blob` so bucket
     /// Intelligent-Tiering archive configs can filter blob objects.
-    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
+    /// Takes ownership of `data` and moves it into the put body (no
+    /// extra full-buffer copy).
+    pub async fn write_data(&self, hash: &Hash, data: Vec<u8>) -> Result<PathBuf, BluError> {
         let path = super::path_for(hash)?;
         let key = self.path_to_key(&path);
 
         info!("S3 write: key={}", key);
 
-        let body = ByteStream::from(data.to_vec());
+        let body = ByteStream::from(data);
         self.client
             .put_object()
             .bucket(&self.bucket)
@@ -155,7 +157,7 @@ impl AmazonS3 {
             .tagging(role_tagging_query(TAG_ROLE_BLOB))
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
 
         Ok(path)
     }
@@ -180,7 +182,7 @@ impl AmazonS3 {
                         return Ok(false);
                     }
                 }
-                Err(BluError::S3Error(err.to_string()))
+                Err(BluError::S3Error(format_s3_error(&err)))
             }
         }
     }
@@ -195,7 +197,7 @@ impl AmazonS3 {
             .key(&key)
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
 
         Ok(())
     }
@@ -220,7 +222,7 @@ impl AmazonS3 {
             .tagging(role_tagging_query(TAG_ROLE_CATALOG))
             .send()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
 
         Ok(())
     }
@@ -242,7 +244,7 @@ impl AmazonS3 {
             .body
             .collect()
             .await
-            .map_err(|e| BluError::S3Error(e.to_string()))?;
+            .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
         Ok(body.into_bytes().to_vec())
     }
 
@@ -282,7 +284,7 @@ impl AmazonS3 {
             let resp = req
                 .send()
                 .await
-                .map_err(|e| BluError::S3Error(e.to_string()))?;
+                .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
 
             for obj in resp.contents() {
                 let Some(key) = obj.key() else {
@@ -336,7 +338,7 @@ impl AmazonS3 {
                         };
                     }
                 }
-                BluError::S3Error(err.to_string())
+                BluError::S3Error(format_s3_error(&err))
             })?;
 
         let storage_class = resp.storage_class().map(|c| c.as_str().to_string());
@@ -439,7 +441,7 @@ impl AmazonS3 {
             let resp = req
                 .send()
                 .await
-                .map_err(|e| BluError::S3Error(e.to_string()))?;
+                .map_err(|e| BluError::S3Error(format_s3_error(&e)))?;
 
             for cfg in resp.intelligent_tiering_configuration_list() {
                 ids.push(cfg.id().to_string());
@@ -474,6 +476,21 @@ fn role_tagging_query(role: &str) -> String {
     format!("{TAG_ROLE_KEY}={role}")
 }
 
+/// Format an S3/SDK error including the full `source` chain.
+///
+/// `SdkError::DispatchFailure` displays only as `"dispatch failure"`; the
+/// connector cause lives on [`std::error::Error::source`] and is lost by
+/// plain `to_string()`.
+fn format_s3_error(err: &dyn std::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut cur = err.source();
+    while let Some(src) = cur {
+        parts.push(src.to_string());
+        cur = src.source();
+    }
+    parts.join(": ")
+}
+
 fn map_get_error(path: &Path, err: SdkError<GetObjectError>) -> BluError {
     if let Some(GetObjectError::InvalidObjectState(state)) = err.as_service_error() {
         return BluError::ObjectArchived {
@@ -482,7 +499,7 @@ fn map_get_error(path: &Path, err: SdkError<GetObjectError>) -> BluError {
             access_tier: state.access_tier().map(|t| t.as_str().to_string()),
         };
     }
-    BluError::S3Error(err.to_string())
+    BluError::S3Error(format_s3_error(&err))
 }
 
 fn map_restore_error(err: SdkError<RestoreObjectError>) -> Result<(), BluError> {
@@ -500,7 +517,7 @@ fn map_restore_error(err: SdkError<RestoreObjectError>) -> Result<(), BluError> 
     if err.code() == Some("RestoreAlreadyInProgress") {
         return Ok(());
     }
-    Err(BluError::S3Error(err.to_string()))
+    Err(BluError::S3Error(format_s3_error(&err)))
 }
 
 fn build_restore_request(storage_class: Option<&str>, days: u32, tier: Tier) -> RestoreRequest {
@@ -589,6 +606,40 @@ mod test {
     fn role_tagging_query_blob_and_catalog() {
         assert_eq!(role_tagging_query(TAG_ROLE_BLOB), "blu-role=blob");
         assert_eq!(role_tagging_query(TAG_ROLE_CATALOG), "blu-role=catalog");
+    }
+
+    #[test]
+    fn format_s3_error_includes_source_chain() {
+        #[derive(Debug)]
+        struct Leaf;
+        impl std::fmt::Display for Leaf {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "connection reset by peer")
+            }
+        }
+        impl std::error::Error for Leaf {}
+
+        #[derive(Debug)]
+        struct Mid(Leaf);
+        impl std::fmt::Display for Mid {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "dispatch failure")
+            }
+        }
+        impl std::error::Error for Mid {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let err = Mid(Leaf);
+        let msg = format_s3_error(&err);
+        assert!(
+            msg.contains("dispatch failure") && msg.contains("connection reset by peer"),
+            "expected source chain in message, got: {msg}"
+        );
+        // Plain Display loses the leaf; that is the bug we are fixing.
+        assert_eq!(err.to_string(), "dispatch failure");
     }
 
     #[test]
@@ -709,7 +760,7 @@ mod test {
 
         let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
         let hash = Hash::from(multihash(&data).to_bytes());
-        let path = backend.write_data(&hash, &data).await.unwrap();
+        let path = backend.write_data(&hash, data.clone()).await.unwrap();
 
         // Interior window returns exactly the requested bytes.
         let window = backend.read_range(&path, 1000, 2000).await.unwrap();
@@ -750,8 +801,8 @@ mod test {
         let backend = live_backend().await;
 
         // write_data puts INTELLIGENT_TIERING + blu-role=blob.
-        let data = b"blu live IT restore-shape probe";
-        let hash = Hash::from(multihash(data).to_bytes());
+        let data = b"blu live IT restore-shape probe".to_vec();
+        let hash = Hash::from(multihash(&data).to_bytes());
         let path = backend.write_data(&hash, data).await.unwrap();
 
         // Confirm the put policy landed: IT class, hot, blob tag.

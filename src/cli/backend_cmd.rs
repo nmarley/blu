@@ -557,7 +557,7 @@ async fn mirror(args: BackendMirrorArgs) -> Result<(), BluError> {
                 let hash = crate::hash::Hash::from(crate::hash::multihash(&data).to_bytes());
 
                 let result = dst
-                    .write_data(&hash, &data)
+                    .write_data(&hash, data)
                     .await
                     .map_err(|e| format!("error writing {}: {}", path.display(), e));
 

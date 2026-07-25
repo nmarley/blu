@@ -648,7 +648,7 @@ mod test {
         let backend = BackendKind::Local(Local::new(datadir.path()));
         let path = blob_path_for("local-blob");
         backend
-            .write_data(&hash_of("local-blob"), b"payload")
+            .write_data(&hash_of("local-blob"), b"payload".to_vec())
             .await
             .unwrap();
 
@@ -695,7 +695,7 @@ mod test {
         let backend = BackendKind::Local(Local::new(datadir.path()));
         let path = blob_path_for("local-blob");
         backend
-            .write_data(&hash_of("local-blob"), b"payload")
+            .write_data(&hash_of("local-blob"), b"payload".to_vec())
             .await
             .unwrap();
         let plan = classify_blobs(&backend, &[path], 2).await.unwrap();
@@ -713,7 +713,7 @@ mod test {
         let backend = BackendKind::Local(Local::new(datadir.path()));
         let path = blob_path_for("local-blob");
         backend
-            .write_data(&hash_of("local-blob"), b"payload")
+            .write_data(&hash_of("local-blob"), b"payload".to_vec())
             .await
             .unwrap();
 

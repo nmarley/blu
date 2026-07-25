@@ -83,8 +83,9 @@ impl Local {
     ///
     /// Returns the relative content-addressed path (e.g.,
     /// `blobs/d/dd4/dd4ce/dd4ce38e...`), consistent with
-    /// `AmazonS3::write_data`.
-    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
+    /// `AmazonS3::write_data`. Takes ownership of `data` to match the
+    /// S3 path (move into the put body, no extra copy).
+    pub async fn write_data(&self, hash: &Hash, data: Vec<u8>) -> Result<PathBuf, BluError> {
         let hash_path = super::path_for(hash)?;
         let full_path = self.datadir.join(&hash_path);
 

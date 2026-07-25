@@ -152,7 +152,10 @@ impl BackendKind {
     }
 
     /// Write data to a content-addressed path derived from the hash.
-    pub async fn write_data(&self, hash: &Hash, data: &[u8]) -> Result<PathBuf, BluError> {
+    ///
+    /// Takes ownership so backends can move bytes into the put body
+    /// without an extra copy (important for ~64 MiB sealed blobs).
+    pub async fn write_data(&self, hash: &Hash, data: Vec<u8>) -> Result<PathBuf, BluError> {
         match self {
             Self::Local(b) => b.write_data(hash, data).await,
             Self::AmazonS3(b) => b.write_data(hash, data).await,
@@ -369,17 +372,17 @@ mod test {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(datadir));
 
-        let data = b"Hello, world!";
-        let mh = multihash(data);
+        let data = b"Hello, world!".to_vec();
+        let mh = multihash(&data);
         let hash = Hash::from(mh.to_bytes());
 
         // write_data returns a relative content-addressed path
-        let rel_path = storage.write_data(&hash, data).await.unwrap();
+        let rel_path = storage.write_data(&hash, data.clone()).await.unwrap();
         assert_eq!(rel_path, path_for(&hash).unwrap());
 
         // read_data accepts the same relative path
         let read_data = storage.read_data(&rel_path).await.unwrap();
-        assert_eq!(data.to_vec(), read_data);
+        assert_eq!(data, read_data);
     }
 
     #[tokio::test]
@@ -387,8 +390,8 @@ mod test {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(&datadir));
 
-        let data = b"Test data for exists/delete";
-        let mh = multihash(data);
+        let data = b"Test data for exists/delete".to_vec();
+        let mh = multihash(&data);
         let hash = Hash::from(mh.to_bytes());
 
         // All methods use relative content-addressed paths;
@@ -415,7 +418,7 @@ mod test {
         let data: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
         let mh = multihash(&data);
         let hash = Hash::from(mh.to_bytes());
-        let rel_path = storage.write_data(&hash, &data).await.unwrap();
+        let rel_path = storage.write_data(&hash, data.clone()).await.unwrap();
 
         // Interior window [100, 200) is exactly 100 bytes and matches.
         let window = storage.read_range(&rel_path, 100, 200).await.unwrap();
@@ -434,7 +437,7 @@ mod test {
         let data = b"short blob".to_vec();
         let mh = multihash(&data);
         let hash = Hash::from(mh.to_bytes());
-        let rel_path = storage.write_data(&hash, &data).await.unwrap();
+        let rel_path = storage.write_data(&hash, data.clone()).await.unwrap();
 
         // End past EOF returns the available tail, not an error.
         let tail = storage.read_range(&rel_path, 4, 10_000).await.unwrap();
@@ -464,14 +467,14 @@ mod test {
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(datadir.path()));
 
-        let data_a = b"blob-a";
-        let data_b = b"blob-b";
+        let data_a = b"blob-a".to_vec();
+        let data_b = b"blob-b".to_vec();
         let path_a = storage
-            .write_data(&Hash::from(multihash(data_a).to_bytes()), data_a)
+            .write_data(&Hash::from(multihash(&data_a).to_bytes()), data_a)
             .await
             .unwrap();
         let path_b = storage
-            .write_data(&Hash::from(multihash(data_b).to_bytes()), data_b)
+            .write_data(&Hash::from(multihash(&data_b).to_bytes()), data_b)
             .await
             .unwrap();
 
@@ -510,15 +513,16 @@ mod test {
 
         let datadir = tempdir().unwrap();
         let storage = BackendKind::Local(Local::new(datadir.path()));
-        let data = b"stat-me";
+        let data = b"stat-me".to_vec();
+        let data_len = data.len() as u64;
         let path = storage
-            .write_data(&Hash::from(multihash(data).to_bytes()), data)
+            .write_data(&Hash::from(multihash(&data).to_bytes()), data)
             .await
             .unwrap();
 
         let stat = storage.stat_object(&path).await.unwrap();
         assert_eq!(stat.availability, ObjectAvailability::Available);
-        assert_eq!(stat.content_length, Some(data.len() as u64));
+        assert_eq!(stat.content_length, Some(data_len));
         assert!(stat.storage_class.is_none());
 
         storage
