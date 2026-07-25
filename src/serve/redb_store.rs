@@ -398,7 +398,7 @@ impl RedbStore {
             // correctly track when the last path is removed.
             let file_value = if let Some(existing_guard) = file_table.get(file_key.as_slice())? {
                 let mut existing: FileRef = deserialize_cbor(existing_guard.value())?;
-                existing.merge_paths_from(&fileref);
+                existing.merge_paths_from(fileref);
                 serialize_cbor(&existing)?
             } else {
                 serialize_cbor(fileref)?
