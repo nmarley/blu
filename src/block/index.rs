@@ -185,6 +185,14 @@ impl PlainIndex {
             stored_path = stored_path.strip_prefix("./")?.to_path_buf();
         }
 
+        // If this path was already cataloged under a different content
+        // hash, detach it so the catalog keeps one live hash per path.
+        if let Some(old_hash) = self.build_path_index().get(&stored_path).cloned() {
+            if old_hash != file_hash {
+                self.unlink_path(&old_hash, &stored_path);
+            }
+        }
+
         // add path to this hash in file index with PathStat for later skip
         self.files
             .entry(file_hash.clone())
@@ -198,6 +206,25 @@ impl PlainIndex {
 
         reporter.on_file_end(path_ref);
         Ok(())
+    }
+
+    /// Remove `path` from the FileRef for `file_hash`.
+    ///
+    /// When the FileRef has no remaining paths, drop it and scrub block
+    /// references without writing a delete tombstone (content change or
+    /// path move, not an intentional delete).
+    fn unlink_path(&mut self, file_hash: &Hash, path: &Path) {
+        let empty = match self.files.get_mut(file_hash) {
+            Some(fr) => {
+                fr.paths.remove(path);
+                fr.paths.is_empty()
+            }
+            None => false,
+        };
+        if empty {
+            self.file_times.remove(file_hash);
+            self.remove_file_entry(file_hash);
+        }
     }
 
     /// Create a new, empty PlainIndex.
@@ -1038,5 +1065,58 @@ mod test {
         assert_eq!(reporter.starts[0].1, 14);
         assert_eq!(reporter.bytes, 14);
         assert_eq!(index.files_map_ref().len(), 1);
+    }
+
+    #[test]
+    fn content_change_unlinks_path_from_old_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit-me.txt");
+        std::fs::write(&path, b"version-one").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        index.add(&path, Some(4096)).unwrap();
+        assert_eq!(index.files_map_ref().len(), 1);
+        let old_hash = index.build_path_index()[&path].clone();
+
+        std::fs::write(&path, b"version-two-different-bytes").unwrap();
+        index.add(&path, Some(4096)).unwrap();
+
+        let path_index = index.build_path_index();
+        assert_eq!(path_index.len(), 1);
+        let new_hash = path_index[&path].clone();
+        assert_ne!(old_hash, new_hash);
+        assert_eq!(index.files_map_ref().len(), 1);
+        assert!(index.files_map_ref().contains_key(&new_hash));
+        assert!(!index.files_map_ref().contains_key(&old_hash));
+        // No delete tombstone for a content rewrite at the same path.
+        assert!(!index.deleted_files_ref().contains_key(&old_hash));
+    }
+
+    #[test]
+    fn content_change_keeps_sibling_path_on_old_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, b"shared-content").unwrap();
+        std::fs::write(&b, b"shared-content").unwrap();
+
+        let mut index = PlainIndex::new_empty();
+        index.add(&a, Some(4096)).unwrap();
+        index.add(&b, Some(4096)).unwrap();
+        assert_eq!(index.files_map_ref().len(), 1);
+        let shared_hash = index.build_path_index()[&a].clone();
+        assert_eq!(index.build_path_index()[&b], shared_hash);
+
+        std::fs::write(&a, b"only-a-changed").unwrap();
+        index.add(&a, Some(4096)).unwrap();
+
+        let path_index = index.build_path_index();
+        assert_eq!(path_index.len(), 2);
+        assert_ne!(path_index[&a], shared_hash);
+        assert_eq!(path_index[&b], shared_hash);
+        assert_eq!(index.files_map_ref().len(), 2);
+        let old_fr = index.files_map_ref().get(&shared_hash).unwrap();
+        assert!(old_fr.contains_path(&b));
+        assert!(!old_fr.contains_path(&a));
     }
 }
