@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-25
+
+### Fixed
+
+- Cap concurrent background blob puts (default 8) so encrypt cannot seal
+  faster than S3 can upload. Unbounded `JoinSet` fan-out held hundreds of
+  ~64 MiB ciphertexts in flight and starved connections, surfacing as
+  `S3 error: dispatch failure` on large backups
+- S3 (and other) error `Display` now walks `Error::source` so connector
+  causes are not hidden behind the SDK's bare `"dispatch failure"` string
+
+### Changed
+
+- `BackendKind::write_data` takes ownership of the sealed body
+  (`Vec<u8>`) so S3 `PutObject` builds `ByteStream` by move instead of
+  an extra `to_vec()` copy per blob
+
 ## [0.8.1] - 2026-07-24
 
 ### Added
