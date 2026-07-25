@@ -105,6 +105,11 @@ pub(crate) enum BackupEvent {
     },
     /// Finished hashing the current file.
     IndexFileFinished,
+    /// Path left unchanged (PathStat matched; content not re-read).
+    IndexFileSkipped {
+        /// On-disk size counted toward index progress.
+        bytes: u64,
+    },
     /// Planned encrypt/upload work for missing chunks.
     EncryptPlan {
         /// Number of missing chunks.
@@ -418,8 +423,12 @@ pub(crate) struct BackupUiState {
     pub index_bytes_done: u64,
     /// Planned files to hash.
     pub index_files_total: u64,
-    /// Files finished hashing.
+    /// Files finished (hashed or skipped).
     pub index_files_done: u64,
+    /// Files whose content was fully hashed.
+    pub index_files_hashed: u64,
+    /// Files skipped as unchanged (mtime+size match).
+    pub index_files_skipped: u64,
     /// Planned missing-chunk plaintext bytes.
     pub encrypt_bytes_total: u64,
     /// Plaintext chunk bytes sealed into buffers so far.
@@ -508,9 +517,20 @@ pub(crate) fn apply_backup_event(
         }
         BackupEvent::IndexFileFinished => {
             state.index_files_done = state.index_files_done.saturating_add(1);
+            state.index_files_hashed = state.index_files_hashed.saturating_add(1);
             if let Some(id) = state.current_index_id.take() {
                 ui.active_remove(&id);
             }
+            if let Some(phase) = state.phase {
+                ui.set_phase(phase, phase_detail(state, phase));
+            }
+            refresh_overall_message(ui, state);
+        }
+        BackupEvent::IndexFileSkipped { bytes } => {
+            state.index_files_done = state.index_files_done.saturating_add(1);
+            state.index_files_skipped = state.index_files_skipped.saturating_add(1);
+            state.index_bytes_done = state.index_bytes_done.saturating_add(bytes);
+            ui.set_position_bytes(state.overall_done());
             if let Some(phase) = state.phase {
                 ui.set_phase(phase, phase_detail(state, phase));
             }
@@ -583,9 +603,11 @@ pub(crate) fn apply_backup_event(
 fn phase_detail(state: &BackupUiState, phase: BackupPhase) -> String {
     match phase {
         BackupPhase::Index => format!(
-            "{}/{} files  {}/{}",
+            "{}/{} files  {} hashed  {} skipped  {}/{}",
             state.index_files_done,
             state.index_files_total,
+            state.index_files_hashed,
+            state.index_files_skipped,
             human_bytes(state.index_bytes_done),
             human_bytes(state.index_bytes_total),
         ),
@@ -759,6 +781,11 @@ mod tests {
         apply_backup_event(
             &mut ui,
             &mut state,
+            BackupEvent::IndexFileSkipped { bytes: 60 },
+        );
+        apply_backup_event(
+            &mut ui,
+            &mut state,
             BackupEvent::EncryptPlan {
                 chunks: 3,
                 bytes: 60,
@@ -784,8 +811,10 @@ mod tests {
         );
 
         assert_eq!(state.overall_total(), 160);
-        assert_eq!(state.overall_done(), 100);
-        assert_eq!(state.index_files_done, 1);
+        assert_eq!(state.overall_done(), 160);
+        assert_eq!(state.index_files_done, 2);
+        assert_eq!(state.index_files_hashed, 1);
+        assert_eq!(state.index_files_skipped, 1);
         assert_eq!(state.encrypt_chunks_done, 2);
         assert_eq!(state.blobs_sealed, 1);
         assert_eq!(state.blobs_uploaded, 1);

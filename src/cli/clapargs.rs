@@ -146,6 +146,10 @@ pub struct BackupArgs {
     #[arg(long)]
     pub force: bool,
 
+    /// Re-hash every file even when mtime and size are unchanged
+    #[arg(long)]
+    pub force_rehash: bool,
+
     /// Use a specific named backend instead of the default
     #[arg(long)]
     pub backend: Option<String>,

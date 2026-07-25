@@ -77,14 +77,18 @@ async fn run_backup(args: BackupArgs, progress: Arc<dyn BackupProgress>) -> Resu
     let mut files_added = 0;
     let mut reporter = ProgressIndexReporter {
         progress: Arc::clone(&progress),
+        files_hashed: 0,
+        files_skipped: 0,
     };
     for p in &paths_to_add {
         info!("Adding {:?}", p);
         let before_count = plain_index.files_map_ref().len();
-        plain_index.add_with_reporter(p.clone(), None, &mut reporter, false)?;
+        plain_index.add_with_reporter(p.clone(), None, &mut reporter, args.force_rehash)?;
         let after_count = plain_index.files_map_ref().len();
         files_added += after_count.saturating_sub(before_count);
     }
+    let files_hashed = reporter.files_hashed;
+    let files_skipped = reporter.files_skipped;
 
     cfg.write_plain_index(&plain_index, &keys)?;
 
@@ -163,8 +167,8 @@ async fn run_backup(args: BackupArgs, progress: Arc<dyn BackupProgress>) -> Resu
     progress.emit(BackupEvent::PushIndexesFinished);
 
     println!(
-        "Backup complete: {} files indexed, {} chunks encrypted",
-        files_added, chunks_encrypted
+        "Backup complete: {} files hashed, {} unchanged skipped, {} new content hashes, {} chunks encrypted",
+        files_hashed, files_skipped, files_added, chunks_encrypted
     );
     println!("Index contains {} files total", files_map.len());
     println!(
@@ -210,6 +214,8 @@ fn map_blob_event(event: BlobBufferEvent) -> BackupEvent {
 /// IndexReporter adapter that emits backup progress events.
 struct ProgressIndexReporter {
     progress: Arc<dyn BackupProgress>,
+    files_hashed: u64,
+    files_skipped: u64,
 }
 
 impl IndexReporter for ProgressIndexReporter {
@@ -226,7 +232,14 @@ impl IndexReporter for ProgressIndexReporter {
     }
 
     fn on_file_end(&mut self, _path: &Path) {
+        self.files_hashed = self.files_hashed.saturating_add(1);
         self.progress.emit(BackupEvent::IndexFileFinished);
+    }
+
+    fn on_file_skipped(&mut self, _path: &Path, len: u64) {
+        self.files_skipped = self.files_skipped.saturating_add(1);
+        self.progress
+            .emit(BackupEvent::IndexFileSkipped { bytes: len });
     }
 }
 
